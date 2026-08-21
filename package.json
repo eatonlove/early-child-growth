@@ -1,0 +1,18 @@
+{
+  "name": "early-child-growth",
+  "private": true,
+  "version": "3.1.0",
+  "type": "module",
+  "scripts": {
+    "install:all": "npm ci --prefix apps/v3-api && npm ci --prefix apps/v3-local",
+    "dev:api": "npm --prefix apps/v3-api run dev",
+    "dev:web": "npm --prefix apps/v3-local run dev",
+    "build": "npm run build:api && npm run build:web",
+    "build:api": "npm --prefix apps/v3-api run build",
+    "build:web": "npm --prefix apps/v3-local run build",
+    "test": "npm run test:api && npm run test:web",
+    "test:api": "npm --prefix apps/v3-api run test",
+    "test:web": "npm --prefix apps/v3-local run test",
+    "check": "npm run test && npm run build"
+  }
+}

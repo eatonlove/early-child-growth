@@ -1,0 +1,14 @@
+.DS_Store
+.vercel
+
+**/node_modules
+**/dist
+**/test-results
+**/supabase/.temp
+
+**/.env
+**/.env.*
+!**/.env.example
+
+*.log
+*.tsbuildinfo

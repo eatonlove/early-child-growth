@@ -1,0 +1,13 @@
+.git
+.gitignore
+.DS_Store
+.vercel
+**/node_modules
+**/dist
+**/test-results
+**/supabase/.temp
+**/.env
+**/.env.*
+*.log
+*.tsbuildinfo
+tmp
