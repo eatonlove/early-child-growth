@@ -182,13 +182,17 @@ function RemoteShell() {
           ["/exports", "导出申请", FileCheck2] as [string, string, LucideIcon],
           ["/research", "教研活动", Microscope] as [string, string, LucideIcon],
         ];
+  const currentPage = nav.find(([path]) =>
+    path === "/" ? location.pathname === "/" : location.pathname.startsWith(path),
+  )?.[1] ?? "工作台";
+  const workspaceLabel = user.role === "researcher" ? "教研员" : "教师";
   const signOut = async () => {
     await logout();
     navigate("/");
   };
   return (
     <div className="app-shell v3-shell remote-shell">
-      <aside className={`sidebar ${menuOpen ? "sidebar-open" : ""}`}>
+      <aside id="app-sidebar" className={`sidebar ${menuOpen ? "sidebar-open" : ""}`}>
         <div className="brand">
           <span className="brand-glyph">童</span>
           <div>
@@ -198,6 +202,7 @@ function RemoteShell() {
           <button
             className="icon-btn mobile-close"
             onClick={() => setMenuOpen(false)}
+            aria-label="关闭全部功能菜单"
           >
             <X />
           </button>
@@ -205,7 +210,7 @@ function RemoteShell() {
         <div className="version-ribbon">
           <span>3.0</span> Supabase · 证据链可追溯
         </div>
-        <nav className="main-nav">
+        <nav className="main-nav" aria-label="全部功能">
           {nav.map(([path, label, Icon]) => (
             <NavLink
               key={path}
@@ -232,6 +237,7 @@ function RemoteShell() {
         <button
           className="sidebar-overlay"
           onClick={() => setMenuOpen(false)}
+          aria-label="关闭全部功能菜单"
         />
       )}
       <div className="app-main">
@@ -239,14 +245,15 @@ function RemoteShell() {
           <button
             className="icon-btn menu-trigger"
             onClick={() => setMenuOpen(true)}
+            aria-label="打开全部功能菜单"
+            aria-controls="app-sidebar"
+            aria-expanded={menuOpen}
           >
             <Menu />
           </button>
           <div className="school-context">
-            <span>{user.tenantName}</span>
-            <strong>
-              {user.role === "researcher" ? "全园教研管理" : "教师工作空间"}
-            </strong>
+            <span>{user.tenantName} · {workspaceLabel}</span>
+            <strong>{currentPage}</strong>
           </div>
           <div className="remote-user">
             <span>{user.displayName.slice(0, 1)}</span>
@@ -260,6 +267,7 @@ function RemoteShell() {
             <button
               className="icon-btn"
               title="退出登录"
+              aria-label="退出登录"
               onClick={() => void signOut()}
             >
               <LogOut />
@@ -303,7 +311,7 @@ function RemoteShell() {
             <Route path="*" element={<Navigate to="/" replace />} />
           </Routes>
         </main>
-        <nav className="mobile-nav">
+        <nav className="mobile-nav" aria-label="常用功能">
           {nav.slice(0, 5).map(([path, label, Icon]) => (
             <NavLink key={path} to={path}>
               <Icon />

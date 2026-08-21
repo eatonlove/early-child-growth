@@ -34,6 +34,7 @@ test("生产教师端只显示两角色模型下的核心工作区", async ({ pa
   await mockApi(page, "teacher");
   await page.goto("/");
   await expect(page.getByRole("heading", { name: "陈老师，从真实观察开始" })).toBeVisible();
+  await expect(page.getByRole("button", { name: "记录新观察" })).toBeVisible();
   await expect(page.getByText("Supabase 正式数据")).toBeVisible();
   await expect(page.getByRole("link", { name: "账号管理" })).toHaveCount(0);
   await page.getByRole("link", { name: "班级与幼儿" }).click();
@@ -41,12 +42,36 @@ test("生产教师端只显示两角色模型下的核心工作区", async ({ pa
   await expect(page.getByText("乐乐", { exact: true })).toBeVisible();
   await page.getByRole("link", { name: "标准观察" }).click();
   await expect(page.getByRole("button", { name: "新建观察" })).toBeVisible();
+  await page.getByRole("button", { name: "新建观察" }).click();
+  const dialog = page.getByRole("dialog", { name: "新建标准观察" });
+  await expect(dialog).toBeVisible();
+  await expect.poll(async () => dialog.evaluate((element) => document.activeElement === element)).toBe(true);
+  const dialogBox = await dialog.boundingBox();
+  const viewport = page.viewportSize();
+  expect(dialogBox).not.toBeNull();
+  expect(viewport).not.toBeNull();
+  expect(dialogBox!.y).toBeGreaterThanOrEqual(0);
+  expect(dialogBox!.y + dialogBox!.height).toBeLessThanOrEqual(viewport!.height);
+  await page.keyboard.press("Escape");
+  await expect(dialog).toBeHidden();
   await page.getByRole("link", { name: "成长与应答" }).click();
   await expect(page.getByRole("heading", { name: "成长轨迹与应答追踪" })).toBeVisible();
   await page.getByRole("link", { name: "周期报告" }).click();
   await expect(page.getByRole("heading", { name: "标准周期报告" })).toBeVisible();
+  await expect(page.getByRole("button", { name: "浏览器打印" })).toBeDisabled();
   await page.getByRole("link", { name: "课程生成" }).click();
   await expect(page.getByRole("heading", { name: "从持续游戏证据生成课程" })).toBeVisible();
+});
+
+test("手机端提供清晰的全部功能入口", async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await mockApi(page, "teacher");
+  await page.goto("/observations");
+  const menuButton = page.getByRole("button", { name: "打开全部功能菜单" });
+  await expect(menuButton).toBeVisible();
+  await menuButton.click();
+  await expect(page.getByRole("navigation", { name: "全部功能" })).toBeVisible();
+  await expect(page.getByRole("link", { name: "课程生成" }).first()).toBeVisible();
 });
 
 test("生产教研员端可进入真实账号管理", async ({ page }) => {

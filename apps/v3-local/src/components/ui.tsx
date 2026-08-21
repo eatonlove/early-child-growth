@@ -1,5 +1,6 @@
-import type { ReactNode } from "react";
-import { AlertTriangle, CheckCircle2, X } from "lucide-react";
+import { useEffect, useId, useRef, type ReactNode } from "react";
+import { createPortal } from "react-dom";
+import { AlertTriangle, CheckCircle2, LoaderCircle, X } from "lucide-react";
 import type { Child } from "../domain/types";
 
 export function Badge({
@@ -110,18 +111,58 @@ export function Modal({
   onClose: () => void;
   wide?: boolean;
 }) {
-  return (
+  const titleId = useId();
+  const dialogRef = useRef<HTMLElement>(null);
+  const onCloseRef = useRef(onClose);
+  onCloseRef.current = onClose;
+
+  useEffect(() => {
+    const previousFocus = document.activeElement as HTMLElement | null;
+    const previousOverflow = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+    dialogRef.current?.focus();
+
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") onCloseRef.current();
+    };
+    window.addEventListener("keydown", handleKeyDown);
+    return () => {
+      window.removeEventListener("keydown", handleKeyDown);
+      document.body.style.overflow = previousOverflow;
+      previousFocus?.focus();
+    };
+  }, []);
+
+  return createPortal(
     <div className="modal-backdrop" role="presentation" onMouseDown={(event) => event.target === event.currentTarget && onClose()}>
-      <section className={`modal ${wide ? "modal-wide" : ""}`} role="dialog" aria-modal="true" aria-label={title}>
+      <section
+        ref={dialogRef}
+        className={`modal ${wide ? "modal-wide" : ""}`}
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby={titleId}
+        tabIndex={-1}
+      >
         <div className="modal-head">
           <div>
-            <h2>{title}</h2>
+            <h2 id={titleId}>{title}</h2>
             {description && <p>{description}</p>}
           </div>
           <button className="icon-btn" onClick={onClose} aria-label="关闭"><X size={20} /></button>
         </div>
         <div className="modal-body">{children}</div>
       </section>
+    </div>,
+    document.body,
+  );
+}
+
+export function LoadingState({ label = "正在加载数据…" }: { label?: string }) {
+  return (
+    <div className="loading-state" role="status" aria-live="polite">
+      <LoaderCircle />
+      <strong>{label}</strong>
+      <span>正在连接园所数据与证据链</span>
     </div>
   );
 }

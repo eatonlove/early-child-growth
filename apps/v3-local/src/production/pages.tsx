@@ -33,11 +33,13 @@ import {
 import {
   Badge,
   EmptyState,
+  LoadingState,
   Metric,
   Modal,
   PageHeader,
   Panel,
 } from "../components/ui";
+import { useNavigate } from "../router";
 import { remoteApi, RemoteApiError } from "./api";
 import type {
   RemoteAccount,
@@ -118,6 +120,7 @@ const showError = (error: unknown) =>
   error instanceof RemoteApiError ? error.message : "操作失败，请稍后重试";
 
 export function RemoteDashboardPage({ user }: { user: RemoteUser }) {
+  const navigate = useNavigate();
   const [counts, setCounts] = useState({
     classrooms: 0,
     children: 0,
@@ -140,6 +143,12 @@ export function RemoteDashboardPage({ user }: { user: RemoteUser }) {
           user.role === "teacher"
             ? "教师先完成观察、识别和应答，再让AI结合年龄段知识库提供第二视角。"
             : "查看全园班级与观察进展，维护账号和标准化专业底座。"
+        }
+        actions={
+          <button className="btn btn-primary" onClick={() => navigate("/observations")}>
+            <Plus />
+            {user.role === "teacher" ? "记录新观察" : "查看观察进展"}
+          </button>
         }
       />
       {error && (
@@ -730,6 +739,8 @@ export function RemoteObservationPage() {
   const [files, setFiles] = useState<File[]>([]);
   const [modal, setModal] = useState(false);
   const [busy, setBusy] = useState(false);
+  const [loaded, setLoaded] = useState(false);
+  const [detailLoading, setDetailLoading] = useState(false);
   const [error, setError] = useState("");
   const [decisionNote, setDecisionNote] = useState("");
 
@@ -752,15 +763,23 @@ export function RemoteObservationPage() {
     }));
   };
   useEffect(() => {
-    load().catch((reason) => setError(showError(reason)));
+    load()
+      .catch((reason) => setError(showError(reason)))
+      .finally(() => setLoaded(true));
   }, []);
   useEffect(() => {
-    if (selected)
+    if (selected) {
+      setDetail(null);
+      setDetailLoading(true);
       remoteApi
         .observation(selected)
         .then(setDetail)
-        .catch((reason) => setError(showError(reason)));
-    else setDetail(null);
+        .catch((reason) => setError(showError(reason)))
+        .finally(() => setDetailLoading(false));
+    } else {
+      setDetail(null);
+      setDetailLoading(false);
+    }
   }, [selected]);
   useEffect(() => {
     const first = children.find(
@@ -992,6 +1011,8 @@ export function RemoteObservationPage() {
               />
             )}
           </div>
+        ) : !loaded || detailLoading ? (
+          <LoadingState label="正在加载观察证据…" />
         ) : (
           <EmptyState
             title="还没有观察记录"
@@ -1992,6 +2013,7 @@ export function RemoteExportsPage({ user }: { user: RemoteUser }) {
   const [selectedId, setSelectedId] = useState("");
   const [modal, setModal] = useState(false);
   const [busy, setBusy] = useState(false);
+  const [loaded, setLoaded] = useState(false);
   const [error, setError] = useState("");
   const [decisionNote, setDecisionNote] = useState("");
   const [form, setForm] = useState({ classroomId: "", exportType: "individual_report", resourceType: "observation", resourceId: "", purpose: "", recipient: "", anonymized: true });
@@ -2002,7 +2024,11 @@ export function RemoteExportsPage({ user }: { user: RemoteUser }) {
     setSelectedId((current) => current || requests.items[0]?.id || "");
     setForm((current) => ({ ...current, classroomId: current.classroomId || classes.items[0]?.id || "" }));
   };
-  useEffect(() => { load().catch((reason) => setError(showError(reason))); }, []);
+  useEffect(() => {
+    load()
+      .catch((reason) => setError(showError(reason)))
+      .finally(() => setLoaded(true));
+  }, []);
   const selected = items.find((item) => item.id === selectedId) ?? items[0];
   const create = async (event: FormEvent) => {
     event.preventDefault();
@@ -2027,7 +2053,7 @@ export function RemoteExportsPage({ user }: { user: RemoteUser }) {
     <div className="page remote-page">
       <PageHeader eyebrow="EXPORT APPROVAL" title={user.role === "researcher" ? "敏感数据导出审批" : "我的导出申请"} description="报告、课程案例和研究数据离开系统前，确认用途、接收方、授权与去标识条件。" actions={<button className="btn btn-primary" onClick={() => setModal(true)}><Download />申请导出</button>} />
       {error && <div className="remote-error"><CircleAlert />{error}</div>}
-      {!selected ? <EmptyState title="暂无导出申请" description="需要将材料带出系统时先创建审批申请。" /> : (
+      {!loaded ? <LoadingState label="正在加载导出申请…" /> : !selected ? <EmptyState title="暂无导出申请" description="需要将材料带出系统时先创建审批申请。" action={<button className="btn btn-primary" onClick={() => setModal(true)}><Download />创建第一份申请</button>} /> : (
         <div className="master-detail">
           <Panel className="master-list" title="导出申请">
             {items.map((item) => <button className={item.id === selected.id ? "selected" : ""} key={item.id} onClick={() => setSelectedId(item.id)}><div><Badge tone={tone(item.status)}>{statusLabel[item.status] ?? item.status}</Badge><strong>{exportLabel[item.export_type]}</strong><span>{item.recipient} · {new Date(item.created_at).toLocaleDateString("zh-CN")}</span></div><ChevronRight /></button>)}
@@ -2111,18 +2137,25 @@ export function RemoteGrowthPage() {
   const [followUp, setFollowUp] = useState<RemoteSupportAction | null>(null);
   const [followUpForm, setFollowUpForm] = useState({ childResponse: "", effectiveness: "continue" });
   const [busy, setBusy] = useState(false);
+  const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   useEffect(() => {
     remoteApi.children().then((result) => {
       const active = result.items.filter((item) => item.status === "active");
       setChildren(active);
       setSelectedId(active[0]?.id || "");
-    }).catch((reason) => setError(showError(reason)));
+      if (!active.length) setLoading(false);
+    }).catch((reason) => {
+      setError(showError(reason));
+      setLoading(false);
+    });
   }, []);
   const loadGrowth = async (childId: string) => {
     if (!childId) { setGrowth(null); return; }
+    setLoading(true);
     try { setGrowth(await remoteApi.growth(childId)); }
     catch (reason) { setError(showError(reason)); }
+    finally { setLoading(false); }
   };
   useEffect(() => { void loadGrowth(selectedId); }, [selectedId]);
   const advanceSupport = async (support: RemoteSupportAction) => {
@@ -2141,7 +2174,7 @@ export function RemoteGrowthPage() {
   return <div className="page remote-page">
     <PageHeader eyebrow="GROWTH & RESPONSE" title="成长轨迹与应答追踪" description="只纳入教师明确采用的AI建议和后续证据；应答必须实施、复察，才能讨论支持效果。" actions={<select className="child-select" value={selectedId} onChange={(event) => setSelectedId(event.target.value)}>{children.map((child) => <option value={child.id} key={child.id}>{child.display_name}</option>)}</select>} />
     {error && <div className="remote-error"><CircleAlert />{error}</div>}
-    {!growth ? <EmptyState title="暂无成长证据" description="完成观察并采用AI建议后，时间轴会显示在这里。" /> : <>
+    {loading ? <LoadingState label="正在整理成长轨迹…" /> : !growth ? <EmptyState title="暂无成长证据" description="完成观察并采用AI建议后，时间轴会显示在这里。" /> : <>
       <div className="metrics-row"><Metric icon={<Activity />} value={growth.coverage.observations} label="已采用观察" detail={`${growth.coverage.scenes.length}类游戏场景`} /><Metric icon={<Sprout />} value={growth.coverage.themes.length} label="持续兴趣" detail={growth.coverage.themes.join("、") || "待积累"} tone="blue" /><Metric icon={<CheckCircle2 />} value={growth.coverage.verifiedSupports} label="已验证应答" detail="有复察证据" tone="green" /></div>
       <div className="detail-stack">{growth.timeline.map((item) => <Panel key={item.observation.id}><div className="remote-detail-head"><div><Badge tone="green">{stageLabel[item.observation.organization_stage]}</Badge><h2>{item.observation.title}</h2><p>{new Date(item.observation.occurred_at).toLocaleDateString("zh-CN")} · {item.observation.scene} · {item.observation.theme}</p></div><Badge tone="blue">教师已采用</Badge></div><div className="remote-analysis-layers"><article className="fact"><span>事实</span><p>{item.analysis?.structured_result.objectiveSummary ?? item.observation.teacher_observation}</p></article><article className="interpret"><span>识别</span><p>{item.analysis?.structured_result.currentExperience ?? item.observation.teacher_identification}</p></article><article className="hypothesis"><span>下一次观察</span><p>{item.analysis?.structured_result.nextObservation.join("；") || item.observation.teacher_response.nextObservationFocus}</p></article></div>{item.supports.map((support) => <div className="support-head" key={support.id}><div><Badge tone={tone(support.status)}>{statusLabel[support.status]}</Badge><h3>{responseLabel[support.category]}：{support.strategy}</h3><p>{support.next_observation_focus}{support.child_response ? ` · 后续反应：${support.child_response}` : ""}</p></div>{support.status !== "closed" && <button className="btn btn-secondary" disabled={busy} onClick={() => void advanceSupport(support)}>{support.status === "planned" ? "记录已实施" : support.status === "implemented" ? "进入复察" : support.status === "follow_up" ? "填写复察证据" : "关闭行动"}</button>}</div>)}</Panel>)}</div>
     </>}
@@ -2156,6 +2189,7 @@ export function RemoteReportsPage() {
   const [selectedId, setSelectedId] = useState("");
   const [modal, setModal] = useState(false);
   const [busy, setBusy] = useState(false);
+  const [loaded, setLoaded] = useState(false);
   const [error, setError] = useState("");
   const [form, setForm] = useState({ classroomId: "", childId: "", reportType: "teacher", periodStart: new Date(new Date().setDate(1)).toISOString().slice(0, 10), periodEnd: new Date().toISOString().slice(0, 10) });
   const load = async () => {
@@ -2165,7 +2199,11 @@ export function RemoteReportsPage() {
     setReports(reportResult.items); setClassrooms(activeClasses); setChildren(activeChildren); setSelectedId((current) => current || reportResult.items[0]?.id || "");
     setForm((current) => ({ ...current, classroomId: current.classroomId || activeClasses[0]?.id || "", childId: current.childId || activeChildren[0]?.id || "" }));
   };
-  useEffect(() => { load().catch((reason) => setError(showError(reason))); }, []);
+  useEffect(() => {
+    load()
+      .catch((reason) => setError(showError(reason)))
+      .finally(() => setLoaded(true));
+  }, []);
   useEffect(() => { const first = children.find((child) => child.classroom_id === form.classroomId); if (first && !children.some((child) => child.id === form.childId && child.classroom_id === form.classroomId)) setForm((current) => ({ ...current, childId: first.id })); }, [form.classroomId, children]);
   const selected = reports.find((item) => item.id === selectedId) ?? reports[0];
   const generate = async (event: FormEvent) => {
@@ -2177,9 +2215,9 @@ export function RemoteReportsPage() {
     if (!selected) return; const next: Record<string, string> = { draft: "reviewed", reviewed: "published", published: "withdrawn" }; if (!next[selected.status]) return;
     setBusy(true); try { await remoteApi.updateReportStatus(selected.id, next[selected.status]); await load(); } catch (reason) { setError(showError(reason)); } finally { setBusy(false); }
   };
-  return <div className="page remote-page"><PageHeader eyebrow="PERIOD REPORT" title="标准周期报告" description="教师版保留专业分析，家长版使用非比较、非标签化语言；所有结论均回链已采用证据。" actions={<div className="page-action-row"><button className="btn btn-secondary" onClick={() => window.print()}>浏览器打印</button><button className="btn btn-primary" onClick={() => setModal(true)}><Plus />生成报告</button></div>} />
+  return <div className="page remote-page"><PageHeader eyebrow="PERIOD REPORT" title="标准周期报告" description="教师版保留专业分析，家长版使用非比较、非标签化语言；所有结论均回链已采用证据。" actions={<div className="page-action-row"><button className="btn btn-secondary" disabled={!selected} onClick={() => window.print()}>浏览器打印</button><button className="btn btn-primary" onClick={() => setModal(true)}><Plus />生成报告</button></div>} />
     {error && <div className="remote-error"><CircleAlert />{error}</div>}
-    {!selected ? <EmptyState title="暂无周期报告" description="选择幼儿与周期后，系统只汇总教师已采用的证据。" /> : <div className="report-layout"><Panel className="report-list" title="报告列表">{reports.map((report) => <button className={report.id === selected.id ? "selected" : ""} onClick={() => setSelectedId(report.id)} key={report.id}><div><strong>{report.content.title}</strong><span>{report.period_start} 至 {report.period_end}</span></div><Badge tone={tone(report.status)}>{statusLabel[report.status]}</Badge></button>)}</Panel><article className="report-paper"><header><div><span>童迹 3.0 · {selected.report_type === "teacher" ? "教师专业版" : "家庭交流版"}</span><h1>{selected.content.title}</h1><p>{selected.period_start} 至 {selected.period_end}</p></div><Badge tone={tone(selected.status)}>{statusLabel[selected.status]}</Badge></header><section className="report-highlight"><Sprout /><div><strong>{selected.content.observationCoverage}</strong><p>{selected.content.evidenceBoundary}</p></div></section><div className="report-sections"><section><span>01</span><h2>主要兴趣</h2>{selected.content.interests.map((item) => <p key={item}>• {item}</p>)}</section><section><span>02</span><h2>有证据支持的变化</h2>{selected.content.evidencedGrowth.map((item) => <p key={item}>• {item}</p>)}</section><section><span>03</span><h2>教师支持及效果</h2>{selected.content.teacherSupport.map((item) => <p key={item}>• {item}</p>)}</section><section><span>04</span><h2>{selected.report_type === "guardian" ? "家庭共玩建议" : "待验证与下一计划"}</h2>{(selected.report_type === "guardian" ? selected.content.familySuggestions : [...selected.content.pendingQuestions, ...selected.content.nextPlan]).map((item) => <p key={item}>• {item}</p>)}</section></div><footer><span>证据索引：{selected.evidence_observation_ids.join(" · ")}</span>{selected.status !== "withdrawn" && <button className="btn btn-secondary" disabled={busy} onClick={() => void advance()}>{selected.status === "draft" ? "完成教师审核" : selected.status === "reviewed" ? "正式发布" : "撤回报告"}</button>}</footer></article></div>}
+    {!loaded ? <LoadingState label="正在加载周期报告…" /> : !selected ? <EmptyState title="暂无周期报告" description="选择幼儿与周期后，系统只汇总教师已采用的证据。" action={<button className="btn btn-primary" onClick={() => setModal(true)}><Plus />生成第一份报告</button>} /> : <div className="report-layout"><Panel className="report-list" title="报告列表">{reports.map((report) => <button className={report.id === selected.id ? "selected" : ""} onClick={() => setSelectedId(report.id)} key={report.id}><div><strong>{report.content.title}</strong><span>{report.period_start} 至 {report.period_end}</span></div><Badge tone={tone(report.status)}>{statusLabel[report.status]}</Badge></button>)}</Panel><article className="report-paper"><header><div><span>童迹 3.0 · {selected.report_type === "teacher" ? "教师专业版" : "家庭交流版"}</span><h1>{selected.content.title}</h1><p>{selected.period_start} 至 {selected.period_end}</p></div><Badge tone={tone(selected.status)}>{statusLabel[selected.status]}</Badge></header><section className="report-highlight"><Sprout /><div><strong>{selected.content.observationCoverage}</strong><p>{selected.content.evidenceBoundary}</p></div></section><div className="report-sections"><section><span>01</span><h2>主要兴趣</h2>{selected.content.interests.map((item) => <p key={item}>• {item}</p>)}</section><section><span>02</span><h2>有证据支持的变化</h2>{selected.content.evidencedGrowth.map((item) => <p key={item}>• {item}</p>)}</section><section><span>03</span><h2>教师支持及效果</h2>{selected.content.teacherSupport.map((item) => <p key={item}>• {item}</p>)}</section><section><span>04</span><h2>{selected.report_type === "guardian" ? "家庭共玩建议" : "待验证与下一计划"}</h2>{(selected.report_type === "guardian" ? selected.content.familySuggestions : [...selected.content.pendingQuestions, ...selected.content.nextPlan]).map((item) => <p key={item}>• {item}</p>)}</section></div><footer><span>证据索引：{selected.evidence_observation_ids.join(" · ")}</span>{selected.status !== "withdrawn" && <button className="btn btn-secondary" disabled={busy} onClick={() => void advance()}>{selected.status === "draft" ? "完成教师审核" : selected.status === "reviewed" ? "正式发布" : "撤回报告"}</button>}</footer></article></div>}
     {modal && <Modal title="生成标准周期报告" description="本周期没有已采用证据时，系统会拒绝生成正式报告。" onClose={() => setModal(false)}><form className="remote-form" onSubmit={generate}><label><span>班级</span><select required value={form.classroomId} onChange={(event) => setForm({ ...form, classroomId: event.target.value })}>{classrooms.map((item) => <option value={item.id} key={item.id}>{item.name}</option>)}</select></label><label><span>幼儿</span><select required value={form.childId} onChange={(event) => setForm({ ...form, childId: event.target.value })}>{children.filter((child) => child.classroom_id === form.classroomId).map((child) => <option value={child.id} key={child.id}>{child.display_name}</option>)}</select></label><label><span>报告版本</span><select value={form.reportType} onChange={(event) => setForm({ ...form, reportType: event.target.value })}><option value="teacher">教师专业版</option><option value="guardian">家长交流版</option></select></label><label><span>开始日期</span><input required type="date" value={form.periodStart} onChange={(event) => setForm({ ...form, periodStart: event.target.value })} /></label><label><span>结束日期</span><input required type="date" value={form.periodEnd} onChange={(event) => setForm({ ...form, periodEnd: event.target.value })} /></label><button className="btn btn-primary" disabled={busy} type="submit"><Save />生成草稿</button></form></Modal>}
   </div>;
 }
@@ -2191,9 +2229,14 @@ export function RemoteCurriculumPage() {
   const [selectedId, setSelectedId] = useState("");
   const [editor, setEditor] = useState({ questions: "", experience: "", materials: "", pathways: "", observationFocus: "" });
   const [busy, setBusy] = useState(false);
+  const [loaded, setLoaded] = useState(false);
   const [error, setError] = useState("");
   const load = async () => { const [classes, clues] = await Promise.all([remoteApi.classrooms(), remoteApi.curriculumClues()]); const active = classes.items.filter((item) => item.status === "active"); setClassrooms(active); setClassroomId((current) => current || active[0]?.id || ""); setItems(clues.items); setSelectedId((current) => current || clues.items[0]?.id || ""); };
-  useEffect(() => { load().catch((reason) => setError(showError(reason))); }, []);
+  useEffect(() => {
+    load()
+      .catch((reason) => setError(showError(reason)))
+      .finally(() => setLoaded(true));
+  }, []);
   const visible = items.filter((item) => !classroomId || item.classroom_id === classroomId);
   const selected = visible.find((item) => item.id === selectedId) ?? visible[0];
   useEffect(() => { if (!selected) return; const plan = selected.plan as Record<string, unknown>; setEditor({ questions: selected.inquiry_questions.join("\n"), experience: ((plan.existingExperience as string[]) ?? []).join("\n"), materials: ((plan.environmentAndMaterials as string[]) ?? []).join("\n"), pathways: ((plan.possiblePathways as string[]) ?? []).join("\n"), observationFocus: ((plan.observationFocus as string[]) ?? []).join("\n") }); }, [selectedId, selected?.updated_at]);
@@ -2203,6 +2246,6 @@ export function RemoteCurriculumPage() {
   const advance = async () => { if (!selected) return; const next: Record<string, string> = { clue: "draft", draft: "reviewed", reviewed: "active", active: "reflected" }; if (!next[selected.status]) return; setBusy(true); try { await remoteApi.updateCurriculumClue(selected.id, { status: next[selected.status] }); await load(); } catch (reason) { setError(showError(reason)); } finally { setBusy(false); } };
   return <div className="page remote-page"><PageHeader eyebrow="EMERGENT CURRICULUM" title="从持续游戏证据生成课程" description="课程不是固定活动清单。系统达到跨幼儿或连续观察门槛后只生成可修改线索，教师决定课程路径。" actions={<div className="page-action-row"><select className="child-select" value={classroomId} onChange={(event) => { setClassroomId(event.target.value); setSelectedId(""); }}>{classrooms.map((item) => <option value={item.id} key={item.id}>{item.name}</option>)}</select><button className="btn btn-primary" disabled={busy || !classroomId} onClick={() => void scan()}><BrainCircuit />扫描课程线索</button></div>} />
     {error && <div className="remote-error"><CircleAlert />{error}</div>}<div className="curriculum-threshold"><span><CheckCircle2 />相近兴趣</span><ArrowRight /><span><CheckCircle2 />至少2名幼儿或同一幼儿3次</span><ArrowRight /><span><CheckCircle2 />至少2个时间点</span><ArrowRight /><span><CheckCircle2 />教师可编辑路径</span></div>
-    {!selected ? <EmptyState title="尚未形成课程线索" description="继续积累已采用的多幼儿、多时间点观察，再运行扫描。" /> : <div className="master-detail"><Panel className="master-list" title="课程线索">{visible.map((item) => <button className={item.id === selected.id ? "selected" : ""} key={item.id} onClick={() => setSelectedId(item.id)}><div><Badge tone={item.threshold_met ? "green" : "orange"}>{item.threshold_met ? "达到门槛" : "继续观察"}</Badge><strong>{item.title}</strong><span>{item.child_ids.length}名幼儿 · {item.time_point_count}个时间点</span></div><ChevronRight /></button>)}</Panel><article className="curriculum-paper"><header><div><span>生成性课程草案 · V{Number(selected.plan.version ?? 1)}</span><h1>{selected.title}</h1><p>{selected.origin}</p></div><div className="curriculum-status-actions"><Badge tone={tone(selected.status)}>{statusLabel[selected.status]}</Badge><button className="btn btn-secondary" disabled={busy} onClick={() => void advance()}>{selected.status === "reflected" ? "已完成复盘" : "推进课程状态"}</button></div></header><div className="curriculum-sections"><section><span>01</span><h2>幼儿已有经验</h2><textarea rows={7} value={editor.experience} onChange={(event) => setEditor({ ...editor, experience: event.target.value })} /></section><section><span>02</span><h2>核心探究问题</h2><textarea rows={7} value={editor.questions} onChange={(event) => setEditor({ ...editor, questions: event.target.value })} /></section><section><span>03</span><h2>环境与材料</h2><textarea rows={7} value={editor.materials} onChange={(event) => setEditor({ ...editor, materials: event.target.value })} /></section><section><span>04</span><h2>可能路径与观察重点</h2><textarea rows={4} value={editor.pathways} onChange={(event) => setEditor({ ...editor, pathways: event.target.value })} /><textarea rows={3} value={editor.observationFocus} onChange={(event) => setEditor({ ...editor, observationFocus: event.target.value })} /></section></div><div className="evidence-chain"><strong>课程证据回链</strong><p>{selected.evidence_observation_ids.length}条已采用观察</p><div>{selected.evidence_observation_ids.map((id) => <span className="badge" key={id}>{id.slice(0, 8)}</span>)}</div></div><footer><button className="btn btn-primary" disabled={busy} onClick={() => void save()}><Save />保存新版本</button></footer></article></div>}
+    {!loaded ? <LoadingState label="正在加载课程线索…" /> : !selected ? <EmptyState title="尚未形成课程线索" description="继续积累已采用的多幼儿、多时间点观察，再运行扫描。" action={<button className="btn btn-primary" disabled={busy || !classroomId} onClick={() => void scan()}><BrainCircuit />扫描当前班级</button>} /> : <div className="master-detail"><Panel className="master-list" title="课程线索">{visible.map((item) => <button className={item.id === selected.id ? "selected" : ""} key={item.id} onClick={() => setSelectedId(item.id)}><div><Badge tone={item.threshold_met ? "green" : "orange"}>{item.threshold_met ? "达到门槛" : "继续观察"}</Badge><strong>{item.title}</strong><span>{item.child_ids.length}名幼儿 · {item.time_point_count}个时间点</span></div><ChevronRight /></button>)}</Panel><article className="curriculum-paper"><header><div><span>生成性课程草案 · V{Number(selected.plan.version ?? 1)}</span><h1>{selected.title}</h1><p>{selected.origin}</p></div><div className="curriculum-status-actions"><Badge tone={tone(selected.status)}>{statusLabel[selected.status]}</Badge><button className="btn btn-secondary" disabled={busy} onClick={() => void advance()}>{selected.status === "reflected" ? "已完成复盘" : "推进课程状态"}</button></div></header><div className="curriculum-sections"><section><span>01</span><h2>幼儿已有经验</h2><textarea rows={7} value={editor.experience} onChange={(event) => setEditor({ ...editor, experience: event.target.value })} /></section><section><span>02</span><h2>核心探究问题</h2><textarea rows={7} value={editor.questions} onChange={(event) => setEditor({ ...editor, questions: event.target.value })} /></section><section><span>03</span><h2>环境与材料</h2><textarea rows={7} value={editor.materials} onChange={(event) => setEditor({ ...editor, materials: event.target.value })} /></section><section><span>04</span><h2>可能路径与观察重点</h2><textarea rows={4} value={editor.pathways} onChange={(event) => setEditor({ ...editor, pathways: event.target.value })} /><textarea rows={3} value={editor.observationFocus} onChange={(event) => setEditor({ ...editor, observationFocus: event.target.value })} /></section></div><div className="evidence-chain"><strong>课程证据回链</strong><p>{selected.evidence_observation_ids.length}条已采用观察</p><div>{selected.evidence_observation_ids.map((id) => <span className="badge" key={id}>{id.slice(0, 8)}</span>)}</div></div><footer><button className="btn btn-primary" disabled={busy} onClick={() => void save()}><Save />保存新版本</button></footer></article></div>}
   </div>;
 }

@@ -101,8 +101,8 @@ svg { flex: 0 0 auto; }
 .role-menu strong { font-size: 12px; }
 .role-menu small { color: var(--muted); font-size: 9px; }
 .content { padding: 30px 34px 64px; }
-.page { max-width: 1480px; margin: 0 auto; animation: page-in .35s ease both; }
-@keyframes page-in { from { opacity: 0; transform: translateY(5px); } }
+.page { max-width: 1480px; margin: 0 auto; animation: page-in .35s ease; }
+@keyframes page-in { from { opacity: 0; transform: translateY(5px); } to { opacity: 1; transform: none; } }
 .mobile-close, .menu-trigger, .mobile-nav { display: none !important; }
 
 .page-header { display: flex; align-items: flex-end; justify-content: space-between; gap: 24px; margin-bottom: 24px; }
@@ -468,4 +468,199 @@ svg { flex: 0 0 auto; }
 }
 @media (max-width: 620px) {
   .remote-login-card { width:calc(100% - 28px); padding:25px; margin:28px auto; }.remote-form,.remote-form-grid { grid-template-columns:1fr; }.remote-form > button,.remote-form > fieldset { grid-column:auto; }.remote-hero { padding:24px 20px; }.remote-flow { justify-content:flex-start; }.remote-class-head,.remote-detail-head,.remote-ai-launch,.remote-submit,.remote-decision { grid-template-columns:1fr; flex-direction:column; align-items:stretch; }.remote-decision > div { flex-direction:column; }.remote-decision .btn { width:100%; }.remote-user div { display:none; }.page-action-row { flex-direction:column; }.remote-child-grid article { grid-template-columns:auto 1fr; }.remote-child-grid article > .badge { grid-column:2; justify-self:start; }.remote-evidence-count { align-self:flex-start; }
+}
+
+/* Production experience polish: readable, task-led, and evidence focused. */
+:where(button, a, input, textarea, select):focus-visible {
+  outline: 3px solid rgba(76, 139, 114, .24);
+  outline-offset: 2px;
+}
+
+.modal-backdrop {
+  position: fixed;
+  inset: 0;
+  align-items: center;
+  min-height: 100dvh;
+}
+.modal {
+  border: 1px solid rgba(220, 216, 205, .9);
+  box-shadow: 0 30px 90px rgba(14, 34, 27, .32);
+}
+.modal:focus { outline: none; }
+.modal-head { padding: 24px 26px 18px; background: rgba(255, 253, 248, .98); }
+.modal-head h2 { font-size: 21px; line-height: 1.35; }
+.modal-head p { max-width: 680px; margin-top: 7px; font-size: 12px; line-height: 1.65; }
+.modal-body { padding: 22px 26px 28px; overscroll-behavior: contain; }
+
+.loading-state {
+  display: grid;
+  justify-items: center;
+  align-content: center;
+  min-height: 280px;
+  padding: 44px 24px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  color: var(--green);
+  background: rgba(255, 253, 248, .82);
+  box-shadow: 0 8px 32px rgba(48, 62, 55, .04);
+  text-align: center;
+}
+.loading-state svg { width: 28px; height: 28px; animation: spin 1s linear infinite; }
+.loading-state strong { margin-top: 14px; font-size: 14px; }
+.loading-state span { margin-top: 5px; color: var(--muted); font-size: 11px; }
+
+.remote-shell .content { padding: 34px clamp(24px, 3vw, 48px) 72px; }
+.remote-shell .page { max-width: 1360px; }
+.remote-shell .page-header { align-items: center; margin-bottom: 28px; }
+.remote-shell .eyebrow { font-size: 11px; }
+.remote-shell .page-header h1 { margin-top: 7px; color: #1d342b; font-size: clamp(32px, 3vw, 44px); }
+.remote-shell .page-header p { max-width: 780px; color: #61736a; font-size: 14px; line-height: 1.75; }
+.remote-shell .panel { padding: 24px; border-color: rgba(214, 210, 198, .92); background: rgba(255, 254, 250, .96); box-shadow: 0 10px 34px rgba(45, 61, 53, .055); }
+.remote-shell .panel-head h2 { font-size: 18px; }
+.remote-shell .panel-head p { font-size: 12px; line-height: 1.6; }
+.remote-shell .btn { min-height: 44px; padding: 10px 17px; font-size: 13px; }
+.remote-shell .btn-sm { min-height: 36px; padding: 7px 11px; font-size: 11px; }
+.remote-shell .badge { padding: 5px 9px; font-size: 10px; }
+.remote-shell .topbar { background: rgba(248, 246, 240, .94); }
+.remote-shell .school-context span { font-size: 10px; }
+.remote-shell .school-context strong { font-size: 15px; }
+.remote-shell .remote-user strong { font-size: 12px; }
+.remote-shell .remote-user small { font-size: 9px; }
+
+.remote-shell .remote-hero { padding: 36px 40px; box-shadow: 0 18px 48px rgba(36, 77, 64, .14); }
+.remote-shell .remote-hero p { font-size: 13px; }
+.remote-shell .remote-boundaries span { font-size: 10px; line-height: 1.5; }
+.remote-shell .remote-flow { justify-content: flex-start; }
+.remote-shell .remote-flow span { padding: 10px 13px; font-size: 11px; }
+.remote-shell .metric div > span { font-size: 12px; }
+.remote-shell .metric div > small { font-size: 10px; }
+
+.remote-shell .remote-principle { padding: 17px 19px; }
+.remote-shell .remote-principle strong { font-size: 13px; }
+.remote-shell .remote-principle p { font-size: 12px; }
+.remote-shell .remote-list-head { font-size: 11px; }
+.remote-shell .remote-observation-list > button,
+.remote-shell .remote-class-list > button { padding: 13px; }
+.remote-shell .remote-observation-list strong,
+.remote-shell .remote-class-list strong { font-size: 13px; }
+.remote-shell .remote-observation-list small,
+.remote-shell .remote-class-list small { font-size: 10px; line-height: 1.5; }
+.remote-shell .remote-detail-head h2,
+.remote-shell .remote-class-head h2 { font-size: 27px; }
+.remote-shell .remote-detail-head p,
+.remote-shell .remote-class-head p { font-size: 12px; }
+.remote-shell .remote-evidence-count span { font-size: 9px; }
+
+.remote-shell .remote-three-layers .panel { min-height: 170px; }
+.remote-shell .remote-three-layers p { font-family: inherit; font-size: 13px; line-height: 1.8; }
+.remote-shell .remote-three-layers blockquote { font-size: 11px; line-height: 1.65; }
+.remote-shell .remote-three-layers strong { font-size: 12px; }
+.remote-shell .remote-three-layers small { font-size: 10px; line-height: 1.6; }
+.remote-shell .remote-ai-launch h2 { font-size: 17px; }
+.remote-shell .remote-ai-launch p { font-size: 12px; }
+
+.remote-shell .remote-analysis-head h2 { font-size: 21px; }
+.remote-shell .remote-analysis-head p { font-size: 10px; }
+.remote-shell .remote-analysis-layers article { gap: 10px; padding: 12px 0; }
+.remote-shell .remote-analysis-layers p { font-size: 12px; line-height: 1.75; }
+.remote-shell .remote-analysis-layers small { font-size: 9px; }
+.remote-shell .remote-analysis-layers > article {
+  display: grid;
+  grid-template-columns: 76px minmax(0, 1fr);
+  align-items: start;
+  gap: 12px;
+  padding: 16px;
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  background: #fbfaf6;
+}
+.remote-shell .remote-analysis-layers > article > span {
+  white-space: nowrap;
+  color: var(--green);
+  font-size: 11px;
+  font-weight: 800;
+}
+.remote-shell .remote-reference-grid strong { font-size: 12px; }
+.remote-shell .remote-reference-grid p,
+.remote-shell .remote-response-grid p { font-size: 11px; line-height: 1.75; }
+.remote-shell .remote-reference-grid small { font-size: 9px; }
+.remote-shell .remote-warning p { font-size: 10px; }
+.remote-shell .remote-decision label span,
+.remote-shell .remote-decision-result strong { font-size: 11px; }
+.remote-shell .remote-decision-result span { font-size: 10px; }
+
+.remote-shell .remote-form label > span,
+.remote-shell .remote-observation-form label b { font-size: 12px; }
+.remote-shell .remote-form input,
+.remote-shell .remote-form select,
+.remote-shell .remote-form textarea,
+.remote-shell .remote-observation-form input,
+.remote-shell .remote-observation-form select,
+.remote-shell .remote-observation-form textarea,
+.remote-shell .remote-decision textarea { min-height: 43px; font-size: 13px; }
+.remote-shell .remote-form small,
+.remote-shell .remote-form-section label small { font-size: 10px; }
+.remote-shell .remote-form-section { padding: 19px; }
+.remote-shell .remote-form-section > span { font-size: 11px; }
+.remote-shell .remote-submit p { font-size: 11px; }
+
+.remote-shell .remote-child-grid strong { font-size: 13px; }
+.remote-shell .remote-child-grid small,
+.remote-shell .remote-child-grid p { font-size: 10px; line-height: 1.55; }
+.remote-shell .child-select { min-height: 44px; font-size: 13px; }
+.remote-shell .knowledge-items strong { font-size: 12px; }
+.remote-shell .knowledge-items span,
+.remote-shell .knowledge-items code { font-size: 9px; }
+.remote-shell .knowledge-boundary strong { font-size: 14px; }
+.remote-shell .knowledge-boundary p { font-size: 11px; }
+.remote-shell .official-expectations p,
+.remote-shell .check-lines p,
+.remote-shell .warning-card,
+.remote-shell .evidence-requirements p,
+.remote-shell .response-strategy-grid p { font-family: inherit; font-size: 11px; line-height: 1.75; }
+.remote-shell .focus-pills button { min-height: 38px; font-size: 11px; }
+.remote-shell .research-hero p,
+.remote-shell .shared-video span { font-size: 10px; }
+.remote-shell .shared-video strong,
+.remote-shell .research-groups section p { font-family: inherit; font-size: 11px; line-height: 1.7; }
+
+.remote-shell .empty-state {
+  min-height: 280px;
+  border: 1px dashed #cfd8d2;
+  border-radius: var(--radius);
+  background: rgba(255, 253, 248, .78);
+}
+.remote-shell .empty-state h3 { font-size: 17px; }
+.remote-shell .empty-state p { max-width: 480px; margin-bottom: 18px; font-size: 12px; line-height: 1.7; }
+
+@media (max-width: 860px) {
+  .remote-shell .content { padding: 24px 18px 92px; }
+  .remote-shell .page-header { align-items: flex-start; }
+  .remote-shell .remote-observation-list,
+  .remote-shell .remote-class-list { max-height: 280px; }
+  .remote-shell .mobile-nav a { min-height: 44px; font-size: 9px; }
+}
+
+@media (max-width: 620px) {
+  .modal-backdrop { align-items: end; padding: 0; }
+  .modal, .modal-wide { max-height: 96dvh; }
+  .modal-head { padding: 20px 18px 15px; }
+  .modal-head h2 { font-size: 19px; }
+  .modal-body { max-height: calc(96dvh - 82px); padding: 18px; }
+  .remote-shell .content { padding: 18px 14px 92px; }
+  .remote-shell .page-header { gap: 16px; margin-bottom: 22px; }
+  .remote-shell .page-header h1 { font-size: 30px; }
+  .remote-shell .page-header p { font-size: 13px; }
+  .remote-shell .page-actions,
+  .remote-shell .page-action-row { width: 100%; }
+  .remote-shell .page-action-row .btn,
+  .remote-shell .page-actions > .btn,
+  .remote-shell .page-action-row .child-select { width: 100%; }
+  .remote-shell .panel { padding: 18px; }
+  .remote-shell .remote-hero { padding: 26px 22px; }
+  .remote-shell .remote-three-layers .panel { min-height: 0; }
+  .remote-shell .remote-analysis-layers > article { grid-template-columns: 1fr; }
+  .remote-shell .remote-child-grid article { padding: 14px; }
+  .remote-shell .empty-state,
+  .loading-state { min-height: 230px; }
 }
