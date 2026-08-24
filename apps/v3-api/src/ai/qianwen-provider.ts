@@ -26,7 +26,7 @@ export interface QianwenProviderOptions {
 
 const OBSERVATION_PROMPT_VERSION = "observation-analysis.qwen.v2";
 const REPORT_PROMPT_VERSION = "period-report.qwen.v2";
-const CURRICULUM_PROMPT_VERSION = "curriculum-draft.qwen.v1";
+const CURRICULUM_PROMPT_VERSION = "curriculum-draft.qwen.v2";
 
 const observationSystemPrompt = `你是幼儿游戏循证观察分析助手。你只生成教师审核用草稿，不作诊断、排名、综合评分或横向比较。
 严格区分事实、专业解释和待验证假设：事实只能来自教师白描、幼儿原话、已确认转写或本次提供的图片/视频画面；解释必须使用“可能、可关联、仍需验证”等形成性评价语言；单次观察不能形成稳定结论。
@@ -252,7 +252,7 @@ export class QianwenAIProvider implements AIAnalysisProvider {
             timePointCount: input.timePointCount,
           },
           adoptedObservations: input.observations.map((item) => ({
-            occurredAt: item.occurred_at,
+            occurredDate: chinaDate(item.occurred_at),
             teacherIdentification: item.teacher_identification,
             teacherResponse: item.teacher_response,
           })),
