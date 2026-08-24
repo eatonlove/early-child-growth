@@ -95,4 +95,86 @@ describe("QianwenAIProvider", () => {
     expect(requestBody).toContain("video_url");
     expect(requestBody).not.toContain("不应发送的姓名");
   });
+
+  it("canonicalizes evidence aliases for a text-only observation", async () => {
+    const aliasResponse = {
+      ...response,
+      facts: response.facts.map((item) => ({ ...item, evidenceIds: ["teacher_observation"] })),
+      interpretations: response.interpretations.map((item) => ({ ...item, evidenceIds: ["教师观察"] })),
+    };
+    const fetcher = vi.fn(async () => new Response(JSON.stringify({
+      choices: [{ message: { content: JSON.stringify(aliasResponse) } }],
+    }), { status: 200, headers: { "Content-Type": "application/json" } }));
+    const provider = new QianwenAIProvider({
+      apiKey: "sk-test-only",
+      baseUrl: "https://dashscope.aliyuncs.com/compatible-mode/v1",
+      textModel: "qwen3.7-plus",
+      visionModel: "qwen3.7-plus",
+      timeoutMs: 5000,
+    }, fetcher as typeof fetch);
+
+    const generated = await provider.analyzeObservation({
+      observation: {
+        teacher_observation: "幼儿移动中间支撑后再次测试桥面。",
+        child_quote: null,
+        teacher_identification: "正在比较支撑位置。",
+        teacher_response: { category: "material", strategy: "提供不同支撑物", nextObservationFocus: "观察是否继续比较" },
+        scene: "建构区",
+        theme: "桥梁建构",
+        organization_stage: "process",
+      },
+      child: { id: "child-1", display_name: "演示幼儿", birth_month: "2022-05" },
+      classroom: { id: "class-1", grade: "middle" },
+      knowledge: [card],
+      evidence: [],
+      media: [],
+    });
+
+    expect(generated.data.facts[0]?.evidenceIds).toEqual(["teacher-observation"]);
+    expect(generated.data.interpretations[0]?.evidenceIds).toEqual(["teacher-observation"]);
+  });
+
+  it("sends observation dates to report generation in China local time", async () => {
+    let requestBody = "";
+    const report = {
+      title: "报告草稿",
+      evidenceBoundary: "仅依据已采用证据。",
+      observationCoverage: "本期一条观察。",
+      interests: ["桥梁建构"],
+      evidencedGrowth: ["幼儿移动支撑后再次测试。"],
+      teacherSupport: ["提供不同支撑物。"],
+      pendingQuestions: ["能否在不同材料中继续比较？"],
+      nextPlan: ["继续观察材料变化后的策略。"],
+      familySuggestions: ["在家共同搭建并聊聊支撑位置。"],
+      audience: "guardian",
+    };
+    const fetcher = vi.fn(async (_url: string | URL | Request, init?: RequestInit) => {
+      requestBody = String(init?.body ?? "");
+      return new Response(JSON.stringify({ choices: [{ message: { content: JSON.stringify(report) } }] }), {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      });
+    });
+    const provider = new QianwenAIProvider({
+      apiKey: "sk-test-only",
+      baseUrl: "https://dashscope.aliyuncs.com/compatible-mode/v1",
+      textModel: "qwen3.7-plus",
+      visionModel: "qwen3.7-plus",
+      timeoutMs: 5000,
+    }, fetcher as typeof fetch);
+
+    await provider.generateReport({
+      reportType: "guardian",
+      childName: "演示幼儿",
+      periodStart: "2026-08-01",
+      periodEnd: "2026-08-24",
+      observations: [{ id: "observation-1", occurred_at: "2026-08-23T16:30:00.000Z", scene: "建构区", theme: "桥梁建构", teacher_observation: "幼儿移动支撑。", child_quote: null }],
+      analyses: [],
+      supports: [],
+    });
+
+    const apiRequest = JSON.parse(requestBody);
+    const prompt = JSON.parse(apiRequest.messages[1].content);
+    expect(prompt.observations[0].occurredDate).toBe("2026-08-24");
+  });
 });
