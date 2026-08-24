@@ -41,6 +41,20 @@ export class QwenRequestError extends Error {
 
 const wait = (milliseconds: number) => new Promise((resolve) => setTimeout(resolve, milliseconds));
 
+function parseJsonValue(content: string) {
+  let parsed: unknown = JSON.parse(content);
+  // Some multimodal responses serialize the schema object as a JSON string.
+  // Decode that transport wrapper while keeping the business schema strict.
+  for (let depth = 0; depth < 2 && typeof parsed === "string"; depth += 1) {
+    const nested = parsed.trim();
+    const looksLikeJson = (nested.startsWith("{") && nested.endsWith("}"))
+      || (nested.startsWith("[") && nested.endsWith("]"));
+    if (!looksLikeJson) break;
+    parsed = JSON.parse(nested);
+  }
+  return parsed;
+}
+
 function extractJson(content: unknown) {
   if (typeof content !== "string") throw new QwenRequestError("千问返回内容不是文本JSON");
   const trimmed = content.trim();
@@ -48,13 +62,13 @@ function extractJson(content: unknown) {
     ? trimmed.replace(/^```(?:json)?\s*/i, "").replace(/\s*```$/, "")
     : trimmed;
   try {
-    return JSON.parse(unfenced);
+    return parseJsonValue(unfenced);
   } catch {
     const start = unfenced.indexOf("{");
     const end = unfenced.lastIndexOf("}");
     if (start >= 0 && end > start) {
       try {
-        return JSON.parse(unfenced.slice(start, end + 1));
+        return parseJsonValue(unfenced.slice(start, end + 1));
       } catch {
         // Fall through to the stable error below.
       }
@@ -132,11 +146,12 @@ export class QwenClient {
     const parsed = extractJson(payload.choices?.[0]?.message?.content);
     const validated = input.validator.safeParse(parsed);
     if (!validated.success) {
+      const rootType = Array.isArray(parsed) ? "array" : parsed === null ? "null" : typeof parsed;
       const issueSummary = validated.error.issues
         .slice(0, 8)
         .map((issue) => `${issue.path.join(".") || "root"}:${issue.code}`)
         .join(",");
-      throw new QwenRequestError(`千问结构化输出未通过业务校验(${issueSummary})`);
+      throw new QwenRequestError(`千问结构化输出未通过业务校验(root=${rootType};${issueSummary})`);
     }
     return validated.data;
   }

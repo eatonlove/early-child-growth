@@ -35,6 +35,35 @@ describe("QwenClient", () => {
     expect(request.enable_thinking).toBe(false);
   });
 
+  it("unwraps a JSON object serialized as a string by multimodal responses", async () => {
+    const content = JSON.stringify(JSON.stringify({ answer: "视频证据草稿" }));
+    const fetcher = vi.fn(async () => new Response(JSON.stringify({
+      choices: [{ message: { content } }],
+    }), { status: 200, headers: { "Content-Type": "application/json" } }));
+    const client = new QwenClient({
+      apiKey: "sk-test-only",
+      baseUrl: "https://dashscope.aliyuncs.com/compatible-mode/v1",
+      timeoutMs: 5000,
+      retries: 0,
+      fetcher: fetcher as typeof fetch,
+    });
+
+    const result = await client.structuredCompletion({
+      model: "qwen3.7-plus",
+      messages: [{ role: "user", content: "分析视频并生成JSON" }],
+      schemaName: "video_test_schema",
+      jsonSchema: {
+        type: "object",
+        additionalProperties: false,
+        required: ["answer"],
+        properties: { answer: { type: "string" } },
+      },
+      validator: z.object({ answer: z.string() }).strict(),
+    });
+
+    expect(result).toEqual({ answer: "视频证据草稿" });
+  });
+
   it("rejects Token Plan keys for backend automation", () => {
     expect(() => new QwenClient({
       apiKey: "sk-sp-test-only",
