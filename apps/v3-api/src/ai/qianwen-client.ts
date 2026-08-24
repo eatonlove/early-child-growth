@@ -131,7 +131,13 @@ export class QwenClient {
     };
     const parsed = extractJson(payload.choices?.[0]?.message?.content);
     const validated = input.validator.safeParse(parsed);
-    if (!validated.success) throw new QwenRequestError("千问结构化输出未通过业务校验");
+    if (!validated.success) {
+      const issueSummary = validated.error.issues
+        .slice(0, 8)
+        .map((issue) => `${issue.path.join(".") || "root"}:${issue.code}`)
+        .join(",");
+      throw new QwenRequestError(`千问结构化输出未通过业务校验(${issueSummary})`);
+    }
     return validated.data;
   }
 }
