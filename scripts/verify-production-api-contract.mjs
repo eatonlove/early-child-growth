@@ -33,6 +33,8 @@ const contract = [
   ["POST", "/api/evidence/:id/complete", true],
   ["GET", "/api/evidence/:id/download", true],
   ["POST", "/api/observations/:id/analyze", true],
+  ["PATCH", "/api/analyses/:id/claims/:claimKey", true],
+  ["POST", "/api/analyses/:id/finalize", true],
   ["POST", "/api/analyses/:id/decision", true],
   ["GET", "/api/observation-templates", true],
   ["GET", "/api/knowledge", true],

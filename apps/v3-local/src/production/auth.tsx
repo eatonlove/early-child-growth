@@ -35,7 +35,7 @@ export function RemoteAuthProvider({ children }: { children: ReactNode }) {
       if (isUnauthenticatedError(reason)) {
         setUser(null);
       } else {
-        setError(reason instanceof Error ? reason.message : "无法连接童迹服务");
+        setError(reason instanceof Error ? reason.message : "无法连接同迹服务");
       }
     } finally {
       setLoading(false);

@@ -43,6 +43,7 @@ import {
   RemoteQualityPage,
   RemoteResearchPage,
 } from "./pages";
+import "./production-design.css";
 
 const navigation: Array<[string, string, LucideIcon]> = [
   ["/", "工作台", Home],
@@ -80,9 +81,9 @@ function LoginPage() {
     <main className="remote-login">
       <section className="remote-login-story">
         <div className="brand">
-          <span className="brand-glyph">童</span>
+          <span className="brand-glyph">同</span>
           <div>
-            <strong>童迹 3.0</strong>
+            <strong>同迹 3.0</strong>
             <small>幼儿游戏循证评估系统</small>
           </div>
         </div>
@@ -100,16 +101,14 @@ function LoginPage() {
           <ChevronRight />
           <span>应答</span>
           <ChevronRight />
-          <span>AI对照</span>
-          <ChevronRight />
-          <span>再观察</span>
+          <span>拓展</span>
         </div>
       </section>
       <section className="remote-login-card">
         <div className="remote-login-logo">
-          <span>童</span>
+          <span>同</span>
           <div>
-            <strong>欢迎使用童迹</strong>
+            <strong>欢迎使用同迹</strong>
             <small>请使用园所分配的账号登录</small>
           </div>
         </div>
@@ -156,7 +155,7 @@ function BadgeMark() {
   return (
     <span className="remote-system-mark">
       <Sprout />
-      TONGJI EVIDENCE SYSTEM
+      儿童为本 · 证据可追溯
     </span>
   );
 }
@@ -185,18 +184,38 @@ function RemoteShell() {
   const currentPage = nav.find(([path]) =>
     path === "/" ? location.pathname === "/" : location.pathname.startsWith(path),
   )?.[1] ?? "工作台";
+  const isHome = location.pathname === "/";
   const workspaceLabel = user.role === "researcher" ? "教研员" : "教师";
   const signOut = async () => {
     await logout();
     navigate("/");
   };
+  const userControl = (
+    <div className="remote-user">
+      <span>{user.displayName.slice(0, 1)}</span>
+      <div>
+        <strong>{user.displayName}</strong>
+        <small>
+          {user.role === "researcher" ? "教研员" : "教师"} · {user.username}
+        </small>
+      </div>
+      <button
+        className="icon-btn"
+        title="退出登录"
+        aria-label="退出登录"
+        onClick={() => void signOut()}
+      >
+        <LogOut />
+      </button>
+    </div>
+  );
   return (
-    <div className="app-shell v3-shell remote-shell">
+    <div className={`app-shell v3-shell remote-shell ${isHome ? "home-mode" : "workspace-mode"}`}>
       <aside id="app-sidebar" className={`sidebar ${menuOpen ? "sidebar-open" : ""}`}>
         <div className="brand">
-          <span className="brand-glyph">童</span>
+          <span className="brand-glyph">同</span>
           <div>
-            <strong>童迹 3.0</strong>
+            <strong>同迹 3.0</strong>
             <small>循证游戏观察 · 正式数据模式</small>
           </div>
           <button
@@ -226,7 +245,7 @@ function RemoteShell() {
           <Sprout size={20} />
           <div>
             <strong>教师判断先行</strong>
-            <span>观察 · 识别 · 应答 · 再观察</span>
+            <span>观察 · 识别 · 应答 · 拓展</span>
           </div>
         </div>
         <div className="remote-live-chip">
@@ -241,39 +260,42 @@ function RemoteShell() {
         />
       )}
       <div className="app-main">
-        <header className="topbar">
-          <button
-            className="icon-btn menu-trigger"
-            onClick={() => setMenuOpen(true)}
-            aria-label="打开全部功能菜单"
-            aria-controls="app-sidebar"
-            aria-expanded={menuOpen}
-          >
-            <Menu />
-          </button>
-          <div className="school-context">
-            <span>{user.tenantName} · {workspaceLabel}</span>
-            <strong>{currentPage}</strong>
-          </div>
-          <div className="remote-user">
-            <span>{user.displayName.slice(0, 1)}</span>
-            <div>
-              <strong>{user.displayName}</strong>
-              <small>
-                {user.role === "researcher" ? "教研员" : "教师"} ·{" "}
-                {user.username}
-              </small>
-            </div>
+        {isHome ? (
+          <header className="home-toolbar">
             <button
-              className="icon-btn"
-              title="退出登录"
-              aria-label="退出登录"
-              onClick={() => void signOut()}
+              className="home-menu-button"
+              onClick={() => setMenuOpen(true)}
+              aria-label="打开全部功能菜单"
+              aria-controls="app-sidebar"
+              aria-expanded={menuOpen}
             >
-              <LogOut />
+              <Menu />
+              <span>全部功能</span>
             </button>
-          </div>
-        </header>
+            {userControl}
+          </header>
+        ) : (
+          <header className="topbar">
+            <button
+              className="icon-btn menu-trigger"
+              onClick={() => setMenuOpen(true)}
+              aria-label="打开全部功能菜单"
+              aria-controls="app-sidebar"
+              aria-expanded={menuOpen}
+            >
+              <Menu />
+            </button>
+            <NavLink to="/" className="topbar-brand" aria-label="返回同迹主页">
+              <span>同</span>
+              <strong>同迹 3.0</strong>
+            </NavLink>
+            <div className="school-context">
+              <span>{user.tenantName} · {workspaceLabel}</span>
+              <strong>{currentPage}</strong>
+            </div>
+            {userControl}
+          </header>
+        )}
         <main className="content">
           <Routes>
             <Route path="/" element={<RemoteDashboardPage user={user} />} />
@@ -329,8 +351,8 @@ function RemoteGate() {
   if (loading)
     return (
       <div className="loading-screen">
-        <span className="brand-glyph">童</span>
-        <h1>正在验证童迹会话</h1>
+        <span className="brand-glyph">同</span>
+        <h1>正在验证同迹会话</h1>
         <p>连接账号权限、班级范围和知识库…</p>
         <span className="loading-line" />
       </div>
@@ -339,7 +361,7 @@ function RemoteGate() {
     return (
       <div className="loading-screen service-error-screen" role="alert">
         <span className="brand-glyph">!</span>
-        <h1>暂时无法连接童迹服务</h1>
+        <h1>暂时无法连接同迹服务</h1>
         <p>{error}。这不是登录状态问题，请稍后重试。</p>
         <button className="btn btn-primary" onClick={() => void retry()}>
           重新连接

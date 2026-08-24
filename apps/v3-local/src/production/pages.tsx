@@ -13,6 +13,7 @@ import {
   Download,
   FileCheck2,
   FileVideo,
+  Home,
   KeyRound,
   Layers3,
   Microscope,
@@ -138,92 +139,92 @@ export function RemoteDashboardPage({ user }: { user: RemoteUser }) {
       .then((result) => setCounts(result.counts))
       .catch((reason) => setError(showError(reason)));
   }, []);
+  const teacherModules = [
+    { path: "/observations", label: "标准观察", image: "icon-standard-observation.png", primary: true },
+    { path: "/growth", label: "成长与应答", image: "icon-growth-response.png" },
+    { path: "/reports", label: "周期报告", image: "icon-period-report.png" },
+    { path: "/curriculum", label: "课程生成", image: "icon-curriculum-generation.png" },
+    { path: "/classrooms", label: "班级与幼儿", image: "icon-classroom-children.png" },
+    { path: "/knowledge", label: "知识库", image: "icon-knowledge-base.png" },
+    { path: "/exports", label: "导出申请", image: "icon-export-request.png" },
+    { path: "/research", label: "教研活动", image: "icon-research-activity.png" },
+  ];
+  const researcherModules = [
+    { path: "/classrooms", label: "班级与幼儿", image: "icon-classroom-children.png" },
+    { path: "/observations", label: "标准观察", image: "icon-standard-observation.png" },
+    { path: "/growth", label: "成长与应答", image: "icon-growth-response.png" },
+    { path: "/reports", label: "周期报告", image: "icon-period-report.png" },
+    { path: "/curriculum", label: "课程生成", image: "icon-curriculum-generation.png" },
+    { path: "/knowledge", label: "知识库", image: "icon-knowledge-base.png" },
+    { path: "/quality", label: "观察质量审核", image: "icon-quality-review.png", primary: true },
+    { path: "/exports", label: "导出审批", image: "icon-export-request.png" },
+    { path: "/research", label: "教研活动", image: "icon-research-activity.png" },
+    { path: "/accounts", label: "账号管理", image: "icon-account-management.png" },
+  ];
+  const modules = user.role === "researcher" ? researcherModules : teacherModules;
   return (
-    <div className="page remote-page">
-      <PageHeader
-        eyebrow="TONGJI 3.0 · EVIDENCE WORKSPACE"
-        title={`${user.displayName}，从真实观察开始`}
-        description={
-          user.role === "teacher"
-            ? "教师先完成观察、识别和应答，再让AI结合年龄段知识库提供第二视角。"
-            : "查看全园班级与观察进展，维护账号和标准化专业底座。"
-        }
-        actions={
-          <button className="btn btn-primary" onClick={() => navigate("/observations")}>
-            <Plus />
-            {user.role === "teacher" ? "记录新观察" : "查看观察进展"}
-          </button>
-        }
-      />
-      {error && (
-        <div className="remote-error">
-          <CircleAlert />
-          {error}
+    <div className={`production-home ${user.role === "researcher" ? "researcher-home" : "teacher-home"}`}>
+      <section className="home-stage" aria-label="同迹功能主页">
+        <div className="home-glass-content">
+          <header className="home-hero-copy">
+            <div>
+              <strong className="home-wordmark">同迹 3.0</strong>
+              <span className="home-cycle">观察&nbsp;&nbsp;·&nbsp;&nbsp;识别&nbsp;&nbsp;·&nbsp;&nbsp;应答&nbsp;&nbsp;·&nbsp;&nbsp;拓展</span>
+              <h1>每一次，从老师的观察开始</h1>
+              <p>观察游戏情况，识别儿童经验，应答下一步支持</p>
+            </div>
+            <span className={`home-role ${user.role === "researcher" ? "researcher" : "teacher"}`}>
+              {user.role === "researcher" ? <Microscope /> : <School />}
+              {user.role === "researcher" ? "教研员空间" : "教师空间"}
+            </span>
+          </header>
+          {error && (
+            <div className="home-error" role="alert">
+              <CircleAlert />
+              {error}
+            </div>
+          )}
+          <div className="home-module-grid">
+            {modules.map((item) => (
+              <button
+                className={`home-module-card ${item.primary ? "primary" : ""}`}
+                key={item.path}
+                onClick={() => navigate(item.path)}
+              >
+                <img
+                  src={`/design/homepage-v3/${item.image}`}
+                  alt=""
+                  aria-hidden="true"
+                />
+                <strong>{item.label}</strong>
+                {item.primary && <span>{user.role === "researcher" ? "进入审核" : "开始记录"}</span>}
+                <ChevronRight className="home-module-arrow" />
+              </button>
+            ))}
+          </div>
+          <footer className="home-status-strip">
+            <button onClick={() => navigate("/")}>
+              <span className="status-icon warm"><Home /></span>
+              <strong>工作台</strong>
+            </button>
+            <button onClick={() => navigate("/observations")}>
+              <span className="status-icon orange"><BrainCircuit /></span>
+              <strong>{counts.pendingAnalyses}</strong>
+              <small>条分析待确认</small>
+            </button>
+            <button onClick={() => navigate("/classrooms")}>
+              <span className="status-icon green"><Users /></span>
+              <strong>{counts.children}</strong>
+              <small>名在册幼儿</small>
+            </button>
+            <button onClick={() => navigate("/reports")}>
+              <span className="status-icon blue"><Activity /></span>
+              <strong>{counts.observations}</strong>
+              <small>条连续观察</small>
+            </button>
+          </footer>
         </div>
-      )}
-      <div className="remote-hero">
-        <div>
-          <Badge tone="green">生产数据模式</Badge>
-          <h2>一份记录，完成观察、识别、应答与AI对照。</h2>
-          <p>
-            教师原始内容独立保存。AI结果只有“采用”或“放弃”两种出口，未采用内容不会进入应答与后续追踪。
-          </p>
-        </div>
-        <div className="remote-boundaries">
-          <ShieldCheck />
-          <strong>专业边界</strong>
-          <span>不做幼儿横向排名</span>
-          <span>不从单次观察判定达标</span>
-          <span>AI结论必须由教师选择</span>
-        </div>
-      </div>
-      <div className="metrics-row">
-        <Metric
-          icon={<School />}
-          value={counts.classrooms}
-          label="可访问班级"
-          detail="按账号分配范围"
-        />
-        <Metric
-          icon={<Users />}
-          value={counts.children}
-          label="在册幼儿"
-          detail="用于连续追踪"
-          tone="blue"
-        />
-        <Metric
-          icon={<Activity />}
-          value={counts.observations}
-          label="标准观察"
-          detail="保留教师原稿"
-          tone="orange"
-        />
-        <Metric
-          icon={<BrainCircuit />}
-          value={counts.pendingAnalyses}
-          label="AI结果待选择"
-          detail="采用或放弃"
-          tone="purple"
-        />
-      </div>
-      <Panel
-        title="标准化核心流程"
-        subtitle="应答不是评价结论，而是下一次可实施、可复察的教师行动"
-      >
-        <div className="remote-flow">
-          <span>选择班级与幼儿</span>
-          <ArrowRight />
-          <span>教师观察</span>
-          <ArrowRight />
-          <span>教师识别</span>
-          <ArrowRight />
-          <span>教师应答</span>
-          <ArrowRight />
-          <span>AI知识对照</span>
-          <ArrowRight />
-          <span>采用 / 放弃</span>
-        </div>
-      </Panel>
+      </section>
     </div>
   );
 }
@@ -2034,7 +2035,7 @@ export function RemoteAccountsPage({
         <KeyRound />
         <div>
           <strong>密码由Supabase Auth安全存储</strong>
-          <p>前端和童迹业务表均不保存明文密码；service role只存在后端容器。</p>
+          <p>前端和同迹业务表均不保存明文密码；service role只存在后端容器。</p>
         </div>
       </div>
       <Panel>
@@ -2173,7 +2174,7 @@ export function RemoteAccountsPage({
         </Modal>
       )}
       {passwordTarget && (
-        <Modal title={`重置${passwordTarget.display_name}的密码`} description="新密码只提交给后端身份服务，不写入童迹业务表。" onClose={() => setPasswordTarget(null)}>
+        <Modal title={`重置${passwordTarget.display_name}的密码`} description="新密码只提交给后端身份服务，不写入同迹业务表。" onClose={() => setPasswordTarget(null)}>
           <form className="remote-form" onSubmit={resetPassword}>
             <label className="full-field"><span>新密码</span><input autoComplete="new-password" required type="password" minLength={10} value={newPassword} onChange={(event) => setNewPassword(event.target.value)} /></label>
             <small className="full-field">至少10位，且同时包含大写字母、小写字母和数字。</small>
@@ -2544,7 +2545,7 @@ export function RemoteReportsPage() {
   return <div className="page remote-page"><PageHeader eyebrow="PERIOD REPORT" title="标准周期报告" description="个体报告追踪一名幼儿的连续变化；班级报告分析覆盖、共同兴趣和支持改进，不展示排名或综合分数。" actions={<div className="page-action-row"><button className="btn btn-secondary" disabled={!selected} onClick={() => window.print()}>浏览器打印</button><button className="btn btn-primary" onClick={() => { setForm((current) => ({ ...current, dimension: view })); setModal(true); }}><Plus />生成报告</button></div>} />
     {error && <div className="remote-error"><CircleAlert />{error}</div>}
     <div className="segmented report-type"><button className={view === "individual" ? "active" : ""} onClick={() => { setView("individual"); setSelectedId(""); }}>个体周期报告</button><button className={view === "classroom" ? "active" : ""} onClick={() => { setView("classroom"); setSelectedId(""); }}>班级周期报告</button></div>
-    {!loaded ? <LoadingState label="正在加载周期报告…" /> : !selected ? <EmptyState title={view === "classroom" ? "暂无班级周期报告" : "暂无个体周期报告"} description={view === "classroom" ? "选择班级与周期后，系统汇总多幼儿、多时间点的已终审证据。" : "选择幼儿与周期后，系统只汇总教师已采用的证据。"} action={<button className="btn btn-primary" onClick={() => { setForm((current) => ({ ...current, dimension: view })); setModal(true); }}><Plus />生成第一份报告</button>} /> : <div className="report-layout"><Panel className="report-list" title={view === "classroom" ? "班级报告列表" : "个体报告列表"}>{visibleReports.map((report) => <button className={report.id === selected.id ? "selected" : ""} onClick={() => setSelectedId(report.id)} key={report.id}><div><strong>{report.content.title}</strong><span>{reportVersion(report)} · {report.period_start} 至 {report.period_end}</span></div><Badge tone={tone(report.status)}>{statusLabel[report.status]}</Badge></button>)}</Panel>{selected.report_type === "classroom" ? <article className="report-paper class-paper"><header><div><span>童迹 3.0 · 班级证据画像{selected.content.aiMeta ? ` · ${selected.content.aiMeta.provider === "QianwenAIProvider" ? "千问AI" : "模拟AI"}` : ""}</span><h1>{selected.content.title}</h1><p>{selected.period_start} 至 {selected.period_end} · 不展示个体排名与综合分数</p></div><Badge tone={tone(selected.status)}>{statusLabel[selected.status]}</Badge></header><section className="report-highlight"><Sprout /><div><strong>{selected.content.observationCoverage}</strong><p>{selected.content.evidenceBoundary}</p></div></section><div className="report-sections classroom-report-sections"><section><span>01</span><h2>观察覆盖</h2><p>已观察{selected.content.observedChildCount}/{selected.content.totalChildCount}名幼儿，累计{selected.content.observationCount}条证据、{selected.content.timePointCount}个日期。</p><p>场景：{selected.content.sceneCoverage.join("、") || "仍需补充"}</p></section><section><span>02</span><h2>共同兴趣</h2>{selected.content.commonInterests.length ? selected.content.commonInterests.map((item) => <p key={item}>• {item}</p>) : <p>仍需积累更多共同兴趣证据。</p>}</section><section><span>03</span><h2>持续问题</h2>{selected.content.recurringQuestions.length ? selected.content.recurringQuestions.map((item) => <p key={item}>• {item}</p>) : <p>当前没有形成跨观察的持续问题。</p>}</section><section><span>04</span><h2>五大领域证据</h2>{Object.entries(selected.content.domainEvidence).map(([domain, count]) => <p key={domain}>• {domain}：{count}条已终审证据</p>)}</section><section><span>05</span><h2>支持复察与课程线索</h2><p>支持策略复察率：{selected.content.supportFollowUpRate}%</p>{selected.content.curriculumClues.length ? selected.content.curriculumClues.map((item) => <p key={item.id}>• {item.title}（{item.theme}）</p>) : <p>本周期尚未形成课程线索。</p>}</section><section><span>06</span><h2>下一步建议</h2>{selected.content.nextSuggestions.map((item) => <p key={item}>• {item}</p>)}</section></div><footer><span>证据索引：{selected.evidence_observation_ids.join(" · ")}</span>{selected.status !== "withdrawn" && <button className="btn btn-secondary" disabled={busy} onClick={() => void advance()}>{selected.status === "draft" ? "完成教师审核" : selected.status === "reviewed" ? "正式发布" : "撤回报告"}</button>}</footer></article> : <article className="report-paper"><header><div><span>童迹 3.0 · {reportVersion(selected)}{selected.content.aiMeta ? ` · ${selected.content.aiMeta.provider === "QianwenAIProvider" ? "千问AI" : "模拟AI"}` : ""}</span><h1>{selected.content.title}</h1><p>{selected.period_start} 至 {selected.period_end}</p></div><Badge tone={tone(selected.status)}>{statusLabel[selected.status]}</Badge></header><section className="report-highlight"><Sprout /><div><strong>{selected.content.observationCoverage}</strong><p>{selected.content.evidenceBoundary}</p></div></section><div className="report-sections"><section><span>01</span><h2>主要兴趣</h2>{selected.content.interests.map((item) => <p key={item}>• {item}</p>)}</section><section><span>02</span><h2>有证据支持的变化</h2>{selected.content.evidencedGrowth.map((item) => <p key={item}>• {item}</p>)}</section><section><span>03</span><h2>教师支持及效果</h2>{selected.content.teacherSupport.map((item) => <p key={item}>• {item}</p>)}</section><section><span>04</span><h2>{selected.report_type === "guardian" ? "家庭共玩建议" : "待验证与下一计划"}</h2>{(selected.report_type === "guardian" ? selected.content.familySuggestions : [...selected.content.pendingQuestions, ...selected.content.nextPlan]).map((item) => <p key={item}>• {item}</p>)}</section></div><footer><span>证据索引：{selected.evidence_observation_ids.join(" · ")}</span>{selected.status !== "withdrawn" && <button className="btn btn-secondary" disabled={busy} onClick={() => void advance()}>{selected.status === "draft" ? "完成教师审核" : selected.status === "reviewed" ? "正式发布" : "撤回报告"}</button>}</footer></article>}</div>}
+    {!loaded ? <LoadingState label="正在加载周期报告…" /> : !selected ? <EmptyState title={view === "classroom" ? "暂无班级周期报告" : "暂无个体周期报告"} description={view === "classroom" ? "选择班级与周期后，系统汇总多幼儿、多时间点的已终审证据。" : "选择幼儿与周期后，系统只汇总教师已采用的证据。"} action={<button className="btn btn-primary" onClick={() => { setForm((current) => ({ ...current, dimension: view })); setModal(true); }}><Plus />生成第一份报告</button>} /> : <div className="report-layout"><Panel className="report-list" title={view === "classroom" ? "班级报告列表" : "个体报告列表"}>{visibleReports.map((report) => <button className={report.id === selected.id ? "selected" : ""} onClick={() => setSelectedId(report.id)} key={report.id}><div><strong>{report.content.title}</strong><span>{reportVersion(report)} · {report.period_start} 至 {report.period_end}</span></div><Badge tone={tone(report.status)}>{statusLabel[report.status]}</Badge></button>)}</Panel>{selected.report_type === "classroom" ? <article className="report-paper class-paper"><header><div><span>同迹 3.0 · 班级证据画像{selected.content.aiMeta ? ` · ${selected.content.aiMeta.provider === "QianwenAIProvider" ? "千问AI" : "模拟AI"}` : ""}</span><h1>{selected.content.title}</h1><p>{selected.period_start} 至 {selected.period_end} · 不展示个体排名与综合分数</p></div><Badge tone={tone(selected.status)}>{statusLabel[selected.status]}</Badge></header><section className="report-highlight"><Sprout /><div><strong>{selected.content.observationCoverage}</strong><p>{selected.content.evidenceBoundary}</p></div></section><div className="report-sections classroom-report-sections"><section><span>01</span><h2>观察覆盖</h2><p>已观察{selected.content.observedChildCount}/{selected.content.totalChildCount}名幼儿，累计{selected.content.observationCount}条证据、{selected.content.timePointCount}个日期。</p><p>场景：{selected.content.sceneCoverage.join("、") || "仍需补充"}</p></section><section><span>02</span><h2>共同兴趣</h2>{selected.content.commonInterests.length ? selected.content.commonInterests.map((item) => <p key={item}>• {item}</p>) : <p>仍需积累更多共同兴趣证据。</p>}</section><section><span>03</span><h2>持续问题</h2>{selected.content.recurringQuestions.length ? selected.content.recurringQuestions.map((item) => <p key={item}>• {item}</p>) : <p>当前没有形成跨观察的持续问题。</p>}</section><section><span>04</span><h2>五大领域证据</h2>{Object.entries(selected.content.domainEvidence).map(([domain, count]) => <p key={domain}>• {domain}：{count}条已终审证据</p>)}</section><section><span>05</span><h2>支持复察与课程线索</h2><p>支持策略复察率：{selected.content.supportFollowUpRate}%</p>{selected.content.curriculumClues.length ? selected.content.curriculumClues.map((item) => <p key={item.id}>• {item.title}（{item.theme}）</p>) : <p>本周期尚未形成课程线索。</p>}</section><section><span>06</span><h2>下一步建议</h2>{selected.content.nextSuggestions.map((item) => <p key={item}>• {item}</p>)}</section></div><footer><span>证据索引：{selected.evidence_observation_ids.join(" · ")}</span>{selected.status !== "withdrawn" && <button className="btn btn-secondary" disabled={busy} onClick={() => void advance()}>{selected.status === "draft" ? "完成教师审核" : selected.status === "reviewed" ? "正式发布" : "撤回报告"}</button>}</footer></article> : <article className="report-paper"><header><div><span>同迹 3.0 · {reportVersion(selected)}{selected.content.aiMeta ? ` · ${selected.content.aiMeta.provider === "QianwenAIProvider" ? "千问AI" : "模拟AI"}` : ""}</span><h1>{selected.content.title}</h1><p>{selected.period_start} 至 {selected.period_end}</p></div><Badge tone={tone(selected.status)}>{statusLabel[selected.status]}</Badge></header><section className="report-highlight"><Sprout /><div><strong>{selected.content.observationCoverage}</strong><p>{selected.content.evidenceBoundary}</p></div></section><div className="report-sections"><section><span>01</span><h2>主要兴趣</h2>{selected.content.interests.map((item) => <p key={item}>• {item}</p>)}</section><section><span>02</span><h2>有证据支持的变化</h2>{selected.content.evidencedGrowth.map((item) => <p key={item}>• {item}</p>)}</section><section><span>03</span><h2>教师支持及效果</h2>{selected.content.teacherSupport.map((item) => <p key={item}>• {item}</p>)}</section><section><span>04</span><h2>{selected.report_type === "guardian" ? "家庭共玩建议" : "待验证与下一计划"}</h2>{(selected.report_type === "guardian" ? selected.content.familySuggestions : [...selected.content.pendingQuestions, ...selected.content.nextPlan]).map((item) => <p key={item}>• {item}</p>)}</section></div><footer><span>证据索引：{selected.evidence_observation_ids.join(" · ")}</span>{selected.status !== "withdrawn" && <button className="btn btn-secondary" disabled={busy} onClick={() => void advance()}>{selected.status === "draft" ? "完成教师审核" : selected.status === "reviewed" ? "正式发布" : "撤回报告"}</button>}</footer></article>}</div>}
     {modal && <Modal title="生成标准周期报告" description={form.dimension === "classroom" ? "班级报告至少需要覆盖2名幼儿、2条已终审观察和2个不同日期。" : "个体报告至少需要2条已终审观察并覆盖2个不同日期。"} onClose={() => setModal(false)}><form className="remote-form" onSubmit={generate}><label><span>报告维度</span><select value={form.dimension} onChange={(event) => setForm({ ...form, dimension: event.target.value })}><option value="individual">幼儿个体</option><option value="classroom">班级画像</option></select></label><label><span>班级</span><select required value={form.classroomId} onChange={(event) => setForm({ ...form, classroomId: event.target.value })}>{classrooms.map((item) => <option value={item.id} key={item.id}>{item.name}</option>)}</select></label>{form.dimension === "individual" && <><label><span>幼儿</span><select required value={form.childId} onChange={(event) => setForm({ ...form, childId: event.target.value })}>{children.filter((child) => child.classroom_id === form.classroomId).map((child) => <option value={child.id} key={child.id}>{child.display_name}</option>)}</select></label><label><span>报告版本</span><select value={form.reportType} onChange={(event) => setForm({ ...form, reportType: event.target.value })}><option value="teacher">教师专业版</option><option value="guardian">家长交流版</option></select></label></>}<label><span>开始日期</span><input required type="date" value={form.periodStart} onChange={(event) => setForm({ ...form, periodStart: event.target.value })} /></label><label><span>结束日期</span><input required type="date" value={form.periodEnd} onChange={(event) => setForm({ ...form, periodEnd: event.target.value })} /></label><button className="btn btn-primary" disabled={busy || (form.dimension === "individual" && !form.childId)} type="submit"><Save />生成草稿</button></form></Modal>}
   </div>;
 }

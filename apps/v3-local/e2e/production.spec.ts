@@ -76,16 +76,22 @@ async function mockApi(page: Page, role: "teacher" | "researcher", withAnalysis 
   });
 }
 
+async function openWorkspaceMenu(page: Page) {
+  await page.getByRole("button", { name: "打开全部功能菜单" }).click();
+  await expect(page.getByRole("navigation", { name: "全部功能" })).toBeVisible();
+}
+
 test("生产教师端只显示两角色模型下的核心工作区", async ({ page }) => {
   await mockApi(page, "teacher");
   await page.goto("/");
-  await expect(page.getByRole("heading", { name: "陈老师，从真实观察开始" })).toBeVisible();
-  await expect(page.getByRole("button", { name: "记录新观察" })).toBeVisible();
-  await expect(page.getByText("Supabase 正式数据")).toBeVisible();
+  await expect(page.getByRole("heading", { name: "每一次，从老师的观察开始" })).toBeVisible();
+  await expect(page.getByRole("button", { name: /标准观察/ })).toBeVisible();
+  await expect(page.getByLabel("同迹功能主页").getByText("观察  ·  识别  ·  应答  ·  拓展")).toBeVisible();
   await expect(page.getByRole("link", { name: "账号管理" })).toHaveCount(0);
-  await page.getByRole("link", { name: "班级与幼儿" }).click();
+  await page.getByRole("button", { name: /班级与幼儿/ }).click();
   await expect(page.getByRole("heading", { name: "班级与幼儿管理" })).toBeVisible();
   await expect(page.getByText("乐乐", { exact: true })).toBeVisible();
+  await openWorkspaceMenu(page);
   await page.getByRole("link", { name: "标准观察" }).click();
   await expect(page.getByRole("button", { name: "新建观察" })).toBeVisible();
   await page.getByRole("button", { name: "新建观察" }).click();
@@ -100,11 +106,14 @@ test("生产教师端只显示两角色模型下的核心工作区", async ({ pa
   expect(dialogBox!.y + dialogBox!.height).toBeLessThanOrEqual(viewport!.height);
   await page.keyboard.press("Escape");
   await expect(dialog).toBeHidden();
+  await openWorkspaceMenu(page);
   await page.getByRole("link", { name: "成长与应答" }).click();
   await expect(page.getByRole("heading", { name: "成长轨迹与应答追踪" })).toBeVisible();
+  await openWorkspaceMenu(page);
   await page.getByRole("link", { name: "周期报告" }).click();
   await expect(page.getByRole("heading", { name: "标准周期报告" })).toBeVisible();
   await expect(page.getByRole("button", { name: "浏览器打印" })).toBeDisabled();
+  await openWorkspaceMenu(page);
   await page.getByRole("link", { name: "课程生成" }).click();
   await expect(page.getByRole("heading", { name: "从持续游戏证据生成课程" })).toBeVisible();
 });
@@ -150,7 +159,7 @@ test("手机端提供清晰的全部功能入口", async ({ page }) => {
 test("生产教研员端可进入真实账号管理", async ({ page }) => {
   await mockApi(page, "researcher");
   await page.goto("/");
-  await page.getByRole("link", { name: "账号管理" }).click();
+  await page.getByRole("button", { name: /账号管理/ }).click();
   await expect(page.getByRole("heading", { name: "账号与权限管理" })).toBeVisible();
   await expect(page.getByRole("button", { name: "新增账号" })).toBeVisible();
   await expect(page.getByText("陈老师", { exact: true })).toBeVisible();
@@ -159,10 +168,12 @@ test("生产教研员端可进入真实账号管理", async ({ page }) => {
 test("教研治理模块按角色开放", async ({ page }) => {
   await mockApi(page, "researcher");
   await page.goto("/");
-  await page.getByRole("link", { name: "观察质量审核" }).first().click();
+  await page.getByRole("button", { name: /观察质量审核/ }).click();
   await expect(page.getByRole("heading", { name: "观察质量审核" })).toBeVisible();
+  await openWorkspaceMenu(page);
   await page.getByRole("link", { name: "导出审批" }).click();
   await expect(page.getByRole("heading", { name: "敏感数据导出审批" })).toBeVisible();
+  await openWorkspaceMenu(page);
   await page.getByRole("link", { name: "教研活动" }).click();
   await expect(page.getByRole("heading", { name: "教研活动模式" })).toBeVisible();
 });
