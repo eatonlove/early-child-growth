@@ -97,10 +97,10 @@
 
 ### 4.2 媒体证据
 
-1. `POST /observations/:id/evidence-ticket` 获取2小时有效的Supabase签名上传凭证。
-2. 浏览器使用签名凭证直接上传到私有 bucket，不经过轻量服务器内存。
-3. `POST /evidence/:id/complete` 校验对象存在并将证据标记为 `ready`。
-4. `GET /evidence/:id/download` 返回5分钟有效的私有查看链接。
+1. `POST /observations/:id/evidence-ticket` 校验观察、授权、媒体类型和大小并创建待上传证据。
+2. `POST /evidence/:id/upload` 通过童迹API受控上传到私有 bucket，避免向浏览器暴露内部Supabase地址。
+3. 服务端核对文件大小、媒体类型、租户和授权后将证据标记为 `ready`。
+4. `GET /evidence/:id/download` 返回5分钟有效、使用公网HTTPS域名的私有查看链接。
 
 对象路径固定为：
 

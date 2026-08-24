@@ -5,7 +5,7 @@ import type { KnowledgeRow, MediaForAnalysis } from "../ai/contracts.js";
 import { createAIProvider } from "../ai/provider.js";
 import { config } from "../config.js";
 import { ApiError, audit, authenticate } from "../http.js";
-import { serviceClient } from "../supabase.js";
+import { publicSupabaseUrl, serviceClient } from "../supabase.js";
 
 const uuid = z.string().uuid();
 const responseSchema = z.object({
@@ -242,7 +242,7 @@ export async function observationRoutes(app: FastifyInstance) {
     if (!evidence?.storage_path || evidence.upload_status !== "ready") throw new ApiError(404, "EVIDENCE_NOT_READY", "证据不存在或尚未上传完成");
     const { data, error } = await serviceClient.storage.from(config.SUPABASE_STORAGE_BUCKET).createSignedUrl(evidence.storage_path, 300);
     if (error || !data) throw new ApiError(500, "DOWNLOAD_URL_FAILED", "证据查看链接创建失败");
-    return { url: data.signedUrl, expiresIn: 300 };
+    return { url: publicSupabaseUrl(data.signedUrl), expiresIn: 300 };
   });
 
   app.post("/api/observations/:id/analyze", { config: { rateLimit: { max: 20, timeWindow: "1 hour" } } }, async (request, reply) => {
@@ -272,7 +272,7 @@ export async function observationRoutes(app: FastifyInstance) {
           id: item.id,
           evidenceType: item.evidence_type as "photo" | "video",
           mimeType: item.mime_type || (item.evidence_type === "video" ? "video/mp4" : "image/jpeg"),
-          signedUrl: data.signedUrl,
+          signedUrl: publicSupabaseUrl(data.signedUrl),
         } satisfies MediaForAnalysis;
       }));
       media = signed.filter((item): item is MediaForAnalysis => item !== null);

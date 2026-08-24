@@ -4,6 +4,14 @@ import { config } from "./config.js";
 const authOptions = { autoRefreshToken: false, persistSession: false, detectSessionInUrl: false };
 const serverSupabaseUrl = config.SUPABASE_INTERNAL_URL ?? config.SUPABASE_URL;
 
+export function publicSupabaseUrl(value: string) {
+  const publicBase = new URL(config.SUPABASE_URL);
+  const target = new URL(value);
+  target.protocol = publicBase.protocol;
+  target.host = publicBase.host;
+  return target.toString();
+}
+
 export const serviceClient = createClient(serverSupabaseUrl, config.SUPABASE_SERVICE_ROLE_KEY, {
   auth: authOptions,
   db: { schema: config.SUPABASE_SCHEMA },
