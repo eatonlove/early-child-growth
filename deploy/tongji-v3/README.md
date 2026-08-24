@@ -45,6 +45,7 @@ apps/v3-api/supabase/migrations/20260821104500_tongji_v3_auth_domain_isolation.s
 apps/v3-api/supabase/migrations/20260821121751_fix_classroom_returning_rls.sql
 apps/v3-api/supabase/migrations/20260821122655_fix_research_activity_returning_rls.sql
 apps/v3-api/supabase/migrations/20260824064422_preserve_archived_classroom_history.sql
+apps/v3-api/supabase/migrations/20260824072542_add_claim_reviews_and_semantic_evidence.sql
 ```
 
 托管 Supabase：
@@ -119,12 +120,12 @@ curl -fsS https://tongji.meidaquan.com/api/healthz   # API健康
 5. 媒体使用签名地址进入私有bucket。
 6. AI输出事实、解释、假设、知识依据与应答，页面显示实际Provider与模型。
 7. 千问媒体分析开启后，仅授权为 `granted` 的图片/视频画面会参与分析，视频音轨不处理。
-8. 采用AI结果后生成应答；放弃后不生成。
+8. 教师可逐条采用、修改、拒绝或标记待验证；终审后只为采用或修改的应答建议创建行动。
 9. 停用账号后，旧页面下一次请求立即失败。
 10. 教研员可完成观察质量审核与导出审批，教师无审批权限。
 11. 教研活动进行中教师可提交独立记录，结束后停止提交。
 12. 采用AI建议后可实施应答、填写复察证据并进入成长轨迹。
-13. 报告仅汇总已采用证据，课程线索可回链多幼儿、多时间点观察。
+13. 报告至少需要2条、跨2个日期的终审证据；课程线索使用可解释语义聚类并回链多幼儿、多时间点观察。
 
 ## 7. 更新、回滚与备份
 

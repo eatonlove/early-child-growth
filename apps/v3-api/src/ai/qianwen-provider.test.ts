@@ -47,6 +47,13 @@ const response = {
     activity: ["在下一次建构中复察。"],
   },
   nextObservation: ["是否主动比较材料稳定性"],
+  historicalComparison: {
+    evidenceCount: 0,
+    timePointCount: 0,
+    changes: [],
+    stablePatterns: [],
+    caution: "没有历史证据，不能进行跨时间判断。",
+  },
   evidenceSufficiency: "有限",
   warnings: ["结论需要教师审核。"],
 };
@@ -85,6 +92,7 @@ describe("QianwenAIProvider", () => {
       knowledge: [card],
       evidence: [{ id: "evidence-1", evidence_type: "video", mime_type: "video/mp4" }],
       media: [{ id: "evidence-1", evidenceType: "video", mimeType: "video/mp4", signedUrl: "https://storage.example/signed-video" }],
+      history: [],
     });
 
     expect(generated.provider).toBe("QianwenAIProvider");
@@ -128,6 +136,7 @@ describe("QianwenAIProvider", () => {
       knowledge: [card],
       evidence: [],
       media: [],
+      history: [],
     });
 
     expect(generated.data.facts[0]?.evidenceIds).toEqual(["teacher-observation"]);
@@ -176,5 +185,56 @@ describe("QianwenAIProvider", () => {
     const apiRequest = JSON.parse(requestBody);
     const prompt = JSON.parse(apiRequest.messages[1].content);
     expect(prompt.observations[0].occurredDate).toBe("2026-08-24");
+  });
+
+  it("accepts only allowlisted historical evidence in growth comparison", async () => {
+    let requestBody = "";
+    const historyId = "11111111-1111-4111-8111-111111111111";
+    const historyResponse = {
+      ...response,
+      facts: [{ ...response.facts[0], evidenceIds: ["teacher-observation"] }],
+      interpretations: [{ ...response.interpretations[0], evidenceIds: ["teacher-observation"] }],
+      historicalComparison: {
+        evidenceCount: 5,
+        timePointCount: 5,
+        changes: [{
+          dimension: "问题解决策略",
+          content: "与上次相比，本次出现再次测试的线索。",
+          previousEvidenceIds: [`observation:${historyId}`],
+          currentEvidenceIds: ["teacher-observation"],
+          confidence: 0.7,
+        }],
+        stablePatterns: [],
+        caution: "仍需更多时间点。",
+      },
+    };
+    const fetcher = vi.fn(async (_url: string | URL | Request, init?: RequestInit) => {
+      requestBody = String(init?.body ?? "");
+      return new Response(JSON.stringify({ choices: [{ message: { content: JSON.stringify(historyResponse) } }] }), {
+        status: 200, headers: { "Content-Type": "application/json" },
+      });
+    });
+    const provider = new QianwenAIProvider({
+      apiKey: "sk-test-only", baseUrl: "https://dashscope.aliyuncs.com/compatible-mode/v1",
+      textModel: "qwen3.7-plus", visionModel: "qwen3.7-plus", timeoutMs: 5000,
+    }, fetcher as typeof fetch);
+    const generated = await provider.analyzeObservation({
+      observation: {
+        teacher_observation: "幼儿移动桥墩后再次测试。", child_quote: null,
+        teacher_identification: "正在比较支撑位置。",
+        teacher_response: { category: "material", strategy: "提供支撑物", nextObservationFocus: "继续比较" },
+        scene: "建构区", theme: "桥梁", organization_stage: "process",
+      },
+      child: { id: "child-1", display_name: "演示幼儿", birth_month: "2022-05" },
+      classroom: { id: "class-1", grade: "middle" }, knowledge: [card], evidence: [], media: [],
+      history: [{
+        id: historyId, occurred_at: "2026-08-01T09:00:00+08:00", scene: "建构区", theme: "桥梁",
+        teacher_observation: "幼儿把两块积木放在桥面下。", child_quote: null,
+        teacher_identification: "开始关注支撑。",
+        teacher_response: { category: "material", strategy: "保留材料", nextObservationFocus: "观察调整" },
+      }],
+    });
+    expect(generated.data.historicalComparison).toMatchObject({ evidenceCount: 1, timePointCount: 1 });
+    expect(requestBody).toContain(`observation:${historyId}`);
   });
 });

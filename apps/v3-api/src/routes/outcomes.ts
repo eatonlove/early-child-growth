@@ -1,8 +1,10 @@
 import type { FastifyInstance } from "fastify";
 import { z } from "zod";
 import { createAIProvider } from "../ai/provider.js";
+import { effectiveAnalysisResult } from "../analysis-claims.js";
 import { config } from "../config.js";
 import { ApiError, audit, authenticate } from "../http.js";
+import { chinaCalendarDate, reportEvidenceCoverage } from "../report-evidence.js";
 
 const uuid = z.string().uuid();
 const date = z.string().regex(/^\d{4}-\d{2}-\d{2}$/);
@@ -85,7 +87,16 @@ export async function outcomeRoutes(app: FastifyInstance) {
       auth.data.from("support_actions").select("*").eq("child_id", id).order("created_at"),
     ]);
     if (observationError || analysisError || supportError) throw new ApiError(500, "GROWTH_READ_FAILED", "成长轨迹读取失败");
-    const analysisMap = new Map((analyses ?? []).map((item) => [item.observation_id, item]));
+    const analysisIds = (analyses ?? []).map((item) => item.id);
+    const { data: claimReviews, error: reviewError } = analysisIds.length
+      ? await auth.data.from("analysis_claim_reviews").select("*").in("analysis_run_id", analysisIds)
+      : { data: [], error: null };
+    if (reviewError) throw new ApiError(500, "GROWTH_REVIEW_READ_FAILED", "成长轨迹正式审核结论读取失败");
+    const analysisMap = new Map((analyses ?? []).map((item) => [item.observation_id, {
+      ...item,
+      structured_result: effectiveAnalysisResult(item.structured_result, (claimReviews ?? []).filter((review) => review.analysis_run_id === item.id)),
+      claim_reviews: (claimReviews ?? []).filter((review) => review.analysis_run_id === item.id),
+    }]));
     return {
       child,
       timeline: (observations ?? []).map((observation) => ({
@@ -131,9 +142,21 @@ export async function outcomeRoutes(app: FastifyInstance) {
       auth.data.from("support_actions").select("*").eq("child_id", child.id),
     ]);
     if (observationError || analysisError || supportError) throw new ApiError(500, "REPORT_CONTEXT_READ_FAILED", "周期报告证据读取失败");
-    if (!observations?.length) throw new ApiError(409, "REPORT_EVIDENCE_INSUFFICIENT", "本周期没有教师已采用的连续证据，暂不能生成正式报告");
+    const coverage = reportEvidenceCoverage(observations ?? []);
+    if (!coverage.eligible) {
+      throw new ApiError(409, "REPORT_MULTI_TIMEPOINT_REQUIRED", "周期报告至少需要2条、跨2个不同日期且经教师终审采用的观察证据");
+    }
     const observationIds = observations.map((item) => item.id);
     const usedAnalyses = (analyses ?? []).filter((item) => observationIds.includes(item.observation_id));
+    const analysisIds = usedAnalyses.map((item) => item.id);
+    const { data: claimReviews, error: reviewError } = analysisIds.length
+      ? await auth.data.from("analysis_claim_reviews").select("*").in("analysis_run_id", analysisIds)
+      : { data: [], error: null };
+    if (reviewError) throw new ApiError(500, "REPORT_REVIEW_CONTEXT_FAILED", "报告正式审核结论读取失败");
+    const effectiveAnalyses = usedAnalyses.map((analysis) => ({
+      ...analysis,
+      structured_result: effectiveAnalysisResult(analysis.structured_result, (claimReviews ?? []).filter((review) => review.analysis_run_id === analysis.id)),
+    }));
     const usedSupports = (supports ?? []).filter((item) => observationIds.includes(item.observation_id));
     let generated;
     try {
@@ -143,7 +166,7 @@ export async function outcomeRoutes(app: FastifyInstance) {
         periodStart: input.periodStart,
         periodEnd: input.periodEnd,
         observations,
-        analyses: usedAnalyses,
+        analyses: effectiveAnalyses,
         supports: usedSupports,
       });
     } catch {
@@ -180,6 +203,7 @@ export async function outcomeRoutes(app: FastifyInstance) {
     await audit(auth, "report.generated", "period_report", data.id, {
       reportType: data.report_type,
       evidenceCount: observationIds.length,
+      timePointCount: coverage.timePointCount,
       provider: generated.provider,
       model: generated.model,
       fallbackUsed: Boolean(generated.fallbackReason),
@@ -219,15 +243,30 @@ export async function outcomeRoutes(app: FastifyInstance) {
   app.post("/api/curriculum-clues/scan", { config: { rateLimit: { max: 10, timeWindow: "1 hour" } } }, async (request) => {
     const auth = await authenticate(request);
     const { classroomId } = z.object({ classroomId: uuid }).parse(request.body);
-    const { data: observations, error } = await auth.data.from("observations").select("id, child_id, theme, occurred_at, teacher_identification, teacher_response").eq("classroom_id", classroomId).eq("status", "adopted").order("occurred_at");
+    const { data: observations, error } = await auth.data.from("observations").select("id, child_id, scene, theme, occurred_at, teacher_identification, teacher_response").eq("classroom_id", classroomId).eq("status", "adopted").order("occurred_at");
     if (error) throw new ApiError(500, "CURRICULUM_SCAN_FAILED", "课程线索扫描失败");
-    const groups = new Map<string, typeof observations>();
-    for (const observation of observations ?? []) groups.set(observation.theme.trim(), [...(groups.get(observation.theme.trim()) ?? []), observation]);
+    if (!observations?.length) return { items: [] };
+    let clustered;
+    try {
+      clustered = await aiProvider.clusterInterests({ observations: observations.map((item) => ({
+        id: item.id,
+        theme: item.theme,
+        scene: item.scene,
+        teacher_identification: item.teacher_identification,
+        teacher_response: item.teacher_response,
+      })) });
+    } catch {
+      throw new ApiError(502, "AI_INTEREST_CLUSTER_FAILED", "兴趣语义聚类暂时不可用，请稍后重试");
+    }
+    if (clustered.fallbackReason) request.log.warn({ classroomId, fallbackReason: clustered.fallbackReason }, "interest clustering used safe fallback");
+    const observationMap = new Map(observations.map((item) => [item.id, item]));
     const results = [];
-    for (const [theme, group] of groups) {
+    for (const cluster of clustered.data.clusters) {
+      const theme = cluster.label;
+      const group = cluster.observationIds.map((id) => observationMap.get(id)).filter((item): item is NonNullable<typeof item> => Boolean(item));
       if (!group || group.length < 2) continue;
       const childIds = [...new Set(group.map((item) => item.child_id))];
-      const timePoints = [...new Set(group.map((item) => item.occurred_at.slice(0, 10)))];
+      const timePoints = [...new Set(group.map((item) => chinaCalendarDate(item.occurred_at)))];
       const thresholdMet = (childIds.length >= 2 || group.length >= 3) && timePoints.length >= 2;
       let generated = null;
       if (thresholdMet) {
@@ -272,8 +311,29 @@ export async function outcomeRoutes(app: FastifyInstance) {
             promptVersion: generated?.promptVersion,
             fallbackUsed: Boolean(generated?.fallbackReason),
           },
+          semanticCluster: {
+            label: cluster.label,
+            aliases: cluster.aliases,
+            rationale: cluster.rationale,
+            provider: clustered.provider,
+            model: clustered.model,
+            promptVersion: clustered.promptVersion,
+            fallbackUsed: Boolean(clustered.fallbackReason),
+          },
           version: 1,
-        } : { existingExperience: group.map((item) => item.teacher_identification).filter(Boolean).slice(0, 6), version: 1 },
+        } : {
+          existingExperience: group.map((item) => item.teacher_identification).filter(Boolean).slice(0, 6),
+          semanticCluster: {
+            label: cluster.label,
+            aliases: cluster.aliases,
+            rationale: cluster.rationale,
+            provider: clustered.provider,
+            model: clustered.model,
+            promptVersion: clustered.promptVersion,
+            fallbackUsed: Boolean(clustered.fallbackReason),
+          },
+          version: 1,
+        },
         child_ids: childIds,
         evidence_observation_ids: group.map((item) => item.id),
         time_point_count: timePoints.length,
@@ -294,6 +354,8 @@ export async function outcomeRoutes(app: FastifyInstance) {
       observationCount: observations?.length ?? 0,
       clueCount: results.length,
       aiMode: config.AI_MODE,
+      clusteringProvider: clustered.provider,
+      clusteringModel: clustered.model,
     });
     return { items: results };
   });

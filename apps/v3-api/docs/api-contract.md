@@ -109,12 +109,14 @@
 {tenant_id}/{classroom_id}/{child_id}/{observation_id}/{random_uuid}.{ext}
 ```
 
-## 5. AI 分析与教师选择
+## 5. AI 分析与教师逐条审核
 
 | 方法 | 路径 | 作用 |
 |---|---|---|
 | POST | `/observations/:id/analyze` | 按班级年龄检索知识卡，由当前AI Provider生成结构化草稿 |
-| POST | `/analyses/:id/decision` | 教师对整份AI结果选择采用或放弃 |
+| PATCH | `/analyses/:id/claims/:claimKey` | 对单条结论采用、修改、拒绝或标记待验证 |
+| POST | `/analyses/:id/finalize` | 所有结论处理完成后执行教师终审 |
+| POST | `/analyses/:id/decision` | 兼容旧客户端的整份处理接口，内部仍转换为逐条审核 |
 
 分析只接受已经提交的教师记录。`AI_MODE=qianwen` 时使用 `QianwenAIProvider`；在监护授权为 `granted` 且 `QWEN_MEDIA_ANALYSIS_ENABLED=true` 时，可将私有图片或视频的15分钟签名链接作为多模态输入。视频只分析画面，不处理音轨。未启用千问或安全回退时使用 `ScenarioAIProvider`，页面必须显示实际 Provider 和模型。
 
@@ -137,6 +139,19 @@
     "activity": []
   },
   "nextObservation": [],
+  "historicalComparison": {
+    "evidenceCount": 2,
+    "timePointCount": 2,
+    "changes": [{
+      "dimension": "问题解决策略",
+      "content": "与前次相比出现了新的尝试线索",
+      "previousEvidenceIds": ["observation:历史观察ID"],
+      "currentEvidenceIds": ["teacher-observation"],
+      "confidence": 0.7
+    }],
+    "stablePatterns": [],
+    "caution": "只进行个体跨时间比较，仍需后续验证"
+  },
   "evidenceSufficiency": "有限 | 初步充分",
   "warnings": ["必须由教师审核"]
 }
@@ -144,16 +159,17 @@
 
 接口同时返回 `aiNotice`；`analysis_runs.provider`、`model`、`prompt_version`、`knowledge_card_ids` 和 `risk_flags` 保存本次生成的可追溯信息。千问返回的指标编码和证据ID必须在请求白名单内，否则整次结果作废并按配置回退或报错。
 
-采用请求：
+逐条审核请求：
 
 ```json
 {
-  "decision": "adopted",
-  "note": "教师采用理由"
+  "decision": "modified",
+  "content": "教师修改后的正式表述",
+  "note": "修改依据"
 }
 ```
 
-数据库函数 `tongji_v3.decide_analysis` 在同一事务内完成：AI结果决策、观察状态更新和待实施应答创建。放弃时不创建应答。
+`decision` 可取 `adopted | modified | rejected | to_verify`。AI原文保存在 `analysis_runs.structured_result`，教师决定与修改稿保存在 `analysis_claim_reviews`，二者不会互相覆盖。所有审核项不再有 `pending` 后，调用终审接口；数据库函数 `tongji_v3.finalize_analysis_review` 在同一事务内更新分析和观察状态，并且只把教师采用或修改的应答建议创建为待实施行动。拒绝及待验证项不会进入成长轨迹或报告。
 
 ## 6. 知识库
 
@@ -174,10 +190,10 @@
 | PATCH | `/support-actions/:id` | 按“实施、复察、验证、关闭”状态机记录效果证据 |
 | GET | `/children/:id/growth` | 汇总该幼儿已采用观察、分析和应答效果时间轴 |
 | GET | `/reports` | 查看权限范围内的周期报告 |
-| POST | `/reports/generate` | 从指定周期内已采用证据由当前AI Provider生成教师版或家长版草稿 |
+| POST | `/reports/generate` | 从至少2条、跨2个日期的终审证据生成教师版或家长版草稿 |
 | PATCH | `/reports/:id/status` | 完成审核、发布或撤回 |
 | GET | `/curriculum-clues` | 查看多幼儿、多时间点课程线索 |
-| POST | `/curriculum-clues/scan` | 按持续兴趣和证据门槛扫描线索，达到门槛后由当前AI Provider生成课程草案 |
+| POST | `/curriculum-clues/scan` | 先按主题、场景和教师识别进行可解释语义聚类，再按证据门槛生成课程草案 |
 | PATCH | `/curriculum-clues/:id` | 保存可编辑课程草案新版本并推进状态 |
 
 报告没有已采用证据时拒绝生成。课程线索至少满足“2名幼儿或同一幼儿3次观察”，并跨越不少于2个时间点；系统只生成可修改草案。

@@ -12,7 +12,7 @@ export const analysisJsonSchema = {
   required: [
     "objectiveSummary", "facts", "interpretations", "hypotheses", "teacherComparison",
     "currentExperience", "interestsAndStrengths", "evidenceGaps", "developmentReferences",
-    "responseSuggestions", "nextObservation", "evidenceSufficiency", "warnings",
+    "responseSuggestions", "nextObservation", "historicalComparison", "evidenceSufficiency", "warnings",
   ],
   properties: {
     objectiveSummary: string(4000),
@@ -114,8 +114,71 @@ export const analysisJsonSchema = {
       },
     },
     nextObservation: { ...stringArray(6), minItems: 1 },
+    historicalComparison: {
+      type: "object",
+      additionalProperties: false,
+      required: ["evidenceCount", "timePointCount", "changes", "stablePatterns", "caution"],
+      properties: {
+        evidenceCount: { type: "integer", minimum: 0, maximum: 20 },
+        timePointCount: { type: "integer", minimum: 0, maximum: 20 },
+        changes: {
+          type: "array",
+          maxItems: 8,
+          items: {
+            type: "object",
+            additionalProperties: false,
+            required: ["dimension", "content", "previousEvidenceIds", "currentEvidenceIds", "confidence"],
+            properties: {
+              dimension: string(120),
+              content: string(2000),
+              previousEvidenceIds: { ...stringArray(8, 100), minItems: 1 },
+              currentEvidenceIds: { ...stringArray(5, 100), minItems: 1 },
+              confidence,
+            },
+          },
+        },
+        stablePatterns: {
+          type: "array",
+          maxItems: 6,
+          items: {
+            type: "object",
+            additionalProperties: false,
+            required: ["content", "evidenceIds", "confidence"],
+            properties: {
+              content: string(2000),
+              evidenceIds: { ...stringArray(10, 100), minItems: 2 },
+              confidence,
+            },
+          },
+        },
+        caution: string(1000),
+      },
+    },
     evidenceSufficiency: { type: "string", enum: ["有限", "初步充分"] },
     warnings: { ...stringArray(8), minItems: 1 },
+  },
+} as const;
+
+export const interestClusterJsonSchema = {
+  type: "object",
+  additionalProperties: false,
+  required: ["clusters"],
+  properties: {
+    clusters: {
+      type: "array",
+      maxItems: 30,
+      items: {
+        type: "object",
+        additionalProperties: false,
+        required: ["label", "aliases", "observationIds", "rationale"],
+        properties: {
+          label: string(120),
+          aliases: stringArray(12, 120),
+          observationIds: { type: "array", minItems: 1, maxItems: 100, items: { type: "string", format: "uuid" } },
+          rationale: string(1000),
+        },
+      },
+    },
   },
 } as const;
 

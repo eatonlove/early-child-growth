@@ -4,12 +4,14 @@ import type {
   AnalysisResult,
   CurriculumDraft,
   CurriculumGenerationInput,
+  InterestClusteringInput,
+  InterestClusterResult,
   ObservationAnalysisInput,
   ReportContent,
   ReportGenerationInput,
 } from "./contracts.js";
 import { QianwenAIProvider, type QianwenProviderOptions } from "./qianwen-provider.js";
-import { buildScenarioAnalysis, buildScenarioCurriculum, buildScenarioReport } from "./scenario-provider.js";
+import { buildScenarioAnalysis, buildScenarioCurriculum, buildScenarioInterestClusters, buildScenarioReport } from "./scenario-provider.js";
 
 export interface AIProviderConfig extends QianwenProviderOptions {
   mode: "simulated" | "qianwen";
@@ -19,7 +21,7 @@ export interface AIProviderConfig extends QianwenProviderOptions {
 class ScenarioAIProvider implements AIAnalysisProvider {
   async analyzeObservation(input: ObservationAnalysisInput): Promise<AIGeneration<AnalysisResult>> {
     return {
-      data: buildScenarioAnalysis(input.observation, input.knowledge),
+      data: buildScenarioAnalysis(input.observation, input.knowledge, input.history),
       provider: "ScenarioAIProvider",
       model: "simulated-ai-v3",
       promptVersion: "observation-analysis.v3.2",
@@ -49,6 +51,17 @@ class ScenarioAIProvider implements AIAnalysisProvider {
       notice: "当前使用模拟AI规则生成课程草案，课程路径仍由教师和教研员调整。",
     };
   }
+
+  async clusterInterests(input: InterestClusteringInput): Promise<AIGeneration<InterestClusterResult>> {
+    return {
+      data: buildScenarioInterestClusters(input),
+      provider: "ScenarioAIProvider",
+      model: "simulated-semantic-rules-v1",
+      promptVersion: "curriculum-interest-clustering.v1",
+      mediaAnalyzed: false,
+      notice: "当前使用本地语义规则聚合相近兴趣主题，聚类结果仍需教研员结合证据审核。",
+    };
+  }
 }
 
 class ResilientAIProvider implements AIAnalysisProvider {
@@ -68,6 +81,10 @@ class ResilientAIProvider implements AIAnalysisProvider {
 
   generateCurriculum(input: CurriculumGenerationInput) {
     return this.withFallback("curriculum", () => this.primary.generateCurriculum(input), () => this.fallback.generateCurriculum(input));
+  }
+
+  clusterInterests(input: InterestClusteringInput) {
+    return this.withFallback("interest-clustering", () => this.primary.clusterInterests(input), () => this.fallback.clusterInterests(input));
   }
 
   private async withFallback<T>(

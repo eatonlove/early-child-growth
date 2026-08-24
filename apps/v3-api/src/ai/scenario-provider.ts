@@ -2,6 +2,9 @@ import type {
   AnalysisResult,
   CurriculumDraft,
   CurriculumGenerationInput,
+  HistoricalObservationEvidence,
+  InterestClusteringInput,
+  InterestClusterResult,
   KnowledgeRow,
   ObservationForAnalysis,
   ReportContent,
@@ -40,7 +43,11 @@ export function rankKnowledgeCards(observation: ObservationForAnalysis, cards: K
     .map(({ card }) => card);
 }
 
-export function buildScenarioAnalysis(observation: ObservationForAnalysis, cards: KnowledgeRow[]): AnalysisResult {
+export function buildScenarioAnalysis(
+  observation: ObservationForAnalysis,
+  cards: KnowledgeRow[],
+  history: HistoricalObservationEvidence[] = [],
+): AnalysisResult {
   const facts = splitEvidence(observation.teacher_observation);
   if (observation.child_quote?.trim()) facts.push(`幼儿原话：“${observation.child_quote.trim()}”`);
   const matched = rankKnowledgeCards(observation, cards);
@@ -94,12 +101,82 @@ export function buildScenarioAnalysis(observation: ObservationForAnalysis, cards
       activity: response["活动支持"] ?? ["安排下一次相近情境复察，并记录支持前后的策略变化。"],
     },
     nextObservation: matched.flatMap((card) => card.next_observation_prompts).slice(0, 4),
+    historicalComparison: {
+      evidenceCount: history.length,
+      timePointCount: new Set(history.map((item) => item.occurred_at.slice(0, 10))).size,
+      changes: history.length ? [{
+        dimension: "游戏策略与经验表达",
+        content: `与最近一次已采用观察相比，本次围绕“${observation.theme}”出现了可继续比较的行动或表达线索；变化方向仍需教师结合两次原始记录确认。`,
+        previousEvidenceIds: [`observation:${history.at(-1)!.id}`],
+        currentEvidenceIds: ["teacher-observation"],
+        confidence: 0.68,
+      }] : [],
+      stablePatterns: history.length >= 2 && history.slice(-2).every((item) => item.theme === observation.theme) ? [{
+        content: `围绕“${observation.theme}”的兴趣已在多个时间点出现，但是否跨情境稳定仍需复察。`,
+        evidenceIds: history.slice(-2).map((item) => `observation:${item.id}`),
+        confidence: 0.7,
+      }] : [],
+      caution: history.length
+        ? `本次比较读取了${history.length}条更早的已采用观察，只描述时间内变化，不与其他幼儿比较。`
+        : "当前没有更早的已采用观察，不能形成跨时间成长判断。",
+    },
     evidenceSufficiency: facts.length >= 3 && matched.length >= 2 ? "初步充分" : "有限",
     warnings: [
       "本结果为模拟AI建议稿，未读取真实视频画面或音轨。",
       "单次观察不能形成稳定发展结论，不输出达标/不达标、排名或诊断。",
       ...matched.map((card) => card.misunderstanding_warning).filter(Boolean).slice(0, 2),
     ],
+  };
+}
+
+const semanticThemes: Array<{ label: string; pattern: RegExp }> = [
+  { label: "建构与结构探究", pattern: /建构|积木|搭建|建筑|桥梁|轨道|结构|平衡/ },
+  { label: "沙水与物质探究", pattern: /沙水|玩沙|泥|水流|管道|沉浮|泡泡|液体/ },
+  { label: "自然与生命探究", pattern: /自然|种植|植物|花|树叶|昆虫|动物|生命/ },
+  { label: "角色与社会交往", pattern: /角色|表演|商店|医院|家庭|餐厅|舞台|合作/ },
+  { label: "艺术表达与创造", pattern: /艺术|绘画|音乐|舞蹈|美工|色彩|创作/ },
+  { label: "运动与身体挑战", pattern: /户外|运动|攀爬|骑行|球|跳跃|平衡车/ },
+  { label: "科学现象探究", pattern: /科学|光影|磁|声音|风|电|实验|观察/ },
+];
+
+const semanticLabel = (text: string) => semanticThemes.find((item) => item.pattern.test(text))?.label;
+const bigrams = (value: string) => {
+  const text = value.replace(/[\s，。！？、：；《》（）()“”'"·_-]/g, "");
+  return new Set(Array.from({ length: Math.max(0, text.length - 1) }, (_, index) => text.slice(index, index + 2)));
+};
+const semanticSimilarity = (left: string, right: string) => {
+  const a = bigrams(left);
+  const b = bigrams(right);
+  const intersection = [...a].filter((item) => b.has(item)).length;
+  return intersection / Math.max(1, Math.min(a.size, b.size));
+};
+
+export function buildScenarioInterestClusters(input: InterestClusteringInput): InterestClusterResult {
+  const observations = input.observations;
+  const parent = observations.map((_, index) => index);
+  const root = (index: number): number => parent[index] === index ? index : (parent[index] = root(parent[index]!));
+  const join = (left: number, right: number) => { parent[root(right)] = root(left); };
+  observations.forEach((left, leftIndex) => observations.slice(leftIndex + 1).forEach((right, offset) => {
+    const rightIndex = leftIndex + offset + 1;
+    const leftText = `${left.theme} ${left.scene} ${left.teacher_identification}`;
+    const rightText = `${right.theme} ${right.scene} ${right.teacher_identification}`;
+    const leftLabel = semanticLabel(leftText);
+    const rightLabel = semanticLabel(rightText);
+    if ((leftLabel && leftLabel === rightLabel) || semanticSimilarity(leftText, rightText) >= 0.28) join(leftIndex, rightIndex);
+  }));
+  const groups = new Map<number, typeof observations>();
+  observations.forEach((item, index) => groups.set(root(index), [...(groups.get(root(index)) ?? []), item]));
+  return {
+    clusters: [...groups.values()].map((group) => {
+      const text = group.map((item) => `${item.theme} ${item.scene} ${item.teacher_identification}`).join(" ");
+      const label = semanticLabel(text) ?? mostFrequent(group.map((item) => item.theme), 1)[0] ?? "持续游戏兴趣";
+      return {
+        label,
+        aliases: [...new Set(group.map((item) => item.theme))],
+        observationIds: group.map((item) => item.id),
+        rationale: `依据主题别名、游戏场景及教师识别中的共同兴趣语义归为“${label}”。`,
+      };
+    }),
   };
 }
 

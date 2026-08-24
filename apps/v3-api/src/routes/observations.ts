@@ -3,6 +3,7 @@ import type { FastifyInstance } from "fastify";
 import { z } from "zod";
 import type { KnowledgeRow, MediaForAnalysis } from "../ai/contracts.js";
 import { createAIProvider } from "../ai/provider.js";
+import { effectiveAnalysisResult, flattenAnalysisClaims, legacyClaimDecision, claimDecisions } from "../analysis-claims.js";
 import { config } from "../config.js";
 import { ApiError, audit, authenticate } from "../http.js";
 import { publicSupabaseUrl, serviceClient } from "../supabase.js";
@@ -72,7 +73,30 @@ export async function observationRoutes(app: FastifyInstance) {
       auth.data.from("analysis_runs").select("*").eq("observation_id", id).order("generated_at", { ascending: false }),
     ]);
     if (evidenceError || analysisError) throw new ApiError(500, "OBSERVATION_DETAIL_FAILED", "观察证据或分析结果读取失败");
-    return { item: observation, evidence: evidence ?? [], analyses: analyses ?? [] };
+    const analysisIds = (analyses ?? []).map((item) => item.id);
+    const { data: reviewRows, error: reviewError } = analysisIds.length
+      ? await auth.data.from("analysis_claim_reviews").select("*").in("analysis_run_id", analysisIds).order("claim_key")
+      : { data: [], error: null };
+    if (reviewError) throw new ApiError(500, "ANALYSIS_REVIEW_READ_FAILED", "AI逐条审核记录读取失败");
+    const reviewsByRun = new Map<string, any[]>();
+    for (const review of reviewRows ?? []) reviewsByRun.set(review.analysis_run_id, [...(reviewsByRun.get(review.analysis_run_id) ?? []), review]);
+    const analysesWithClaims = (analyses ?? []).map((analysis) => {
+      const stored = new Map((reviewsByRun.get(analysis.id) ?? []).map((item) => [item.claim_key, item]));
+      const claimReviews = flattenAnalysisClaims(analysis.structured_result).map((claim) => stored.get(claim.claimKey) ?? {
+        id: null,
+        analysis_run_id: analysis.id,
+        claim_key: claim.claimKey,
+        claim_type: claim.claimType,
+        original_content: claim.originalContent,
+        reviewed_content: null,
+        decision: legacyClaimDecision(analysis.decision),
+        review_note: null,
+        reviewed_by: analysis.decided_by ?? null,
+        reviewed_at: analysis.decided_at ?? null,
+      });
+      return { ...analysis, claim_reviews: claimReviews };
+    });
+    return { item: observation, evidence: evidence ?? [], analyses: analysesWithClaims };
   });
 
   app.post("/api/observations", async (request, reply) => {
@@ -259,15 +283,42 @@ export async function observationRoutes(app: FastifyInstance) {
     if (observationError) throw new ApiError(500, "OBSERVATION_LOOKUP_FAILED", "观察记录读取失败");
     if (!observation) throw new ApiError(404, "OBSERVATION_NOT_FOUND", "观察记录不存在或无权访问");
     if (observation.status === "draft") throw new ApiError(409, "OBSERVATION_NOT_SUBMITTED", "请先提交教师观察、识别和应答");
-    const [{ data: classroom, error: classroomError }, { data: child, error: childError }, { data: evidence, error: evidenceError }] = await Promise.all([
+    const [{ data: classroom, error: classroomError }, { data: child, error: childError }, { data: evidence, error: evidenceError }, { data: historicalObservations, error: historyError }] = await Promise.all([
       auth.data.from("classrooms").select("id, grade").eq("id", observation.classroom_id).single(),
       auth.data.from("children").select("id, display_name, birth_month, guardian_consent_status").eq("id", observation.child_id).single(),
       auth.data.from("evidence_assets").select("id, evidence_type, transcript, event_segments, upload_status, storage_path, mime_type").eq("observation_id", id).eq("upload_status", "ready"),
+      auth.data.from("observations").select("id, occurred_at, scene, theme, teacher_observation, child_quote, teacher_identification, teacher_response")
+        .eq("child_id", observation.child_id).eq("status", "adopted").lt("occurred_at", observation.occurred_at).order("occurred_at", { ascending: true }).limit(12),
     ]);
-    if (classroomError || childError || evidenceError) throw new ApiError(500, "ANALYSIS_CONTEXT_READ_FAILED", "AI分析上下文读取失败");
+    if (classroomError || childError || evidenceError || historyError) throw new ApiError(500, "ANALYSIS_CONTEXT_READ_FAILED", "AI分析上下文读取失败");
     if (!classroom || !child) throw new ApiError(422, "ANALYSIS_CONTEXT_MISSING", "幼儿或班级信息不完整");
     const { data: knowledge, error: knowledgeError } = await auth.data.from("knowledge_cards").select("*").eq("grade", classroom.grade).eq("status", "active").limit(200);
     if (knowledgeError || !knowledge?.length) throw new ApiError(409, "KNOWLEDGE_NOT_READY", "当前班级年龄段知识库尚未初始化");
+
+    const historicalIds = (historicalObservations ?? []).map((item) => item.id);
+    const { data: historicalAnalyses, error: historicalAnalysisError } = historicalIds.length
+      ? await auth.data.from("analysis_runs").select("*").in("observation_id", historicalIds).eq("decision", "adopted").order("generated_at", { ascending: false })
+      : { data: [], error: null };
+    if (historicalAnalysisError) throw new ApiError(500, "ANALYSIS_HISTORY_READ_FAILED", "历史分析证据读取失败");
+    const historicalAnalysisIds = (historicalAnalyses ?? []).map((item) => item.id);
+    const { data: historicalReviews, error: historicalReviewError } = historicalAnalysisIds.length
+      ? await auth.data.from("analysis_claim_reviews").select("*").in("analysis_run_id", historicalAnalysisIds)
+      : { data: [], error: null };
+    if (historicalReviewError) throw new ApiError(500, "ANALYSIS_HISTORY_REVIEW_READ_FAILED", "历史审核结论读取失败");
+    const latestAnalysisByObservation = new Map<string, any>();
+    for (const analysis of historicalAnalyses ?? []) if (!latestAnalysisByObservation.has(analysis.observation_id)) latestAnalysisByObservation.set(analysis.observation_id, analysis);
+    const history = (historicalObservations ?? []).map((item) => {
+      const priorAnalysis = latestAnalysisByObservation.get(item.id);
+      const reviews = (historicalReviews ?? []).filter((review) => review.analysis_run_id === priorAnalysis?.id);
+      const official = priorAnalysis ? effectiveAnalysisResult(priorAnalysis.structured_result, reviews) : null;
+      return { ...item, adopted_analysis: official ? {
+        objectiveSummary: official.objectiveSummary,
+        currentExperience: official.currentExperience,
+        interestsAndStrengths: official.interestsAndStrengths,
+        interpretations: official.interpretations,
+        developmentReferences: official.developmentReferences,
+      } : null };
+    });
 
     let media: MediaForAnalysis[] = [];
     if (config.AI_MODE === "qianwen" && config.qwenMediaAnalysisEnabled && child.guardian_consent_status === "granted") {
@@ -296,6 +347,7 @@ export async function observationRoutes(app: FastifyInstance) {
         knowledge: knowledge as KnowledgeRow[],
         evidence: (evidence ?? []).map(({ storage_path: _storagePath, ...item }) => item),
         media,
+        history,
       });
     } catch {
       throw new ApiError(502, "AI_ANALYSIS_FAILED", "AI分析暂时不可用，请稍后重试");
@@ -316,6 +368,7 @@ export async function observationRoutes(app: FastifyInstance) {
       classroom,
       evidence: (evidence ?? []).map(({ storage_path: _storagePath, ...item }) => item),
       mediaAnalyzed: generated.mediaAnalyzed,
+      history: history.map(({ adopted_analysis, ...item }) => ({ ...item, adoptedAnalysisIncluded: Boolean(adopted_analysis) })),
       generatedAt: now,
     };
     const { data: analysis, error } = await serviceClient.schema(config.SUPABASE_SCHEMA).from("analysis_runs").insert({
@@ -334,6 +387,21 @@ export async function observationRoutes(app: FastifyInstance) {
       generated_by: auth.userId,
     }).select().single();
     if (error) throw new ApiError(500, "AI_ANALYSIS_SAVE_FAILED", "AI分析结果保存失败");
+    const claims = flattenAnalysisClaims(structuredResult).map((claim) => ({
+      tenant_id: auth.tenantId,
+      classroom_id: observation.classroom_id,
+      child_id: observation.child_id,
+      observation_id: observation.id,
+      analysis_run_id: analysis.id,
+      claim_key: claim.claimKey,
+      claim_type: claim.claimType,
+      original_content: claim.originalContent,
+    }));
+    const { error: claimError } = await serviceClient.schema(config.SUPABASE_SCHEMA).from("analysis_claim_reviews").insert(claims);
+    if (claimError) {
+      await serviceClient.schema(config.SUPABASE_SCHEMA).from("analysis_runs").delete().eq("id", analysis.id);
+      throw new ApiError(500, "AI_CLAIMS_SAVE_FAILED", "AI逐条审核项初始化失败，结果已回滚");
+    }
     const { error: statusError } = await serviceClient
       .schema(config.SUPABASE_SCHEMA)
       .from("observations")
@@ -360,13 +428,78 @@ export async function observationRoutes(app: FastifyInstance) {
     const auth = await authenticate(request);
     const { id } = z.object({ id: uuid }).parse(request.params);
     const input = z.object({ decision: z.enum(["adopted", "abandoned"]), note: z.string().trim().max(1000).optional() }).parse(request.body);
-    const { data, error } = await auth.data.schema(config.SUPABASE_SCHEMA).rpc("decide_analysis", {
-      target_analysis_id: id,
-      target_decision: input.decision,
-      target_note: input.note || null,
-    });
+    const { data: analysis, error: analysisError } = await auth.data.from("analysis_runs").select("*").eq("id", id).maybeSingle();
+    if (analysisError || !analysis) throw new ApiError(404, "ANALYSIS_NOT_FOUND", "AI分析不存在或无权访问");
+    const now = new Date().toISOString();
+    const rows = flattenAnalysisClaims(analysis.structured_result).map((claim) => ({
+      tenant_id: auth.tenantId, classroom_id: analysis.classroom_id, child_id: analysis.child_id,
+      observation_id: analysis.observation_id, analysis_run_id: analysis.id,
+      claim_key: claim.claimKey, claim_type: claim.claimType, original_content: claim.originalContent,
+      reviewed_content: null, decision: input.decision === "adopted" ? "adopted" : "rejected",
+      review_note: input.note || null, reviewed_by: auth.userId, reviewed_at: now,
+    }));
+    const { error: reviewError } = await serviceClient.schema(config.SUPABASE_SCHEMA).from("analysis_claim_reviews").upsert(rows, { onConflict: "analysis_run_id,claim_key" });
+    if (reviewError) throw new ApiError(500, "ANALYSIS_REVIEW_SAVE_FAILED", "AI逐条审核结果保存失败");
+    const { data, error } = await auth.data.schema(config.SUPABASE_SCHEMA).rpc("finalize_analysis_review", { target_analysis_id: id, target_note: input.note || null });
     if (error) throw new ApiError(error.code === "23505" ? 409 : 500, "ANALYSIS_DECISION_FAILED", error.code === "23505" ? "该AI结果已经处理" : "AI结果处理失败");
     await audit(auth, input.decision === "adopted" ? "analysis.adopted" : "analysis.abandoned", "analysis", id, { note: input.note ?? "" });
+    return { item: data };
+  });
+
+  app.patch("/api/analyses/:id/claims/:claimKey", async (request) => {
+    const auth = await authenticate(request);
+    const { id, claimKey } = z.object({ id: uuid, claimKey: z.string().trim().min(1).max(160) }).parse(request.params);
+    const input = z.object({
+      decision: z.enum(claimDecisions).refine((value) => value !== "pending", "请选择审核决定"),
+      content: z.string().trim().min(2).max(4000).optional(),
+      note: z.string().trim().max(1000).optional(),
+    }).superRefine((value, context) => {
+      if (value.decision === "modified" && !value.content) context.addIssue({ code: "custom", message: "修改结论时必须填写修改后内容", path: ["content"] });
+    }).parse(request.body);
+    const { data: analysis, error: analysisError } = await auth.data.from("analysis_runs").select("*").eq("id", id).maybeSingle();
+    if (analysisError) throw new ApiError(500, "ANALYSIS_READ_FAILED", "AI分析读取失败");
+    if (!analysis) throw new ApiError(404, "ANALYSIS_NOT_FOUND", "AI分析不存在或无权访问");
+    if (analysis.decision !== "pending") throw new ApiError(409, "ANALYSIS_ALREADY_FINALIZED", "该AI分析已完成教师终审");
+    const claim = flattenAnalysisClaims(analysis.structured_result).find((item) => item.claimKey === claimKey);
+    if (!claim) throw new ApiError(404, "ANALYSIS_CLAIM_NOT_FOUND", "AI结论项不存在");
+    const reviewedContent = input.decision === "modified" ? { ...claim.originalContent, content: input.content } : null;
+    const row = {
+      tenant_id: auth.tenantId, classroom_id: analysis.classroom_id, child_id: analysis.child_id,
+      observation_id: analysis.observation_id, analysis_run_id: analysis.id,
+      claim_key: claim.claimKey, claim_type: claim.claimType, original_content: claim.originalContent,
+      reviewed_content: reviewedContent, decision: input.decision, review_note: input.note || null,
+      reviewed_by: auth.userId, reviewed_at: new Date().toISOString(),
+    };
+    const { data: existing, error: existingError } = await auth.data.from("analysis_claim_reviews").select("id").eq("analysis_run_id", id).eq("claim_key", claimKey).maybeSingle();
+    if (existingError) throw new ApiError(500, "ANALYSIS_CLAIM_READ_FAILED", "AI结论审核状态读取失败");
+    const operation = existing
+      ? serviceClient.schema(config.SUPABASE_SCHEMA).from("analysis_claim_reviews").update({
+        reviewed_content: row.reviewed_content,
+        decision: row.decision,
+        review_note: row.review_note,
+        reviewed_by: row.reviewed_by,
+        reviewed_at: row.reviewed_at,
+      }).eq("id", existing.id).eq("tenant_id", auth.tenantId).select().single()
+      : serviceClient.schema(config.SUPABASE_SCHEMA).from("analysis_claim_reviews").insert(row).select().single();
+    const { data, error } = await operation;
+    if (error) throw new ApiError(500, "ANALYSIS_CLAIM_REVIEW_FAILED", "AI结论审核保存失败");
+    await audit(auth, `analysis.claim.${input.decision}`, "analysis_claim", `${id}:${claimKey}`, { analysisId: id, claimKey, note: input.note ?? "" });
+    return { item: data };
+  });
+
+  app.post("/api/analyses/:id/finalize", async (request) => {
+    const auth = await authenticate(request);
+    const { id } = z.object({ id: uuid }).parse(request.params);
+    const input = z.object({ note: z.string().trim().max(1000).optional() }).parse(request.body ?? {});
+    const { data, error } = await auth.data.schema(config.SUPABASE_SCHEMA).rpc("finalize_analysis_review", {
+      target_analysis_id: id,
+      target_note: input.note || null,
+    });
+    if (error) {
+      if (error.code === "23514") throw new ApiError(409, "ANALYSIS_CLAIMS_PENDING", "请先逐条处理全部AI结论，再完成教师终审");
+      throw new ApiError(error.code === "23505" ? 409 : 500, "ANALYSIS_FINALIZE_FAILED", error.code === "23505" ? "该AI结果已经完成终审" : "AI分析终审失败");
+    }
+    await audit(auth, data.decision === "adopted" ? "analysis.adopted" : "analysis.abandoned", "analysis", id, { note: input.note ?? "", reviewMode: "claim-level" });
     return { item: data };
   });
 }

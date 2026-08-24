@@ -1,6 +1,8 @@
 import type {
   RemoteAccount,
+  AnalysisClaimDecision,
   RemoteAnalysis,
+  RemoteAnalysisClaimReview,
   RemoteChild,
   RemoteClassroom,
   RemoteEvidence,
@@ -144,6 +146,19 @@ export const remoteApi = {
     request<{ item: RemoteAnalysis }>(`/api/analyses/${id}/decision`, {
       method: "POST",
       body: body({ decision, note }),
+    }),
+  reviewAnalysisClaim: (
+    analysisId: string,
+    claimKey: string,
+    value: { decision: Exclude<AnalysisClaimDecision, "pending">; content?: string; note?: string },
+  ) => request<{ item: RemoteAnalysisClaimReview }>(
+    `/api/analyses/${analysisId}/claims/${encodeURIComponent(claimKey)}`,
+    { method: "PATCH", body: body(value) },
+  ),
+  finalizeAnalysis: (id: string, note?: string) =>
+    request<{ item: RemoteAnalysis }>(`/api/analyses/${id}/finalize`, {
+      method: "POST",
+      body: body({ note }),
     }),
   evidenceTicket: (observationId: string, file: File) =>
     request<{

@@ -43,7 +43,9 @@ import { useNavigate } from "../router";
 import { remoteApi, RemoteApiError } from "./api";
 import type {
   RemoteAccount,
+  AnalysisClaimDecision,
   RemoteAnalysis,
+  RemoteAnalysisClaimReview,
   RemoteChild,
   RemoteClassroom,
   RemoteEvidence,
@@ -70,14 +72,16 @@ const statusLabel: Record<string, string> = {
   active: "启用",
   disabled: "已停用",
   submitted: "教师已提交",
-  ai_ready: "待教师选择",
+  ai_ready: "待逐条审核",
   adopted: "已采用AI建议",
   abandoned: "已放弃AI建议",
-  pending: "待选择",
+  pending: "待逐条审核",
+  modified: "教师已修改",
+  rejected: "教师已拒绝",
+  to_verify: "待后续验证",
   passed: "审核通过",
   revision_requested: "退回修改",
   approved: "已批准",
-  rejected: "已拒绝",
   preparing: "准备中",
   in_progress: "进行中",
   completed: "已完成",
@@ -111,7 +115,7 @@ const tone = (
 ): "green" | "orange" | "blue" | "gray" | "red" | "purple" =>
   /active|adopted|ready|passed|approved|completed|published|verified|closed/.test(status)
     ? "green"
-    : /disabled|abandoned|withdrawn/.test(status)
+    : /disabled|abandoned|withdrawn|rejected/.test(status)
       ? "red"
       : /pending|submitted|ai_ready/.test(status)
         ? "orange"
@@ -887,14 +891,30 @@ export function RemoteObservationPage() {
       setBusy(false);
     }
   };
-  const decide = async (
+  const reviewClaim = async (
     analysis: RemoteAnalysis,
-    decision: "adopted" | "abandoned",
+    claim: RemoteAnalysisClaimReview,
+    decision: Exclude<AnalysisClaimDecision, "pending">,
+    content?: string,
+    note?: string,
   ) => {
     setBusy(true);
     setError("");
     try {
-      await remoteApi.decideAnalysis(analysis.id, decision, decisionNote);
+      await remoteApi.reviewAnalysisClaim(analysis.id, claim.claim_key, { decision, content, note });
+      setDetail(await remoteApi.observation(analysis.observation_id));
+    } catch (reason) {
+      setError(showError(reason));
+    } finally {
+      setBusy(false);
+    }
+  };
+  const finalizeAnalysis = async (analysis: RemoteAnalysis) => {
+    setBusy(true);
+    setError("");
+    try {
+      await remoteApi.finalizeAnalysis(analysis.id, decisionNote);
+      setDecisionNote("");
       setDetail(await remoteApi.observation(analysis.observation_id));
       await load();
     } catch (reason) {
@@ -904,14 +924,14 @@ export function RemoteObservationPage() {
     }
   };
   const latest = detail?.analyses[0];
-  const canRunAnalysis = !latest || latest.decision === "abandoned";
+  const canRunAnalysis = !latest || latest.decision !== "pending";
 
   return (
     <div className="page remote-page">
       <PageHeader
         eyebrow="OBSERVE · IDENTIFY · RESPOND"
         title="标准化游戏观察"
-        description="老师先录入观察、识别和应答。AI结合幼儿所在年龄班与知识库提供结构化建议，老师选择采用或放弃。"
+        description="老师先录入观察、识别和应答。AI结合年龄段知识与历史证据提供结构化建议，老师逐条采用、修改、拒绝或标记待验证。"
         actions={
           <button className="btn btn-primary" onClick={() => setModal(true)}>
             <Plus />
@@ -1047,7 +1067,7 @@ export function RemoteObservationPage() {
                   </h2>
                   <p>
                     {latest
-                      ? "已放弃的建议稿会保留在审计记录中；重新运行将生成一份新的待审核结果。"
+                      ? "已完成终审的建议稿会保留原文、教师修改与审计记录；重新运行将生成一份新的待审核结果。"
                       : "系统优先使用已配置的千问模型；结果会明确显示实际模型。未启用或调用失败时，只生成可识别的模拟规则草稿。"}
                   </p>
                 </div>
@@ -1067,7 +1087,9 @@ export function RemoteObservationPage() {
                 note={decisionNote}
                 setNote={setDecisionNote}
                 busy={busy}
-                onDecide={decide}
+                evidence={detail.evidence}
+                onReview={reviewClaim}
+                onFinalize={finalizeAnalysis}
               />
             )}
           </div>
@@ -1380,16 +1402,35 @@ function AnalysisPanel({
   note,
   setNote,
   busy,
-  onDecide,
+  evidence,
+  onReview,
+  onFinalize,
 }: {
   analysis: RemoteAnalysis;
   note: string;
   setNote(value: string): void;
   busy: boolean;
-  onDecide(analysis: RemoteAnalysis, decision: "adopted" | "abandoned"): void;
+  evidence: RemoteEvidence[];
+  onReview(
+    analysis: RemoteAnalysis,
+    claim: RemoteAnalysisClaimReview,
+    decision: Exclude<AnalysisClaimDecision, "pending">,
+    content?: string,
+    note?: string,
+  ): void;
+  onFinalize(analysis: RemoteAnalysis): void;
 }) {
   const result = analysis.structured_result;
   const isQianwen = analysis.provider === "QianwenAIProvider";
+  const claims = analysis.claim_reviews ?? [];
+  const pendingCount = claims.filter((item) => item.decision === "pending").length;
+  const historical = result.historicalComparison ?? {
+    evidenceCount: 0,
+    timePointCount: 0,
+    changes: [],
+    stablePatterns: [],
+    caution: "该旧版分析未读取历史观察。",
+  };
   return (
     <div className="detail-stack">
       <Panel>
@@ -1406,6 +1447,9 @@ function AnalysisPanel({
             {statusLabel[analysis.decision] ?? analysis.decision}
           </Badge>
         </div>
+      </Panel>
+      <Panel title="客观观察摘要" subtitle="AI原始摘要，需在下方逐条审核后才会成为正式结论">
+        <p className="remote-analysis-summary">{result.objectiveSummary}</p>
       </Panel>
       <div className="remote-analysis-layers">
         <Panel title="事实层">
@@ -1444,6 +1488,31 @@ function AnalysisPanel({
           ))}
         </Panel>
       </div>
+      <Panel
+        title="跨时间成长对比"
+        subtitle={`读取${historical.evidenceCount}条历史观察，覆盖${historical.timePointCount}个历史时间点`}
+      >
+        {historical.changes.length || historical.stablePatterns.length ? (
+          <div className="remote-response-grid">
+            <article>
+              <Badge tone="blue">变化线索</Badge>
+              {historical.changes.map((item) => (
+                <p key={`${item.dimension}-${item.content}`}>
+                  <strong>{item.dimension}</strong>：{item.content}
+                  <small> 历史 {item.previousEvidenceIds.join("、")} → 当前 {item.currentEvidenceIds.join("、")} · {Math.round(item.confidence * 100)}%</small>
+                </p>
+              ))}
+            </article>
+            <article>
+              <Badge tone="green">重复出现的模式</Badge>
+              {historical.stablePatterns.map((item) => (
+                <p key={item.content}>{item.content}<small> · {item.evidenceIds.join("、")} · {Math.round(item.confidence * 100)}%</small></p>
+              ))}
+            </article>
+          </div>
+        ) : <p>{historical.caution}</p>}
+        {(historical.changes.length > 0 || historical.stablePatterns.length > 0) && <small className="remote-evidence-caution">{historical.caution}</small>}
+      </Panel>
       <Panel title="当前经验与教师判断对照" subtitle="教师原判断原样保留，AI只提供补充视角">
         <div className="remote-three-layers">
           <article>
@@ -1457,6 +1526,7 @@ function AnalysisPanel({
           <article>
             <span className="layer layer-response">AI补充</span>
             <p>{result.teacherComparison.aiAddition}</p>
+            <small>教师原应答：{result.teacherComparison.teacherResponse.strategy}；复察：{result.teacherComparison.teacherResponse.nextObservationFocus}</small>
           </article>
         </div>
         <div className="focus-pills compact">
@@ -1513,6 +1583,23 @@ function AnalysisPanel({
           <article><Badge tone="blue">复察重点</Badge>{result.nextObservation.map((item) => <p key={item}>{item}</p>)}</article>
         </div>
       </Panel>
+      <Panel
+        title="逐条审核与完整证据链"
+        subtitle={`${claims.length - pendingCount}/${claims.length}项已处理；只有“采用”或“教师修改”的内容会进入成长轨迹、报告和应答`}
+      >
+        <div className="remote-claim-list">
+          {claims.map((claim) => (
+            <ClaimReviewItem
+              key={claim.claim_key}
+              analysisPending={analysis.decision === "pending"}
+              busy={busy}
+              claim={claim}
+              evidence={evidence}
+              onReview={(decision, content, reviewNote) => onReview(analysis, claim, decision, content, reviewNote)}
+            />
+          ))}
+        </div>
+      </Panel>
       <Panel>
         <div className="remote-warning">
           <CircleAlert />
@@ -1525,29 +1612,21 @@ function AnalysisPanel({
         {analysis.decision === "pending" ? (
           <div className="remote-decision">
             <label>
-              <span>教师处理说明（可选）</span>
+              <span>教师终审说明（可选）</span>
               <textarea
                 value={note}
                 onChange={(event) => setNote(event.target.value)}
-                placeholder="记录采用理由，或说明为什么放弃该建议稿"
+                placeholder="概括本次逐条审核依据；每条修改说明已单独保留"
               />
             </label>
             <div>
               <button
-                disabled={busy}
-                className="btn btn-ghost-danger"
-                onClick={() => onDecide(analysis, "abandoned")}
-              >
-                <X />
-                放弃AI结果
-              </button>
-              <button
-                disabled={busy}
+                disabled={busy || pendingCount > 0 || claims.length === 0}
                 className="btn btn-primary"
-                onClick={() => onDecide(analysis, "adopted")}
+                onClick={() => onFinalize(analysis)}
               >
-                <Check />
-                采用AI结果
+                <ShieldCheck />
+                {pendingCount > 0 ? `还有${pendingCount}项待处理` : "完成教师终审"}
               </button>
             </div>
           </div>
@@ -1556,14 +1635,113 @@ function AnalysisPanel({
             <ShieldCheck />
             <strong>
               {analysis.decision === "adopted"
-                ? "教师已采用该AI建议稿"
-                : "教师已放弃该AI建议稿"}
+                ? "教师已完成逐条审核，正式结论已生效"
+                : "教师已完成逐条审核，本稿无内容进入正式结论"}
             </strong>
             <span>{analysis.decision_note || "未填写处理说明"}</span>
           </div>
         )}
       </Panel>
     </div>
+  );
+}
+
+const claimTypeLabel: Record<RemoteAnalysisClaimReview["claim_type"], string> = {
+  objective_summary: "观察摘要",
+  fact: "事实",
+  interpretation: "专业解释",
+  hypothesis: "待验证假设",
+  current_experience: "当前经验",
+  interest_strength: "兴趣与优势",
+  evidence_gap: "证据缺口",
+  development_reference: "年龄段发展参照",
+  response_suggestion: "应答建议",
+  next_observation: "复察重点",
+  historical_change: "跨时间变化",
+};
+
+function ClaimReviewItem({
+  claim,
+  evidence,
+  busy,
+  analysisPending,
+  onReview,
+}: {
+  claim: RemoteAnalysisClaimReview;
+  evidence: RemoteEvidence[];
+  busy: boolean;
+  analysisPending: boolean;
+  onReview(decision: Exclude<AnalysisClaimDecision, "pending">, content?: string, note?: string): void;
+}) {
+  const original = claim.original_content ?? {};
+  const reviewed = claim.reviewed_content ?? {};
+  const originalText = String(original.content ?? original.evidenceStatement ?? "");
+  const effectiveText = String(reviewed.content ?? originalText);
+  const [editing, setEditing] = useState(false);
+  const [draft, setDraft] = useState(effectiveText);
+  const [reviewNote, setReviewNote] = useState(claim.review_note ?? "");
+  useEffect(() => {
+    setDraft(effectiveText);
+    setReviewNote(claim.review_note ?? "");
+    setEditing(false);
+  }, [claim.claim_key, claim.decision, claim.reviewed_at, effectiveText]);
+
+  const rawEvidenceIds = [
+    ...(Array.isArray(original.evidenceIds) ? original.evidenceIds : []),
+    ...(Array.isArray(original.previousEvidenceIds) ? original.previousEvidenceIds : []),
+    ...(Array.isArray(original.currentEvidenceIds) ? original.currentEvidenceIds : []),
+  ].map(String);
+  const evidenceIds = [...new Set(rawEvidenceIds)];
+  const evidenceName = (id: string) => {
+    if (id === "teacher-observation") return "本次教师白描";
+    if (id === "child-quote") return "本次幼儿原话";
+    if (id.startsWith("observation:")) return `历史观察 ${id.slice(12, 20)}`;
+    const asset = evidence.find((item) => item.id === id);
+    return asset?.file_name ? `媒体：${asset.file_name}` : `证据 ${id.slice(0, 8)}`;
+  };
+  const confidence = typeof original.confidence === "number" ? Math.round(original.confidence * 100) : null;
+  const indicator = typeof original.indicatorCode === "string" ? original.indicatorCode : "";
+
+  return (
+    <article className={`remote-claim-item claim-${claim.decision}`}>
+      <div className="remote-claim-head">
+        <div>
+          <Badge tone={tone(claim.decision)}>{claimTypeLabel[claim.claim_type]}</Badge>
+          <code>{claim.claim_key}</code>
+        </div>
+        <Badge tone={tone(claim.decision)}>{statusLabel[claim.decision] ?? claim.decision}</Badge>
+      </div>
+      {claim.decision === "modified" && <small className="remote-original-claim">AI原文：{originalText}</small>}
+      <p>{effectiveText || "该项为结构化参照信息，请结合下方证据与指标查看。"}</p>
+      <div className="remote-claim-chain">
+        {evidenceIds.length ? evidenceIds.map((id) => <span key={id}>{evidenceName(id)}</span>) : <span>无直接事实锚点，仅作观察建议</span>}
+        {indicator && <span>指标 {indicator}</span>}
+        {confidence !== null && <span>AI置信度 {confidence}%</span>}
+        {claim.reviewed_at && <span>教师审核 {new Date(claim.reviewed_at).toLocaleString("zh-CN")}</span>}
+      </div>
+      {analysisPending && editing && (
+        <div className="remote-claim-editor">
+          <textarea value={draft} onChange={(event) => setDraft(event.target.value)} aria-label="教师修改后的结论" />
+          <input value={reviewNote} onChange={(event) => setReviewNote(event.target.value)} placeholder="填写修改依据或保留意见（选填）" />
+          <div>
+            <button className="btn btn-secondary" disabled={busy} onClick={() => setEditing(false)}>取消</button>
+            <button className="btn btn-primary" disabled={busy || draft.trim().length < 2} onClick={() => onReview("modified", draft.trim(), reviewNote.trim() || undefined)}><Save />保存教师修改</button>
+          </div>
+        </div>
+      )}
+      {analysisPending && !editing && (
+        <div className="remote-claim-review-row">
+          <input value={reviewNote} onChange={(event) => setReviewNote(event.target.value)} placeholder="审核说明（选填）" aria-label="逐条审核说明" />
+          <div className="remote-claim-actions">
+            <button className="btn btn-secondary" disabled={busy} onClick={() => onReview("rejected", undefined, reviewNote || undefined)}><X />拒绝</button>
+            <button className="btn btn-secondary" disabled={busy} onClick={() => onReview("to_verify", undefined, reviewNote || undefined)}><Search />待验证</button>
+            <button className="btn btn-secondary" disabled={busy} onClick={() => setEditing(true)}><Save />修改</button>
+            <button className="btn btn-primary" disabled={busy} onClick={() => onReview("adopted", undefined, reviewNote || undefined)}><Check />采用</button>
+          </div>
+        </div>
+      )}
+      {claim.review_note && !editing && <small className="remote-claim-note">审核说明：{claim.review_note}</small>}
+    </article>
   );
 }
 

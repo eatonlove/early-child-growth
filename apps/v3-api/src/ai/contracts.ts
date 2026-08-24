@@ -34,6 +34,18 @@ export interface MediaForAnalysis {
   signedUrl: string;
 }
 
+export interface HistoricalObservationEvidence {
+  id: string;
+  occurred_at: string;
+  scene: string;
+  theme: string;
+  teacher_observation: string;
+  child_quote?: string | null;
+  teacher_identification: string;
+  teacher_response: { category: string; strategy: string; nextObservationFocus: string };
+  adopted_analysis?: unknown;
+}
+
 const shortText = z.string().trim().min(1).max(2000);
 const confidence = z.number().min(0).max(1);
 
@@ -84,6 +96,23 @@ export const analysisResultSchema = z.object({
     activity: z.array(shortText).min(1).max(5),
   }).strict(),
   nextObservation: z.array(shortText).min(1).max(6),
+  historicalComparison: z.object({
+    evidenceCount: z.number().int().min(0).max(20),
+    timePointCount: z.number().int().min(0).max(20),
+    changes: z.array(z.object({
+      dimension: z.string().trim().min(1).max(120),
+      content: shortText,
+      previousEvidenceIds: z.array(z.string().trim().min(1).max(100)).min(1).max(8),
+      currentEvidenceIds: z.array(z.string().trim().min(1).max(100)).min(1).max(5),
+      confidence,
+    }).strict()).max(8),
+    stablePatterns: z.array(z.object({
+      content: shortText,
+      evidenceIds: z.array(z.string().trim().min(1).max(100)).min(2).max(10),
+      confidence,
+    }).strict()).max(6),
+    caution: z.string().trim().min(1).max(1000),
+  }).strict(),
   evidenceSufficiency: z.enum(["有限", "初步充分"]),
   warnings: z.array(shortText).min(1).max(8),
 }).strict();
@@ -133,6 +162,7 @@ export interface ObservationAnalysisInput {
     mime_type?: string | null;
   }>;
   media: MediaForAnalysis[];
+  history: HistoricalObservationEvidence[];
 }
 
 export interface ReportGenerationInput {
@@ -153,6 +183,27 @@ export interface CurriculumGenerationInput {
   observations: Array<Record<string, any>>;
 }
 
+export const interestClusterResultSchema = z.object({
+  clusters: z.array(z.object({
+    label: z.string().trim().min(1).max(120),
+    aliases: z.array(z.string().trim().min(1).max(120)).max(12),
+    observationIds: z.array(z.string().uuid()).min(1).max(100),
+    rationale: z.string().trim().min(1).max(1000),
+  }).strict()).max(30),
+}).strict();
+
+export type InterestClusterResult = z.infer<typeof interestClusterResultSchema>;
+
+export interface InterestClusteringInput {
+  observations: Array<{
+    id: string;
+    theme: string;
+    scene: string;
+    teacher_identification: string;
+    teacher_response: Record<string, unknown>;
+  }>;
+}
+
 export interface AIGeneration<T> {
   data: T;
   provider: "QianwenAIProvider" | "ScenarioAIProvider";
@@ -167,4 +218,5 @@ export interface AIAnalysisProvider {
   analyzeObservation(input: ObservationAnalysisInput): Promise<AIGeneration<AnalysisResult>>;
   generateReport(input: ReportGenerationInput): Promise<AIGeneration<ReportContent>>;
   generateCurriculum(input: CurriculumGenerationInput): Promise<AIGeneration<CurriculumDraft>>;
+  clusterInterests(input: InterestClusteringInput): Promise<AIGeneration<InterestClusterResult>>;
 }

@@ -92,6 +92,19 @@ export interface AnalysisResult {
     activity: string[];
   };
   nextObservation: string[];
+  historicalComparison: {
+    evidenceCount: number;
+    timePointCount: number;
+    changes: Array<{
+      dimension: string;
+      content: string;
+      previousEvidenceIds: string[];
+      currentEvidenceIds: string[];
+      confidence: number;
+    }>;
+    stablePatterns: Array<{ content: string; evidenceIds: string[]; confidence: number }>;
+    caution: string;
+  };
   evidenceSufficiency: string;
   warnings: string[];
 }
@@ -106,6 +119,26 @@ export interface RemoteAnalysis {
   decision: "pending" | "adopted" | "abandoned";
   decision_note?: string | null;
   generated_at: string;
+  claim_reviews: RemoteAnalysisClaimReview[];
+}
+
+export type AnalysisClaimDecision = "pending" | "adopted" | "modified" | "rejected" | "to_verify";
+
+export interface RemoteAnalysisClaimReview {
+  id?: string | null;
+  analysis_run_id: string;
+  claim_key: string;
+  claim_type:
+    | "objective_summary" | "fact" | "interpretation" | "hypothesis"
+    | "current_experience" | "interest_strength" | "evidence_gap"
+    | "development_reference" | "response_suggestion" | "next_observation"
+    | "historical_change";
+  original_content: Record<string, unknown>;
+  reviewed_content?: Record<string, unknown> | null;
+  decision: AnalysisClaimDecision;
+  review_note?: string | null;
+  reviewed_by?: string | null;
+  reviewed_at?: string | null;
 }
 
 export interface RemoteEvidence {
@@ -300,6 +333,15 @@ export interface RemoteCurriculumClue {
       model?: string;
       promptVersion?: string;
       fallbackUsed?: boolean;
+    };
+    semanticCluster?: {
+      label: string;
+      aliases: string[];
+      rationale: string;
+      provider: string;
+      model: string;
+      promptVersion: string;
+      fallbackUsed: boolean;
     };
   };
   child_ids: string[];

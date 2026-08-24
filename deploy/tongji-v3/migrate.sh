@@ -75,5 +75,16 @@ else
   echo "归档班级历史只读权限已修复，跳过修复迁移。"
 fi
 
+claim_reviews_ready="$(docker exec "$DB_CONTAINER" psql -U postgres -d postgres -Atc \
+  "select to_regclass('tongji_v3.analysis_claim_reviews') is not null and to_regprocedure('tongji_v3.finalize_analysis_review(uuid,text)') is not null;")"
+
+if [ "$claim_reviews_ready" != "t" ]; then
+  docker exec -i "$DB_CONTAINER" psql -U postgres -d postgres \
+    -v ON_ERROR_STOP=1 --single-transaction \
+    < "$ROOT_DIR/apps/v3-api/supabase/migrations/20260824072542_add_claim_reviews_and_semantic_evidence.sql"
+else
+  echo "逐条AI审核与终审数据结构已就绪，跳过升级迁移。"
+fi
+
 docker exec "$DB_CONTAINER" psql -U postgres -d postgres -Atc \
   "select table_schema || '.' || table_name from information_schema.tables where table_schema = 'tongji_v3' order by table_name;"
