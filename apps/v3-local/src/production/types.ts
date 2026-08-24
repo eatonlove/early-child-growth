@@ -69,6 +69,11 @@ export interface AnalysisResult {
     confidence: number;
   }>;
   hypotheses: Array<{ content: string; nextObservation?: string; confidence: number }>;
+  teacherComparison: {
+    teacherIdentification: string;
+    teacherResponse: TeacherResponse;
+    aiAddition: string;
+  };
   currentExperience: string;
   interestsAndStrengths: string[];
   evidenceGaps: string[];

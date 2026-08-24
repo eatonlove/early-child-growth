@@ -42,8 +42,10 @@ export async function authRoutes(app: FastifyInstance) {
     if (profileError || !profile) throw new ApiError(403, "APP_ACCOUNT_NOT_FOUND", "该账号不属于童迹3.0");
     if (profile.status !== "active") throw new ApiError(403, "ACCOUNT_DISABLED", "账号已停用，请联系教研员");
 
-    const { data: tenant } = await serviceClient.schema(config.SUPABASE_SCHEMA).from("tenants").select("id, name").eq("id", profile.tenant_id).maybeSingle();
-    await serviceClient.schema(config.SUPABASE_SCHEMA).from("profiles").update({ last_login_at: new Date().toISOString() }).eq("user_id", profile.user_id);
+    const { data: tenant, error: tenantError } = await serviceClient.schema(config.SUPABASE_SCHEMA).from("tenants").select("id, name").eq("id", profile.tenant_id).maybeSingle();
+    if (tenantError || !tenant) throw new ApiError(500, "TENANT_LOOKUP_FAILED", "无法读取园所资料");
+    const { error: loginAuditError } = await serviceClient.schema(config.SUPABASE_SCHEMA).from("profiles").update({ last_login_at: new Date().toISOString() }).eq("user_id", profile.user_id);
+    if (loginAuditError) request.log.warn({ dbError: loginAuditError, userId: profile.user_id }, "last login timestamp update failed");
     reply.header("Cache-Control", "no-store");
     setSessionCookies(reply, data.session);
     return sessionPayload(profile, tenant);
@@ -55,12 +57,14 @@ export async function authRoutes(app: FastifyInstance) {
     const client = publicAuthClient();
     const { data, error } = await client.auth.refreshSession({ refresh_token: refreshToken });
     if (error || !data.session || !data.user) throw new ApiError(401, "REFRESH_FAILED", "登录已失效，请重新登录");
-    const { data: profile } = await serviceClient.schema(config.SUPABASE_SCHEMA).from("profiles")
+    const { data: profile, error: profileError } = await serviceClient.schema(config.SUPABASE_SCHEMA).from("profiles")
       .select("user_id, tenant_id, username, display_name, role, status")
       .eq("user_id", data.user.id)
       .maybeSingle();
+    if (profileError) throw new ApiError(500, "PROFILE_LOOKUP_FAILED", "无法读取账号资料");
     if (!profile || profile.status !== "active") throw new ApiError(403, "ACCOUNT_DISABLED", "账号已停用，请联系教研员");
-    const { data: tenant } = await serviceClient.schema(config.SUPABASE_SCHEMA).from("tenants").select("id, name").eq("id", profile.tenant_id).maybeSingle();
+    const { data: tenant, error: tenantError } = await serviceClient.schema(config.SUPABASE_SCHEMA).from("tenants").select("id, name").eq("id", profile.tenant_id).maybeSingle();
+    if (tenantError || !tenant) throw new ApiError(500, "TENANT_LOOKUP_FAILED", "无法读取园所资料");
     reply.header("Cache-Control", "no-store");
     setSessionCookies(reply, data.session);
     return sessionPayload(profile, tenant);
@@ -81,7 +85,8 @@ export async function authRoutes(app: FastifyInstance) {
 
   app.get("/api/me", async (request) => {
     const auth = await authenticate(request);
-    const { data: tenant } = await auth.data.from("tenants").select("id, name").eq("id", auth.tenantId).single();
+    const { data: tenant, error } = await auth.data.from("tenants").select("id, name").eq("id", auth.tenantId).single();
+    if (error || !tenant) throw new ApiError(500, "TENANT_LOOKUP_FAILED", "无法读取园所资料");
     return { user: { id: auth.userId, tenantId: auth.tenantId, username: auth.username, displayName: auth.displayName, role: auth.role, tenantName: tenant?.name ?? "" } };
   });
 }

@@ -129,9 +129,10 @@ export async function managementRoutes(app: FastifyInstance) {
       .order("created_at");
     if (error) throw new ApiError(500, "ACCOUNT_LIST_FAILED", "账号读取失败");
     const ids = (profiles ?? []).map((item) => item.user_id);
-    const { data: assignments } = ids.length
+    const { data: assignments, error: assignmentError } = ids.length
       ? await serviceClient.schema(config.SUPABASE_SCHEMA).from("classroom_teachers").select("user_id, classroom_id").eq("tenant_id", auth.tenantId).in("user_id", ids)
-      : { data: [] };
+      : { data: [], error: null };
+    if (assignmentError) throw new ApiError(500, "ACCOUNT_ASSIGNMENT_LIST_FAILED", "账号班级分配读取失败");
     return { items: (profiles ?? []).map((profile) => ({ ...profile, classroom_ids: (assignments ?? []).filter((item) => item.user_id === profile.user_id).map((item) => item.classroom_id) })) };
   });
 
@@ -147,7 +148,8 @@ export async function managementRoutes(app: FastifyInstance) {
     }).parse(request.body);
 
     if (input.classroomIds.length) {
-      const { count } = await serviceClient.schema(config.SUPABASE_SCHEMA).from("classrooms").select("id", { count: "exact", head: true }).eq("tenant_id", auth.tenantId).in("id", input.classroomIds);
+      const { count, error } = await serviceClient.schema(config.SUPABASE_SCHEMA).from("classrooms").select("id", { count: "exact", head: true }).eq("tenant_id", auth.tenantId).in("id", input.classroomIds);
+      if (error) throw new ApiError(500, "CLASSROOM_ASSIGNMENT_CHECK_FAILED", "班级分配校验失败");
       if (count !== input.classroomIds.length) throw new ApiError(422, "INVALID_CLASSROOM_ASSIGNMENT", "包含无权分配的班级");
     }
 
@@ -193,7 +195,8 @@ export async function managementRoutes(app: FastifyInstance) {
     const { userId } = z.object({ userId: uuid }).parse(request.params);
     const input = z.object({ status: z.enum(["active", "disabled"]), reason: z.string().trim().max(200).optional() }).parse(request.body);
     if (userId === auth.userId && input.status === "disabled") throw new ApiError(422, "CANNOT_DISABLE_SELF", "不能停用当前登录账号");
-    const { data: target } = await serviceClient.schema(config.SUPABASE_SCHEMA).from("profiles").select("user_id, tenant_id, status").eq("user_id", userId).eq("tenant_id", auth.tenantId).maybeSingle();
+    const { data: target, error: targetError } = await serviceClient.schema(config.SUPABASE_SCHEMA).from("profiles").select("user_id, tenant_id, status").eq("user_id", userId).eq("tenant_id", auth.tenantId).maybeSingle();
+    if (targetError) throw new ApiError(500, "ACCOUNT_LOOKUP_FAILED", "账号读取失败");
     if (!target) throw new ApiError(404, "ACCOUNT_NOT_FOUND", "账号不存在");
 
     if (input.status === "disabled") {
@@ -219,7 +222,8 @@ export async function managementRoutes(app: FastifyInstance) {
     requireResearcher(auth);
     const { userId } = z.object({ userId: uuid }).parse(request.params);
     const input = z.object({ password }).parse(request.body);
-    const { data: target } = await serviceClient.schema(config.SUPABASE_SCHEMA).from("profiles").select("user_id").eq("user_id", userId).eq("tenant_id", auth.tenantId).maybeSingle();
+    const { data: target, error: targetError } = await serviceClient.schema(config.SUPABASE_SCHEMA).from("profiles").select("user_id").eq("user_id", userId).eq("tenant_id", auth.tenantId).maybeSingle();
+    if (targetError) throw new ApiError(500, "ACCOUNT_LOOKUP_FAILED", "账号读取失败");
     if (!target) throw new ApiError(404, "ACCOUNT_NOT_FOUND", "账号不存在");
     const { error } = await serviceClient.auth.admin.updateUserById(userId, { password: input.password });
     if (error) throw new ApiError(500, "PASSWORD_RESET_FAILED", "密码重置失败");

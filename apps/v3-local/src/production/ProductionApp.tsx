@@ -325,7 +325,7 @@ function RemoteShell() {
 }
 
 function RemoteGate() {
-  const { loading, user } = useRemoteAuth();
+  const { error, loading, retry, user } = useRemoteAuth();
   if (loading)
     return (
       <div className="loading-screen">
@@ -333,6 +333,17 @@ function RemoteGate() {
         <h1>正在验证童迹会话</h1>
         <p>连接账号权限、班级范围和知识库…</p>
         <span className="loading-line" />
+      </div>
+    );
+  if (error)
+    return (
+      <div className="loading-screen service-error-screen" role="alert">
+        <span className="brand-glyph">!</span>
+        <h1>暂时无法连接童迹服务</h1>
+        <p>{error}。这不是登录状态问题，请稍后重试。</p>
+        <button className="btn btn-primary" onClick={() => void retry()}>
+          重新连接
+        </button>
       </div>
     );
   return user ? <RemoteShell /> : <LoginPage />;

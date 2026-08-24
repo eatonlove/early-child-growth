@@ -32,6 +32,9 @@ export class RemoteApiError extends Error {
   }
 }
 
+export const isUnauthenticatedError = (reason: unknown) =>
+  reason instanceof RemoteApiError && [401, 403].includes(reason.status);
+
 async function request<T>(
   path: string,
   init: RequestInit = {},
@@ -162,6 +165,8 @@ export const remoteApi = {
     request<{ item: RemoteEvidence }>(`/api/evidence/${id}/complete`, {
       method: "POST",
     }),
+  evidenceDownload: (id: string) =>
+    request<{ url: string; expiresIn: number }>(`/api/evidence/${id}/download`),
   async uploadEvidence(observationId: string, file: File) {
     const ticket = await this.evidenceTicket(observationId, file);
     return request<{ item: RemoteEvidence }>(
@@ -177,10 +182,15 @@ export const remoteApi = {
     request<{ items: RemoteKnowledgeCard[]; version: string }>(
       `/api/knowledge${params ? `?${params}` : ""}`,
     ),
-  templates: () =>
-    request<{ items: RemoteObservationTemplate[] }>(
-      "/api/observation-templates",
-    ),
+  templates: (filters: { grade?: string; scene?: string } = {}) => {
+    const params = new URLSearchParams();
+    if (filters.grade) params.set("grade", filters.grade);
+    if (filters.scene) params.set("scene", filters.scene);
+    return request<{
+      items: RemoteObservationTemplate[];
+      recommendation: { grade: string | null; scene: string | null; matched: boolean };
+    }>(`/api/observation-templates${params.size ? `?${params}` : ""}`);
+  },
   accounts: () => request<{ items: RemoteAccount[] }>("/api/accounts"),
   createAccount: (value: Record<string, unknown>) =>
     request<{ item: RemoteAccount }>("/api/accounts", {
@@ -195,6 +205,11 @@ export const remoteApi = {
     request<{ status: string }>(`/api/accounts/${userId}/status`, {
       method: "PATCH",
       body: body({ status, reason }),
+    }),
+  resetAccountPassword: (userId: string, password: string) =>
+    request<{ ok: true }>(`/api/accounts/${userId}/password`, {
+      method: "PATCH",
+      body: body({ password }),
     }),
   qualityReviews: () =>
     request<{ items: RemoteQualityQueueItem[] }>("/api/quality-reviews"),

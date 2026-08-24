@@ -67,10 +67,11 @@ export async function observationRoutes(app: FastifyInstance) {
     const { id } = z.object({ id: uuid }).parse(request.params);
     const { data: observation, error } = await auth.data.from("observations").select("*").eq("id", id).single();
     if (error || !observation) throw new ApiError(404, "OBSERVATION_NOT_FOUND", "观察记录不存在或无权访问");
-    const [{ data: evidence }, { data: analyses }] = await Promise.all([
+    const [{ data: evidence, error: evidenceError }, { data: analyses, error: analysisError }] = await Promise.all([
       auth.data.from("evidence_assets").select("*").eq("observation_id", id).order("created_at"),
       auth.data.from("analysis_runs").select("*").eq("observation_id", id).order("generated_at", { ascending: false }),
     ]);
+    if (evidenceError || analysisError) throw new ApiError(500, "OBSERVATION_DETAIL_FAILED", "观察证据或分析结果读取失败");
     return { item: observation, evidence: evidence ?? [], analyses: analyses ?? [] };
   });
 
@@ -110,9 +111,11 @@ export async function observationRoutes(app: FastifyInstance) {
     if (!media) throw new ApiError(422, "UNSUPPORTED_MEDIA_TYPE", "仅支持JPG、PNG、WebP、MP4、MOV和PDF");
     if (input.sizeBytes > media.max) throw new ApiError(422, "MEDIA_TOO_LARGE", media.type === "video" ? "视频片段不能超过100MB" : "图片或文档不能超过10MB");
 
-    const { data: observation } = await auth.data.from("observations").select("id, tenant_id, classroom_id, child_id").eq("id", id).maybeSingle();
+    const { data: observation, error: observationError } = await auth.data.from("observations").select("id, tenant_id, classroom_id, child_id").eq("id", id).maybeSingle();
+    if (observationError) throw new ApiError(500, "OBSERVATION_LOOKUP_FAILED", "观察记录读取失败");
     if (!observation) throw new ApiError(404, "OBSERVATION_NOT_FOUND", "观察记录不存在或无权访问");
-    const { data: child } = await auth.data.from("children").select("guardian_consent_status").eq("id", observation.child_id).single();
+    const { data: child, error: childError } = await auth.data.from("children").select("guardian_consent_status").eq("id", observation.child_id).single();
+    if (childError) throw new ApiError(500, "CHILD_LOOKUP_FAILED", "幼儿授权状态读取失败");
     if (child?.guardian_consent_status === "withdrawn") throw new ApiError(422, "CONSENT_WITHDRAWN", "监护人已撤回授权，不能新增媒体证据");
 
     const path = `${auth.tenantId}/${observation.classroom_id}/${observation.child_id}/${observation.id}/${randomUUID()}.${media.ext}`;
@@ -139,7 +142,8 @@ export async function observationRoutes(app: FastifyInstance) {
   app.post("/api/evidence/:id/complete", async (request) => {
     const auth = await authenticate(request);
     const { id } = z.object({ id: uuid }).parse(request.params);
-    const { data: evidence } = await auth.data.from("evidence_assets").select("*").eq("id", id).maybeSingle();
+    const { data: evidence, error: evidenceError } = await auth.data.from("evidence_assets").select("*").eq("id", id).maybeSingle();
+    if (evidenceError) throw new ApiError(500, "EVIDENCE_LOOKUP_FAILED", "证据读取失败");
     if (!evidence?.storage_path) throw new ApiError(404, "EVIDENCE_NOT_FOUND", "证据不存在或无权访问");
     const slash = evidence.storage_path.lastIndexOf("/");
     const folder = evidence.storage_path.slice(0, slash);
@@ -169,11 +173,12 @@ export async function observationRoutes(app: FastifyInstance) {
         throw new ApiError(422, "EMPTY_MEDIA_UPLOAD", "上传文件为空");
       }
 
-      const { data: evidence } = await auth.data
+      const { data: evidence, error: evidenceError } = await auth.data
         .from("evidence_assets")
         .select("*")
         .eq("id", id)
         .maybeSingle();
+      if (evidenceError) throw new ApiError(500, "EVIDENCE_LOOKUP_FAILED", "证据读取失败");
       if (!evidence?.storage_path) {
         throw new ApiError(404, "EVIDENCE_NOT_FOUND", "证据不存在或无权访问");
       }
@@ -192,11 +197,12 @@ export async function observationRoutes(app: FastifyInstance) {
         throw new ApiError(422, "MEDIA_TOO_LARGE", media.type === "video" ? "视频片段不能超过100MB" : "图片或文档不能超过10MB");
       }
 
-      const { data: child } = await auth.data
+      const { data: child, error: childError } = await auth.data
         .from("children")
         .select("guardian_consent_status")
         .eq("id", evidence.child_id)
         .maybeSingle();
+      if (childError) throw new ApiError(500, "CHILD_LOOKUP_FAILED", "幼儿授权状态读取失败");
       if (child?.guardian_consent_status === "withdrawn") {
         throw new ApiError(422, "CONSENT_WITHDRAWN", "监护人已撤回授权，不能新增媒体证据");
       }
@@ -238,7 +244,8 @@ export async function observationRoutes(app: FastifyInstance) {
   app.get("/api/evidence/:id/download", async (request) => {
     const auth = await authenticate(request);
     const { id } = z.object({ id: uuid }).parse(request.params);
-    const { data: evidence } = await auth.data.from("evidence_assets").select("storage_path, upload_status").eq("id", id).maybeSingle();
+    const { data: evidence, error: evidenceError } = await auth.data.from("evidence_assets").select("storage_path, upload_status").eq("id", id).maybeSingle();
+    if (evidenceError) throw new ApiError(500, "EVIDENCE_LOOKUP_FAILED", "证据读取失败");
     if (!evidence?.storage_path || evidence.upload_status !== "ready") throw new ApiError(404, "EVIDENCE_NOT_READY", "证据不存在或尚未上传完成");
     const { data, error } = await serviceClient.storage.from(config.SUPABASE_STORAGE_BUCKET).createSignedUrl(evidence.storage_path, 300);
     if (error || !data) throw new ApiError(500, "DOWNLOAD_URL_FAILED", "证据查看链接创建失败");
@@ -248,14 +255,16 @@ export async function observationRoutes(app: FastifyInstance) {
   app.post("/api/observations/:id/analyze", { config: { rateLimit: { max: 20, timeWindow: "1 hour" } } }, async (request, reply) => {
     const auth = await authenticate(request);
     const { id } = z.object({ id: uuid }).parse(request.params);
-    const { data: observation } = await auth.data.from("observations").select("*").eq("id", id).maybeSingle();
+    const { data: observation, error: observationError } = await auth.data.from("observations").select("*").eq("id", id).maybeSingle();
+    if (observationError) throw new ApiError(500, "OBSERVATION_LOOKUP_FAILED", "观察记录读取失败");
     if (!observation) throw new ApiError(404, "OBSERVATION_NOT_FOUND", "观察记录不存在或无权访问");
     if (observation.status === "draft") throw new ApiError(409, "OBSERVATION_NOT_SUBMITTED", "请先提交教师观察、识别和应答");
-    const [{ data: classroom }, { data: child }, { data: evidence }] = await Promise.all([
+    const [{ data: classroom, error: classroomError }, { data: child, error: childError }, { data: evidence, error: evidenceError }] = await Promise.all([
       auth.data.from("classrooms").select("id, grade").eq("id", observation.classroom_id).single(),
       auth.data.from("children").select("id, display_name, birth_month, guardian_consent_status").eq("id", observation.child_id).single(),
       auth.data.from("evidence_assets").select("id, evidence_type, transcript, event_segments, upload_status, storage_path, mime_type").eq("observation_id", id).eq("upload_status", "ready"),
     ]);
+    if (classroomError || childError || evidenceError) throw new ApiError(500, "ANALYSIS_CONTEXT_READ_FAILED", "AI分析上下文读取失败");
     if (!classroom || !child) throw new ApiError(422, "ANALYSIS_CONTEXT_MISSING", "幼儿或班级信息不完整");
     const { data: knowledge, error: knowledgeError } = await auth.data.from("knowledge_cards").select("*").eq("grade", classroom.grade).eq("status", "active").limit(200);
     if (knowledgeError || !knowledge?.length) throw new ApiError(409, "KNOWLEDGE_NOT_READY", "当前班级年龄段知识库尚未初始化");
@@ -325,12 +334,16 @@ export async function observationRoutes(app: FastifyInstance) {
       generated_by: auth.userId,
     }).select().single();
     if (error) throw new ApiError(500, "AI_ANALYSIS_SAVE_FAILED", "AI分析结果保存失败");
-    await serviceClient
+    const { error: statusError } = await serviceClient
       .schema(config.SUPABASE_SCHEMA)
       .from("observations")
       .update({ status: "ai_ready" })
       .eq("id", observation.id)
       .eq("tenant_id", auth.tenantId);
+    if (statusError) {
+      await serviceClient.schema(config.SUPABASE_SCHEMA).from("analysis_runs").delete().eq("id", analysis.id);
+      throw new ApiError(500, "AI_ANALYSIS_STATE_FAILED", "AI分析状态保存失败，结果已回滚");
+    }
     await audit(auth, "analysis.generated", "analysis", analysis.id, {
       observationId: observation.id,
       provider: generated.provider,

@@ -1,6 +1,7 @@
 import type { FastifyInstance } from "fastify";
 import { z } from "zod";
 import { config } from "../config.js";
+import { canTransitionResearchActivity } from "../domain/workflow-contracts.js";
 import { ApiError, audit, authenticate, requireResearcher } from "../http.js";
 import { serviceClient } from "../supabase.js";
 
@@ -19,14 +20,18 @@ const qualityInput = z.object({
 });
 
 const exportInput = z.object({
-  classroomId: uuid.optional(),
-  exportType: z.enum(["individual_report", "classroom_report", "curriculum_case", "anonymized_research"]),
-  resourceType: z.string().trim().min(1).max(80),
-  resourceId: z.string().trim().min(1).max(160),
+  exportType: z.enum(["individual_report", "curriculum_case", "anonymized_research"]),
+  resourceId: uuid,
   purpose: z.string().trim().min(2).max(1000),
   recipient: z.string().trim().min(2).max(300),
   anonymized: z.boolean().default(true),
 });
+
+const exportResources = {
+  individual_report: { table: "period_reports", type: "period_report" },
+  curriculum_case: { table: "curriculum_clues", type: "curriculum_clue" },
+  anonymized_research: { table: "research_activities", type: "research_activity" },
+} as const;
 
 const activityInput = z.object({
   classroomId: uuid.optional(),
@@ -42,7 +47,7 @@ export async function governanceRoutes(app: FastifyInstance) {
     const auth = await authenticate(request);
     requireResearcher(auth);
     const schema = serviceClient.schema(config.SUPABASE_SCHEMA);
-    const [{ data: observations, error }, { data: reviews }, { data: children }] = await Promise.all([
+    const [{ data: observations, error }, { data: reviews, error: reviewError }, { data: children, error: childError }] = await Promise.all([
       schema
         .from("observations")
         .select("id, classroom_id, child_id, title, occurred_at, teacher_observation, child_quote, status, created_at")
@@ -53,7 +58,7 @@ export async function governanceRoutes(app: FastifyInstance) {
       schema.from("observation_quality_reviews").select("*").eq("tenant_id", auth.tenantId),
       schema.from("children").select("id, display_name").eq("tenant_id", auth.tenantId),
     ]);
-    if (error) throw new ApiError(500, "QUALITY_QUEUE_FAILED", "观察质量审核队列读取失败");
+    if (error || reviewError || childError) throw new ApiError(500, "QUALITY_QUEUE_FAILED", "观察质量审核队列读取失败");
     const reviewMap = new Map((reviews ?? []).map((item) => [item.observation_id, item]));
     const childMap = new Map((children ?? []).map((item) => [item.id, item.display_name]));
     return {
@@ -69,11 +74,12 @@ export async function governanceRoutes(app: FastifyInstance) {
     const auth = await authenticate(request);
     requireResearcher(auth);
     const input = qualityInput.parse(request.body);
-    const { data: observation } = await auth.data
+    const { data: observation, error: observationError } = await auth.data
       .from("observations")
       .select("id, classroom_id")
       .eq("id", input.observationId)
       .maybeSingle();
+    if (observationError) throw new ApiError(500, "OBSERVATION_LOOKUP_FAILED", "观察记录读取失败");
     if (!observation) throw new ApiError(404, "OBSERVATION_NOT_FOUND", "观察记录不存在或无权审核");
     const { data, error } = await auth.data
       .from("observation_quality_reviews")
@@ -114,14 +120,22 @@ export async function governanceRoutes(app: FastifyInstance) {
   app.post("/api/export-requests", async (request, reply) => {
     const auth = await authenticate(request);
     const input = exportInput.parse(request.body);
+    const resource = exportResources[input.exportType];
+    const { data: source, error: sourceError } = await auth.data
+      .from(resource.table)
+      .select("id, classroom_id")
+      .eq("id", input.resourceId)
+      .maybeSingle();
+    if (sourceError) throw new ApiError(500, "EXPORT_RESOURCE_LOOKUP_FAILED", "导出对象读取失败");
+    if (!source) throw new ApiError(404, "EXPORT_RESOURCE_NOT_FOUND", "导出对象不存在或无权访问");
     const { data, error } = await auth.data
       .from("export_requests")
       .insert({
         tenant_id: auth.tenantId,
-        classroom_id: input.classroomId ?? null,
+        classroom_id: source.classroom_id ?? null,
         requested_by: auth.userId,
         export_type: input.exportType,
-        resource_type: input.resourceType,
+        resource_type: resource.type,
         resource_id: input.resourceId,
         purpose: input.purpose,
         recipient: input.recipient,
@@ -153,11 +167,11 @@ export async function governanceRoutes(app: FastifyInstance) {
 
   app.get("/api/research-activities", async (request) => {
     const auth = await authenticate(request);
-    const [{ data: activities, error }, { data: entries }] = await Promise.all([
+    const [{ data: activities, error }, { data: entries, error: entriesError }] = await Promise.all([
       auth.data.from("research_activities").select("*").order("scheduled_at", { ascending: false }),
       auth.data.from("research_activity_entries").select("*").order("created_at"),
     ]);
-    if (error) throw new ApiError(500, "RESEARCH_ACTIVITY_LIST_FAILED", "教研活动读取失败");
+    if (error || entriesError) throw new ApiError(500, "RESEARCH_ACTIVITY_LIST_FAILED", "教研活动读取失败");
     return {
       items: (activities ?? []).map((activity) => ({
         ...activity,
@@ -204,6 +218,16 @@ export async function governanceRoutes(app: FastifyInstance) {
       comparisonSummary: z.string().trim().max(6000).optional(),
       followUpQuestions: z.array(z.string().trim().min(1).max(300)).max(20).optional(),
     }).parse(request.body);
+    const { data: current, error: currentError } = await auth.data
+      .from("research_activities")
+      .select("status")
+      .eq("id", id)
+      .maybeSingle();
+    if (currentError) throw new ApiError(500, "RESEARCH_ACTIVITY_READ_FAILED", "教研活动状态读取失败");
+    if (!current) throw new ApiError(404, "RESEARCH_ACTIVITY_NOT_FOUND", "教研活动不存在或无权修改");
+    if (input.status && !canTransitionResearchActivity(current.status, input.status)) {
+      throw new ApiError(409, "INVALID_RESEARCH_TRANSITION", `不能从“${current.status}”直接变更为“${input.status}”`);
+    }
     const { data, error } = await auth.data
       .from("research_activities")
       .update({
@@ -228,7 +252,8 @@ export async function governanceRoutes(app: FastifyInstance) {
       identification: z.string().trim().min(5).max(3000),
       responseStrategy: z.string().trim().min(5).max(3000),
     }).parse(request.body);
-    const { data: activity } = await auth.data.from("research_activities").select("id, tenant_id, status").eq("id", id).maybeSingle();
+    const { data: activity, error: activityError } = await auth.data.from("research_activities").select("id, tenant_id, status").eq("id", id).maybeSingle();
+    if (activityError) throw new ApiError(500, "RESEARCH_ACTIVITY_READ_FAILED", "教研活动读取失败");
     if (!activity) throw new ApiError(404, "RESEARCH_ACTIVITY_NOT_FOUND", "教研活动不存在或无权参加");
     if (activity.status !== "in_progress") throw new ApiError(409, "RESEARCH_ACTIVITY_NOT_OPEN", "教研活动尚未开始或已经结束");
     const { data, error } = await auth.data

@@ -28,7 +28,7 @@ VITE_APP_MODE=production VITE_API_BASE_URL=http://127.0.0.1:4310 npm run dev
 VITE_APP_MODE=production VITE_API_BASE_URL= npm run build
 ```
 
-同源部署时 `VITE_API_BASE_URL` 留空，由 Web 容器将 `/api` 和 `/healthz` 代理到 API 容器。
+同源部署时 `VITE_API_BASE_URL` 留空。Web容器的 `/healthz` 只检查静态站点，`/api/healthz` 与其他 `/api` 请求代理到API容器。
 
 ## 生产角色与模块
 

@@ -7,12 +7,15 @@
     "install:all": "npm ci --prefix apps/v3-api && npm ci --prefix apps/v3-local",
     "dev:api": "npm --prefix apps/v3-api run dev",
     "dev:web": "npm --prefix apps/v3-local run dev",
-    "build": "npm run build:api && npm run build:web",
+    "build": "npm run build:api && npm run build:web && npm run build:web:production",
     "build:api": "npm --prefix apps/v3-api run build",
     "build:web": "npm --prefix apps/v3-local run build",
+    "build:web:production": "VITE_APP_MODE=production npm --prefix apps/v3-local run build && node scripts/verify-production-bundle.mjs",
+    "check:contract": "node scripts/verify-production-api-contract.mjs",
+    "smoke:production": "node scripts/smoke-production-api.mjs",
     "test": "npm run test:api && npm run test:web",
     "test:api": "npm --prefix apps/v3-api run test",
     "test:web": "npm --prefix apps/v3-local run test",
-    "check": "npm run test && npm run build"
+    "check": "npm run check:contract && npm run test && npm run build"
   }
 }

@@ -44,6 +44,7 @@ apps/v3-api/supabase/migrations/20260821103000_tongji_v3_shared_auth_trigger_iso
 apps/v3-api/supabase/migrations/20260821104500_tongji_v3_auth_domain_isolation.sql
 apps/v3-api/supabase/migrations/20260821121751_fix_classroom_returning_rls.sql
 apps/v3-api/supabase/migrations/20260821122655_fix_research_activity_returning_rls.sql
+apps/v3-api/supabase/migrations/20260824064422_preserve_archived_classroom_history.sql
 ```
 
 托管 Supabase：
@@ -81,7 +82,8 @@ chmod 600 .env
 ./deploy.sh
 ./seed.sh
 ./bootstrap-admin.sh
-curl -fsS http://127.0.0.1:8300/healthz
+curl -fsS http://127.0.0.1:8300/healthz       # Web容器
+curl -fsS http://127.0.0.1:8300/api/healthz   # API、schema与AI配置
 ```
 
 `bootstrap-admin.sh` 在终端中隐藏读取密码，只把密码传给一次性容器，不写入 `.env`。
@@ -104,7 +106,8 @@ Certbot 使用 Webroot 签发时，将 `certbot-nginx-reload.sh` 安装到 `/etc
 ```bash
 docker compose --env-file .env ps
 docker compose --env-file .env logs --tail=100 api
-curl -fsS https://tongji.meidaquan.com/healthz
+curl -fsS https://tongji.meidaquan.com/healthz       # Web健康
+curl -fsS https://tongji.meidaquan.com/api/healthz   # API健康
 ```
 
 浏览器验证：

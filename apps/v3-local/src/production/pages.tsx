@@ -745,17 +745,15 @@ export function RemoteObservationPage() {
   const [decisionNote, setDecisionNote] = useState("");
 
   const load = async () => {
-    const [classResult, childResult, observationResult, templateResult] =
+    const [classResult, childResult, observationResult] =
       await Promise.all([
         remoteApi.classrooms(),
         remoteApi.children(),
         remoteApi.observations(),
-        remoteApi.templates(),
       ]);
     setClassrooms(classResult.items);
     setChildren(childResult.items);
     setObservations(observationResult.items);
-    setTemplates(templateResult.items);
     setSelected((current) => current || observationResult.items[0]?.id || "");
     setForm((current) => ({
       ...current,
@@ -788,6 +786,27 @@ export function RemoteObservationPage() {
     );
     setForm((current) => ({ ...current, childId: first?.id || "" }));
   }, [form.classroomId, children]);
+  useEffect(() => {
+    let cancelled = false;
+    const grade = classrooms.find((item) => item.id === form.classroomId)?.grade;
+    remoteApi
+      .templates({ grade, scene: form.scene })
+      .then((result) => {
+        if (cancelled) return;
+        setTemplates(result.items);
+        setForm((current) =>
+          current.templateId && !result.items.some((item) => item.id === current.templateId)
+            ? { ...current, templateId: "" }
+            : current,
+        );
+      })
+      .catch((reason) => {
+        if (!cancelled) setError(showError(reason));
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [classrooms, form.classroomId, form.scene]);
   const childMap = useMemo(
     () => new Map(children.map((child) => [child.id, child])),
     [children],
@@ -847,6 +866,22 @@ export function RemoteObservationPage() {
       setDetail(await remoteApi.observation(detail.item.id));
       await load();
     } catch (reason) {
+      setError(showError(reason));
+    } finally {
+      setBusy(false);
+    }
+  };
+  const openEvidence = async (evidence: RemoteEvidence) => {
+    const preview = window.open("about:blank", "_blank");
+    if (preview) preview.opener = null;
+    setBusy(true);
+    setError("");
+    try {
+      const result = await remoteApi.evidenceDownload(evidence.id);
+      if (preview) preview.location.href = result.url;
+      else window.location.assign(result.url);
+    } catch (reason) {
+      preview?.close();
       setError(showError(reason));
     } finally {
       setBusy(false);
@@ -982,6 +1017,24 @@ export function RemoteObservationPage() {
                 </small>
               </Panel>
             </div>
+            {detail.evidence.length > 0 && (
+              <Panel title="观察证据" subtitle="仅就绪证据可通过5分钟有效的私有链接查看">
+                <div className="remote-file-list">
+                  {detail.evidence.map((item) => (
+                    <button
+                      className="btn btn-secondary"
+                      disabled={busy || item.upload_status !== "ready"}
+                      key={item.id}
+                      onClick={() => void openEvidence(item)}
+                    >
+                      <FileVideo />
+                      {item.file_name || "未命名证据"}
+                      <small>{item.upload_status === "ready" ? "查看" : "处理中"}</small>
+                    </button>
+                  ))}
+                </div>
+              </Panel>
+            )}
             {canRunAnalysis && (
               <Panel className="remote-ai-launch">
                 <Sparkles />
@@ -1153,9 +1206,9 @@ export function RemoteObservationPage() {
                     }}
                   >
                     <option value="">通用观察表</option>
-                    {templates.map((template) => (
+                    {templates.map((template, index) => (
                       <option key={template.id} value={template.id}>
-                        {template.name} · v{template.version}
+                        {index === 0 ? "推荐 · " : ""}{template.name} · v{template.version}
                       </option>
                     ))}
                   </select>
@@ -1362,7 +1415,7 @@ function AnalysisPanel({
               <div>
                 <p>{item.content}</p>
                 <small>
-                  {item.evidence} · 置信度 {Math.round(item.confidence * 100)}%
+                  {item.evidence} · 证据锚点 {item.evidenceIds?.join("、") || "教师原稿"} · 置信度 {Math.round(item.confidence * 100)}%
                 </small>
               </div>
             </article>
@@ -1374,7 +1427,7 @@ function AnalysisPanel({
               <Layers3 />
               <div>
                 <p>{item.content}</p>
-                <small>{item.indicatorCode}</small>
+                <small>{item.indicatorCode} · {item.limitation || "需持续观察验证"}</small>
               </div>
             </article>
           ))}
@@ -1385,12 +1438,31 @@ function AnalysisPanel({
               <Search />
               <div>
                 <p>{item.content}</p>
-                <small>下一轮观察验证</small>
+                <small>{item.nextObservation || "下一轮观察验证"} · 置信度 {Math.round(item.confidence * 100)}%</small>
               </div>
             </article>
           ))}
         </Panel>
       </div>
+      <Panel title="当前经验与教师判断对照" subtitle="教师原判断原样保留，AI只提供补充视角">
+        <div className="remote-three-layers">
+          <article>
+            <span className="layer layer-fact">当前经验</span>
+            <p>{result.currentExperience}</p>
+          </article>
+          <article>
+            <span className="layer layer-interpret">教师识别</span>
+            <p>{result.teacherComparison.teacherIdentification}</p>
+          </article>
+          <article>
+            <span className="layer layer-response">AI补充</span>
+            <p>{result.teacherComparison.aiAddition}</p>
+          </article>
+        </div>
+        <div className="focus-pills compact">
+          {result.interestsAndStrengths.map((item) => <span className="selected" key={item}>{item}</span>)}
+        </div>
+      </Panel>
       <Panel
         title="年龄段知识依据"
         subtitle="显示关联，不据此给幼儿贴“达标/不达标”标签"
@@ -1433,6 +1505,12 @@ function AnalysisPanel({
               </article>
             ),
           )}
+        </div>
+      </Panel>
+      <Panel title="证据缺口与下一次观察">
+        <div className="remote-response-grid">
+          <article><Badge tone="orange">证据缺口</Badge>{result.evidenceGaps.map((item) => <p key={item}>{item}</p>)}</article>
+          <article><Badge tone="blue">复察重点</Badge>{result.nextObservation.map((item) => <p key={item}>{item}</p>)}</article>
         </div>
       </Panel>
       <Panel>
@@ -1680,6 +1758,8 @@ export function RemoteAccountsPage({
   const [accounts, setAccounts] = useState<RemoteAccount[]>([]);
   const [classrooms, setClassrooms] = useState<RemoteClassroom[]>([]);
   const [modal, setModal] = useState(false);
+  const [passwordTarget, setPasswordTarget] = useState<RemoteAccount | null>(null);
+  const [newPassword, setNewPassword] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const [form, setForm] = useState({
@@ -1732,6 +1812,21 @@ export function RemoteAccountsPage({
         status === "disabled" ? "教研员在账号管理中停用" : undefined,
       );
       await load();
+    } catch (reason) {
+      setError(showError(reason));
+    } finally {
+      setBusy(false);
+    }
+  };
+  const resetPassword = async (event: FormEvent) => {
+    event.preventDefault();
+    if (!passwordTarget) return;
+    setBusy(true);
+    setError("");
+    try {
+      await remoteApi.resetAccountPassword(passwordTarget.user_id, newPassword);
+      setPasswordTarget(null);
+      setNewPassword("");
     } catch (reason) {
       setError(showError(reason));
     } finally {
@@ -1798,17 +1893,16 @@ export function RemoteAccountsPage({
               <Badge tone={tone(account.status)}>
                 {statusLabel[account.status]}
               </Badge>
-              <button
-                className={
-                  account.status === "active"
-                    ? "btn btn-ghost-danger"
-                    : "btn btn-secondary"
-                }
-                disabled={busy || account.user_id === currentUser.id}
-                onClick={() => toggle(account)}
-              >
-                {account.status === "active" ? "停用账号" : "恢复账号"}
-              </button>
+              <div className="remote-row-actions">
+                <button className="btn btn-secondary" disabled={busy} onClick={() => { setPasswordTarget(account); setNewPassword(""); }}>重置密码</button>
+                <button
+                  className={account.status === "active" ? "btn btn-ghost-danger" : "btn btn-secondary"}
+                  disabled={busy || account.user_id === currentUser.id}
+                  onClick={() => toggle(account)}
+                >
+                  {account.status === "active" ? "停用账号" : "恢复账号"}
+                </button>
+              </div>
             </article>
           ))}
         </div>
@@ -1897,6 +1991,15 @@ export function RemoteAccountsPage({
               <Save />
               创建账号
             </button>
+          </form>
+        </Modal>
+      )}
+      {passwordTarget && (
+        <Modal title={`重置${passwordTarget.display_name}的密码`} description="新密码只提交给后端身份服务，不写入童迹业务表。" onClose={() => setPasswordTarget(null)}>
+          <form className="remote-form" onSubmit={resetPassword}>
+            <label className="full-field"><span>新密码</span><input autoComplete="new-password" required type="password" minLength={10} value={newPassword} onChange={(event) => setNewPassword(event.target.value)} /></label>
+            <small className="full-field">至少10位，且同时包含大写字母、小写字母和数字。</small>
+            <button className="btn btn-primary" disabled={busy} type="submit"><KeyRound />确认重置</button>
           </form>
         </Modal>
       )}
@@ -2017,33 +2120,59 @@ export function RemoteQualityPage() {
 
 export function RemoteExportsPage({ user }: { user: RemoteUser }) {
   const [items, setItems] = useState<RemoteExportRequest[]>([]);
-  const [classrooms, setClassrooms] = useState<RemoteClassroom[]>([]);
+  const [reports, setReports] = useState<RemotePeriodReport[]>([]);
+  const [curriculum, setCurriculum] = useState<RemoteCurriculumClue[]>([]);
+  const [research, setResearch] = useState<RemoteResearchActivity[]>([]);
   const [selectedId, setSelectedId] = useState("");
   const [modal, setModal] = useState(false);
   const [busy, setBusy] = useState(false);
   const [loaded, setLoaded] = useState(false);
   const [error, setError] = useState("");
   const [decisionNote, setDecisionNote] = useState("");
-  const [form, setForm] = useState({ classroomId: "", exportType: "individual_report", resourceType: "observation", resourceId: "", purpose: "", recipient: "", anonymized: true });
+  const [form, setForm] = useState({ exportType: "individual_report", resourceId: "", purpose: "", recipient: "", anonymized: true });
   const load = async () => {
-    const [requests, classes] = await Promise.all([remoteApi.exportRequests(), remoteApi.classrooms()]);
+    const [requests, reportResult, curriculumResult, researchResult] = await Promise.all([
+      remoteApi.exportRequests(),
+      remoteApi.reports(),
+      remoteApi.curriculumClues(),
+      remoteApi.researchActivities(),
+    ]);
     setItems(requests.items);
-    setClassrooms(classes.items);
+    setReports(reportResult.items);
+    setCurriculum(curriculumResult.items);
+    setResearch(researchResult.items);
     setSelectedId((current) => current || requests.items[0]?.id || "");
-    setForm((current) => ({ ...current, classroomId: current.classroomId || classes.items[0]?.id || "" }));
   };
   useEffect(() => {
     load()
       .catch((reason) => setError(showError(reason)))
       .finally(() => setLoaded(true));
   }, []);
+  const resourceOptions = useMemo(() => {
+    if (form.exportType === "individual_report") {
+      return reports.map((item) => ({
+        id: item.id,
+        label: `${item.report_type === "guardian" ? "家长版" : "教师版"} · ${item.period_start}至${item.period_end}`,
+      }));
+    }
+    if (form.exportType === "curriculum_case") {
+      return curriculum.map((item) => ({ id: item.id, label: item.title }));
+    }
+    return research.map((item) => ({
+      id: item.id,
+      label: `${item.title} · ${new Date(item.scheduled_at).toLocaleDateString("zh-CN")}`,
+    }));
+  }, [curriculum, form.exportType, reports, research]);
+  const selectedResourceId = resourceOptions.some((item) => item.id === form.resourceId)
+    ? form.resourceId
+    : resourceOptions[0]?.id || "";
   const selected = items.find((item) => item.id === selectedId) ?? items[0];
   const create = async (event: FormEvent) => {
     event.preventDefault();
     setBusy(true);
     setError("");
     try {
-      await remoteApi.createExportRequest({ ...form, classroomId: form.classroomId || undefined });
+      await remoteApi.createExportRequest({ ...form, resourceId: selectedResourceId });
       setModal(false);
       setForm({ ...form, resourceId: "", purpose: "", recipient: "" });
       await load();
@@ -2056,7 +2185,8 @@ export function RemoteExportsPage({ user }: { user: RemoteUser }) {
     try { await remoteApi.decideExportRequest(selected.id, decision, decisionNote); setDecisionNote(""); await load(); }
     catch (reason) { setError(showError(reason)); } finally { setBusy(false); }
   };
-  const exportLabel: Record<string, string> = { individual_report: "个体报告", classroom_report: "班级报告", curriculum_case: "课程案例", anonymized_research: "匿名研究数据" };
+  const exportLabel: Record<string, string> = { individual_report: "个体报告", classroom_report: "班级报告（历史）", curriculum_case: "课程案例", anonymized_research: "匿名研究数据" };
+  const availableExportLabels = Object.entries(exportLabel).filter(([value]) => value !== "classroom_report");
   return (
     <div className="page remote-page">
       <PageHeader eyebrow="EXPORT APPROVAL" title={user.role === "researcher" ? "敏感数据导出审批" : "我的导出申请"} description="报告、课程案例和研究数据离开系统前，确认用途、接收方、授权与去标识条件。" actions={<button className="btn btn-primary" onClick={() => setModal(true)}><Download />申请导出</button>} />
@@ -2075,14 +2205,12 @@ export function RemoteExportsPage({ user }: { user: RemoteUser }) {
         </div>
       )}
       {modal && <Modal title="创建导出申请" description="系统只记录审批，不在浏览器内自动打包敏感文件。" onClose={() => setModal(false)}><form className="remote-form" onSubmit={create}>
-        <label><span>关联班级</span><select required={user.role === "teacher"} value={form.classroomId} onChange={(event) => setForm({ ...form, classroomId: event.target.value })}><option value="">全园或无班级</option>{classrooms.map((item) => <option value={item.id} key={item.id}>{item.name}</option>)}</select></label>
-        <label><span>导出类型</span><select value={form.exportType} onChange={(event) => setForm({ ...form, exportType: event.target.value })}>{Object.entries(exportLabel).map(([value, label]) => <option value={value} key={value}>{label}</option>)}</select></label>
-        <label><span>业务对象类型</span><input required value={form.resourceType} onChange={(event) => setForm({ ...form, resourceType: event.target.value })} /></label>
-        <label><span>业务对象编号</span><input required value={form.resourceId} onChange={(event) => setForm({ ...form, resourceId: event.target.value })} /></label>
+        <label><span>导出类型</span><select value={form.exportType} onChange={(event) => setForm({ ...form, exportType: event.target.value, resourceId: "" })}>{availableExportLabels.map(([value, label]) => <option value={value} key={value}>{label}</option>)}</select></label>
+        <label><span>选择系统内真实对象</span><select required value={selectedResourceId} onChange={(event) => setForm({ ...form, resourceId: event.target.value })}><option value="">{resourceOptions.length ? "请选择" : "暂无可申请对象"}</option>{resourceOptions.map((item) => <option value={item.id} key={item.id}>{item.label}</option>)}</select></label>
         <label className="full-field"><span>用途</span><textarea required rows={3} value={form.purpose} onChange={(event) => setForm({ ...form, purpose: event.target.value })} /></label>
         <label className="full-field"><span>接收方</span><input required value={form.recipient} onChange={(event) => setForm({ ...form, recipient: event.target.value })} /></label>
         <label className="full-field"><span><input type="checkbox" checked={form.anonymized} onChange={(event) => setForm({ ...form, anonymized: event.target.checked })} /> 已完成或要求导出时去标识</span></label>
-        <button className="btn btn-primary" disabled={busy} type="submit"><Save />提交审批</button>
+        <button className="btn btn-primary" disabled={busy || !selectedResourceId} type="submit"><Save />提交审批</button>
       </form></Modal>}
     </div>
   );

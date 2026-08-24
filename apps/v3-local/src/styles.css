@@ -437,6 +437,9 @@ svg { flex: 0 0 auto; }
 .remote-login-card input,.remote-form input,.remote-form select,.remote-form textarea,.remote-observation-form input,.remote-observation-form select,.remote-observation-form textarea,.remote-decision textarea { width:100%; padding:11px 12px; border:1px solid #dcd9cf; border-radius:11px; outline:none; background:white; font-size:11px; line-height:1.6; }
 .remote-login-card input:focus,.remote-form input:focus,.remote-form select:focus,.remote-observation-form input:focus,.remote-observation-form select:focus,.remote-observation-form textarea:focus { border-color:var(--green); box-shadow:0 0 0 3px var(--green-soft); }
 .remote-login-card .btn { width:100%; min-height:46px; margin-top:4px; }.remote-login-error { padding:10px; margin:0; border-radius:9px; color:var(--red); background:var(--red-soft); font-size:10px; }
+.service-error-screen { padding: 24px; text-align: center; }
+.service-error-screen p { max-width: 520px; }
+.service-error-screen .btn { margin-top: 18px; }
 .remote-login-security { display:flex; gap:8px; padding:14px 0 0; margin-top:20px; border-top:1px solid var(--line); color:var(--muted); font-size:8px; line-height:1.65; }.remote-login-security svg { width:16px; color:var(--green); }
 
 .remote-hero { display:grid; grid-template-columns:1.4fr .55fr; gap:26px; padding:32px 36px; margin-bottom:18px; border-radius:26px; color:white; background:radial-gradient(circle at 75% 0,rgba(241,201,123,.18),transparent 37%),linear-gradient(135deg,#285846,#39705b); }

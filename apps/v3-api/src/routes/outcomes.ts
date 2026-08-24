@@ -52,7 +52,8 @@ export async function outcomeRoutes(app: FastifyInstance) {
       childResponse: z.string().trim().max(3000).optional(),
       effectiveness: z.enum(["supported", "insufficient", "continue"]).optional(),
     }).parse(request.body);
-    const { data: current } = await auth.data.from("support_actions").select("*").eq("id", id).maybeSingle();
+    const { data: current, error: currentError } = await auth.data.from("support_actions").select("*").eq("id", id).maybeSingle();
+    if (currentError) throw new ApiError(500, "SUPPORT_READ_FAILED", "应答行动读取失败");
     if (!current) throw new ApiError(404, "SUPPORT_NOT_FOUND", "应答行动不存在或无权访问");
     if (!(nextSupportStatus[current.status] ?? []).includes(input.status)) {
       throw new ApiError(409, "INVALID_SUPPORT_TRANSITION", `不能从“${current.status}”直接变更为“${input.status}”`);
@@ -75,13 +76,15 @@ export async function outcomeRoutes(app: FastifyInstance) {
   app.get("/api/children/:id/growth", async (request) => {
     const auth = await authenticate(request);
     const { id } = z.object({ id: uuid }).parse(request.params);
-    const { data: child } = await auth.data.from("children").select("*").eq("id", id).maybeSingle();
+    const { data: child, error: childError } = await auth.data.from("children").select("*").eq("id", id).maybeSingle();
+    if (childError) throw new ApiError(500, "CHILD_LOOKUP_FAILED", "幼儿档案读取失败");
     if (!child) throw new ApiError(404, "CHILD_NOT_FOUND", "幼儿不存在或无权访问");
-    const [{ data: observations }, { data: analyses }, { data: supports }] = await Promise.all([
+    const [{ data: observations, error: observationError }, { data: analyses, error: analysisError }, { data: supports, error: supportError }] = await Promise.all([
       auth.data.from("observations").select("*").eq("child_id", id).eq("status", "adopted").order("occurred_at"),
       auth.data.from("analysis_runs").select("*").eq("child_id", id).eq("decision", "adopted").order("generated_at"),
       auth.data.from("support_actions").select("*").eq("child_id", id).order("created_at"),
     ]);
+    if (observationError || analysisError || supportError) throw new ApiError(500, "GROWTH_READ_FAILED", "成长轨迹读取失败");
     const analysisMap = new Map((analyses ?? []).map((item) => [item.observation_id, item]));
     return {
       child,
@@ -119,13 +122,15 @@ export async function outcomeRoutes(app: FastifyInstance) {
       periodStart: date,
       periodEnd: date,
     }).refine((value) => value.periodEnd >= value.periodStart, { message: "结束日期不能早于开始日期" }).parse(request.body);
-    const { data: child } = await auth.data.from("children").select("id, classroom_id, display_name").eq("id", input.childId).eq("classroom_id", input.classroomId).maybeSingle();
+    const { data: child, error: childError } = await auth.data.from("children").select("id, classroom_id, display_name").eq("id", input.childId).eq("classroom_id", input.classroomId).maybeSingle();
+    if (childError) throw new ApiError(500, "CHILD_LOOKUP_FAILED", "幼儿档案读取失败");
     if (!child) throw new ApiError(404, "CHILD_NOT_FOUND", "幼儿不存在、班级不匹配或无权访问");
-    const [{ data: observations }, { data: analyses }, { data: supports }] = await Promise.all([
+    const [{ data: observations, error: observationError }, { data: analyses, error: analysisError }, { data: supports, error: supportError }] = await Promise.all([
       auth.data.from("observations").select("*").eq("child_id", child.id).eq("status", "adopted").gte("occurred_at", `${input.periodStart}T00:00:00+08:00`).lte("occurred_at", `${input.periodEnd}T23:59:59+08:00`).order("occurred_at"),
       auth.data.from("analysis_runs").select("*").eq("child_id", child.id).eq("decision", "adopted"),
       auth.data.from("support_actions").select("*").eq("child_id", child.id),
     ]);
+    if (observationError || analysisError || supportError) throw new ApiError(500, "REPORT_CONTEXT_READ_FAILED", "周期报告证据读取失败");
     if (!observations?.length) throw new ApiError(409, "REPORT_EVIDENCE_INSUFFICIENT", "本周期没有教师已采用的连续证据，暂不能生成正式报告");
     const observationIds = observations.map((item) => item.id);
     const usedAnalyses = (analyses ?? []).filter((item) => observationIds.includes(item.observation_id));
@@ -186,7 +191,8 @@ export async function outcomeRoutes(app: FastifyInstance) {
     const auth = await authenticate(request);
     const { id } = z.object({ id: uuid }).parse(request.params);
     const input = z.object({ status: z.enum(["reviewed", "published", "withdrawn"]) }).parse(request.body);
-    const { data: current } = await auth.data.from("period_reports").select("status").eq("id", id).maybeSingle();
+    const { data: current, error: currentError } = await auth.data.from("period_reports").select("status").eq("id", id).maybeSingle();
+    if (currentError) throw new ApiError(500, "REPORT_READ_FAILED", "报告状态读取失败");
     if (!current) throw new ApiError(404, "REPORT_NOT_FOUND", "报告不存在或无权访问");
     const allowed: Record<string, string[]> = { draft: ["reviewed"], reviewed: ["published"], published: ["withdrawn"], withdrawn: [] };
     if (!(allowed[current.status] ?? []).includes(input.status)) throw new ApiError(409, "INVALID_REPORT_TRANSITION", "报告状态必须按草稿、审核、发布、撤回顺序推进");
@@ -275,7 +281,8 @@ export async function outcomeRoutes(app: FastifyInstance) {
         status: thresholdMet ? "draft" : "clue",
         created_by: auth.userId,
       };
-      const { data: existing } = await auth.data.from("curriculum_clues").select("id, plan").eq("classroom_id", classroomId).eq("theme", theme).neq("status", "archived").maybeSingle();
+      const { data: existing, error: existingError } = await auth.data.from("curriculum_clues").select("id, plan").eq("classroom_id", classroomId).eq("theme", theme).neq("status", "archived").maybeSingle();
+      if (existingError) throw new ApiError(500, "CURRICULUM_CLUE_READ_FAILED", "课程线索读取失败");
       const operation = existing
         ? auth.data.from("curriculum_clues").update({ ...payload, plan: { ...payload.plan, version: Number(existing.plan?.version ?? 0) + 1 } }).eq("id", existing.id).select().single()
         : auth.data.from("curriculum_clues").insert(payload).select().single();
@@ -300,7 +307,8 @@ export async function outcomeRoutes(app: FastifyInstance) {
       plan: z.record(z.unknown()).optional(),
       status: z.enum(["clue", "draft", "reviewed", "active", "reflected", "archived"]).optional(),
     }).parse(request.body);
-    const { data: current } = await auth.data.from("curriculum_clues").select("plan, status").eq("id", id).maybeSingle();
+    const { data: current, error: currentError } = await auth.data.from("curriculum_clues").select("plan, status").eq("id", id).maybeSingle();
+    if (currentError) throw new ApiError(500, "CURRICULUM_CLUE_READ_FAILED", "课程线索读取失败");
     if (!current) throw new ApiError(404, "CURRICULUM_CLUE_NOT_FOUND", "课程线索不存在或无权访问");
     if (input.status !== undefined) {
       const allowed: Record<string, string[]> = { clue: ["draft", "archived"], draft: ["reviewed", "archived"], reviewed: ["active", "archived"], active: ["reflected", "archived"], reflected: ["archived"], archived: [] };

@@ -34,7 +34,7 @@ export async function buildApp() {
   });
   registerErrorHandler(app);
 
-  app.get("/healthz", async () => ({
+  const health = () => ({
     status: "ok",
     service: "tongji-v3-api",
     schema: config.SUPABASE_SCHEMA,
@@ -45,7 +45,9 @@ export async function buildApp() {
       mediaAnalysisEnabled: config.AI_MODE === "qianwen" && config.qwenMediaAnalysisEnabled,
       fallbackEnabled: config.aiFallbackToSimulated,
     },
-  }));
+  });
+  app.get("/healthz", async () => health());
+  app.get("/api/healthz", async () => health());
   await authRoutes(app);
   await managementRoutes(app);
   await observationRoutes(app);

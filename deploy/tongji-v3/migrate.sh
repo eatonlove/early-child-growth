@@ -64,5 +64,16 @@ else
   echo "教研活动创建回读 RLS 已修复，跳过修复迁移。"
 fi
 
+archived_history_read_fixed="$(docker exec "$DB_CONTAINER" psql -U postgres -d postgres -Atc \
+  "select to_regprocedure('tongji_v3_private.has_class_read_access(uuid)') is not null;")"
+
+if [ "$archived_history_read_fixed" != "t" ]; then
+  docker exec -i "$DB_CONTAINER" psql -U postgres -d postgres \
+    -v ON_ERROR_STOP=1 --single-transaction \
+    < "$ROOT_DIR/apps/v3-api/supabase/migrations/20260824064422_preserve_archived_classroom_history.sql"
+else
+  echo "归档班级历史只读权限已修复，跳过修复迁移。"
+fi
+
 docker exec "$DB_CONTAINER" psql -U postgres -d postgres -Atc \
   "select table_schema || '.' || table_name from information_schema.tables where table_schema = 'tongji_v3' order by table_name;"
