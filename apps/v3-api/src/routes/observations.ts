@@ -291,6 +291,12 @@ export async function observationRoutes(app: FastifyInstance) {
     } catch {
       throw new ApiError(502, "AI_ANALYSIS_FAILED", "AI分析暂时不可用，请稍后重试");
     }
+    if (generated.fallbackReason) {
+      request.log.warn(
+        { observationId: observation.id, fallbackReason: generated.fallbackReason },
+        "AI provider used safe fallback",
+      );
+    }
     const structuredResult = generated.data;
     const matchedCodes = structuredResult.developmentReferences.map((item) => item.indicatorCode);
     const matchedCards = (knowledge as KnowledgeRow[]).filter((card) => matchedCodes.includes(card.code));
@@ -331,6 +337,7 @@ export async function observationRoutes(app: FastifyInstance) {
       model: generated.model,
       mediaAnalyzed: generated.mediaAnalyzed,
       fallbackUsed: Boolean(generated.fallbackReason),
+      fallbackReason: generated.fallbackReason ?? null,
       knowledgeCardIds: matchedCards.map((card) => card.id),
     });
     return reply.status(201).send({ item: analysis, aiNotice: generated.notice, simulationNotice: generated.notice });
