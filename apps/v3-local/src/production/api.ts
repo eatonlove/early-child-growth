@@ -130,7 +130,7 @@ export const remoteApi = {
       body: body(value),
     }),
   analyze: (id: string) =>
-    request<{ item: RemoteAnalysis; simulationNotice: string }>(
+    request<{ item: RemoteAnalysis; aiNotice: string; simulationNotice: string }>(
       `/api/observations/${id}/analyze`,
       { method: "POST" },
     ),
@@ -257,7 +257,7 @@ export const remoteApi = {
     request<RemoteGrowthResult>(`/api/children/${childId}/growth`),
   reports: () => request<{ items: RemotePeriodReport[] }>("/api/reports"),
   generateReport: (value: Record<string, unknown>) =>
-    request<{ item: RemotePeriodReport }>("/api/reports/generate", {
+    request<{ item: RemotePeriodReport; aiNotice: string }>("/api/reports/generate", {
       method: "POST",
       body: body(value),
     }),

@@ -112,19 +112,19 @@
 
 | 方法 | 路径 | 作用 |
 |---|---|---|
-| POST | `/observations/:id/analyze` | 按班级年龄检索知识卡并生成模拟AI草稿 |
+| POST | `/observations/:id/analyze` | 按班级年龄检索知识卡，由当前AI Provider生成结构化草稿 |
 | POST | `/analyses/:id/decision` | 教师对整份AI结果选择采用或放弃 |
 
-分析只接受已经提交的教师记录。当前 `ScenarioAIProvider` 不读取真实视频画面或音轨。
+分析只接受已经提交的教师记录。`AI_MODE=qianwen` 时使用 `QianwenAIProvider`；在监护授权为 `granted` 且 `QWEN_MEDIA_ANALYSIS_ENABLED=true` 时，可将私有图片或视频的15分钟签名链接作为多模态输入。视频只分析画面，不处理音轨。未启用千问或安全回退时使用 `ScenarioAIProvider`，页面必须显示实际 Provider 和模型。
 
 固定输出：
 
 ```json
 {
   "objectiveSummary": "客观摘要",
-  "facts": [],
-  "interpretations": [],
-  "hypotheses": [],
+  "facts": [{ "content": "事实", "evidence": "来源", "evidenceIds": ["teacher-observation"], "confidence": 0.9 }],
+  "interpretations": [{ "content": "可能解释", "indicatorCode": "指标编码", "evidenceIds": ["teacher-observation"], "limitation": "证据限制", "confidence": 0.7 }],
+  "hypotheses": [{ "content": "待验证假设", "nextObservation": "复察重点", "confidence": 0.6 }],
   "teacherComparison": {},
   "currentExperience": "当前经验",
   "interestsAndStrengths": [],
@@ -137,9 +137,11 @@
   },
   "nextObservation": [],
   "evidenceSufficiency": "有限 | 初步充分",
-  "warnings": []
+  "warnings": ["必须由教师审核"]
 }
 ```
+
+接口同时返回 `aiNotice`；`analysis_runs.provider`、`model`、`prompt_version`、`knowledge_card_ids` 和 `risk_flags` 保存本次生成的可追溯信息。千问返回的指标编码和证据ID必须在请求白名单内，否则整次结果作废并按配置回退或报错。
 
 采用请求：
 
@@ -171,10 +173,10 @@
 | PATCH | `/support-actions/:id` | 按“实施、复察、验证、关闭”状态机记录效果证据 |
 | GET | `/children/:id/growth` | 汇总该幼儿已采用观察、分析和应答效果时间轴 |
 | GET | `/reports` | 查看权限范围内的周期报告 |
-| POST | `/reports/generate` | 从指定周期内已采用证据生成教师版或家长版草稿 |
+| POST | `/reports/generate` | 从指定周期内已采用证据由当前AI Provider生成教师版或家长版草稿 |
 | PATCH | `/reports/:id/status` | 完成审核、发布或撤回 |
 | GET | `/curriculum-clues` | 查看多幼儿、多时间点课程线索 |
-| POST | `/curriculum-clues/scan` | 按持续兴趣和证据门槛扫描班级课程线索 |
+| POST | `/curriculum-clues/scan` | 按持续兴趣和证据门槛扫描线索，达到门槛后由当前AI Provider生成课程草案 |
 | PATCH | `/curriculum-clues/:id` | 保存可编辑课程草案新版本并推进状态 |
 
 报告没有已采用证据时拒绝生成。课程线索至少满足“2名幼儿或同一幼儿3次观察”，并跨越不少于2个时间点；系统只生成可修改草案。

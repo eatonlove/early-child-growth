@@ -1,5 +1,7 @@
 import type { FastifyInstance } from "fastify";
 import { z } from "zod";
+import { createAIProvider } from "../ai/provider.js";
+import { config } from "../config.js";
 import { ApiError, audit, authenticate } from "../http.js";
 
 const uuid = z.string().uuid();
@@ -12,6 +14,16 @@ const nextSupportStatus: Record<string, string[]> = {
   verified: ["closed"],
   closed: [],
 };
+
+const aiProvider = createAIProvider({
+  mode: config.AI_MODE,
+  apiKey: config.qwenApiKey,
+  baseUrl: config.QWEN_BASE_URL,
+  textModel: config.QWEN_TEXT_MODEL,
+  visionModel: config.QWEN_VISION_MODEL,
+  timeoutMs: config.QWEN_TIMEOUT_MS,
+  fallbackToSimulated: config.aiFallbackToSimulated,
+});
 
 function mostFrequent(values: string[], limit = 4) {
   const counts = new Map<string, number>();
@@ -118,25 +130,28 @@ export async function outcomeRoutes(app: FastifyInstance) {
     const observationIds = observations.map((item) => item.id);
     const usedAnalyses = (analyses ?? []).filter((item) => observationIds.includes(item.observation_id));
     const usedSupports = (supports ?? []).filter((item) => observationIds.includes(item.observation_id));
-    const growth = usedAnalyses.flatMap((item) => item.structured_result?.interpretations ?? []).map((item) => item.content).slice(0, 6);
-    const familyGrowth = usedAnalyses.flatMap((item) => item.structured_result?.interestsAndStrengths ?? []).slice(0, 6);
+    let generated;
+    try {
+      generated = await aiProvider.generateReport({
+        reportType: input.reportType,
+        childName: child.display_name,
+        periodStart: input.periodStart,
+        periodEnd: input.periodEnd,
+        observations,
+        analyses: usedAnalyses,
+        supports: usedSupports,
+      });
+    } catch {
+      throw new ApiError(502, "AI_REPORT_FAILED", "AI报告生成暂时不可用，请稍后重试");
+    }
     const content = {
-      title: `${child.display_name}的游戏学习与发展记录`,
-      evidenceBoundary: input.reportType === "guardian"
-        ? "我们关注孩子在不同时候的变化，不与其他孩子比较。"
-        : "只汇总教师明确采用的分析，不与其他幼儿比较。",
-      observationCoverage: `${observations.length}次观察，覆盖${new Set(observations.map((item) => item.scene)).size}类游戏场景。`,
-      interests: mostFrequent(observations.map((item) => item.theme)),
-      evidencedGrowth: input.reportType === "guardian" && familyGrowth.length
-        ? familyGrowth
-        : growth.length
-          ? growth
-          : ["当前已有游戏证据，仍需更多时间点验证稳定变化。"],
-      teacherSupport: usedSupports.map((item) => `${item.strategy}${item.child_response ? `；后续反应：${item.child_response}` : ""}`).slice(0, 6),
-      pendingQuestions: usedAnalyses.flatMap((item) => item.structured_result?.evidenceGaps ?? []).slice(0, 5),
-      nextPlan: usedAnalyses.flatMap((item) => item.structured_result?.nextObservation ?? []).slice(0, 5),
-      familySuggestions: usedAnalyses.flatMap((item) => item.structured_result?.responseSuggestions?.activity ?? []).slice(0, 4),
-      audience: input.reportType,
+      ...generated.data,
+      aiMeta: {
+        provider: generated.provider,
+        model: generated.model,
+        promptVersion: generated.promptVersion,
+        fallbackUsed: Boolean(generated.fallbackReason),
+      },
     };
     const { data, error } = await auth.data.from("period_reports").insert({
       tenant_id: auth.tenantId,
@@ -150,8 +165,14 @@ export async function outcomeRoutes(app: FastifyInstance) {
       created_by: auth.userId,
     }).select().single();
     if (error) throw new ApiError(500, "REPORT_GENERATE_FAILED", "周期报告生成失败");
-    await audit(auth, "report.generated", "period_report", data.id, { reportType: data.report_type, evidenceCount: observationIds.length });
-    return reply.status(201).send({ item: data });
+    await audit(auth, "report.generated", "period_report", data.id, {
+      reportType: data.report_type,
+      evidenceCount: observationIds.length,
+      provider: generated.provider,
+      model: generated.model,
+      fallbackUsed: Boolean(generated.fallbackReason),
+    });
+    return reply.status(201).send({ item: data, aiNotice: generated.notice });
   });
 
   app.patch("/api/reports/:id/status", async (request) => {
@@ -182,7 +203,7 @@ export async function outcomeRoutes(app: FastifyInstance) {
     return { items: data ?? [] };
   });
 
-  app.post("/api/curriculum-clues/scan", async (request) => {
+  app.post("/api/curriculum-clues/scan", { config: { rateLimit: { max: 10, timeWindow: "1 hour" } } }, async (request) => {
     const auth = await authenticate(request);
     const { classroomId } = z.object({ classroomId: uuid }).parse(request.body);
     const { data: observations, error } = await auth.data.from("observations").select("id, child_id, theme, occurred_at, teacher_identification, teacher_response").eq("classroom_id", classroomId).eq("status", "adopted").order("occurred_at");
@@ -195,14 +216,44 @@ export async function outcomeRoutes(app: FastifyInstance) {
       const childIds = [...new Set(group.map((item) => item.child_id))];
       const timePoints = [...new Set(group.map((item) => item.occurred_at.slice(0, 10)))];
       const thresholdMet = (childIds.length >= 2 || group.length >= 3) && timePoints.length >= 2;
+      let generated = null;
+      if (thresholdMet) {
+        try {
+          generated = await aiProvider.generateCurriculum({
+            theme,
+            observationCount: group.length,
+            childCount: childIds.length,
+            timePointCount: timePoints.length,
+            observations: group,
+          });
+        } catch {
+          throw new ApiError(502, "AI_CURRICULUM_FAILED", "AI课程草案生成暂时不可用，请稍后重试");
+        }
+      }
+      const draft = generated?.data;
       const payload = {
         tenant_id: auth.tenantId,
         classroom_id: classroomId,
-        title: `${theme}：持续探究课程线索`,
+        title: draft?.title ?? `${theme}：持续探究课程线索`,
         theme,
-        origin: `${group.length}条已采用观察，涉及${childIds.length}名幼儿、${timePoints.length}个时间点。`,
-        inquiry_questions: group.map((item) => item.teacher_response?.nextObservationFocus).filter(Boolean).slice(0, 6),
-        plan: { existingExperience: group.map((item) => item.teacher_identification).filter(Boolean).slice(0, 6), version: 1 },
+        origin: draft?.origin ?? `${group.length}条已采用观察，涉及${childIds.length}名幼儿、${timePoints.length}个时间点。`,
+        inquiry_questions: draft?.inquiryQuestions ?? group.map((item) => item.teacher_response?.nextObservationFocus).filter(Boolean).slice(0, 6),
+        plan: draft ? {
+          existingExperience: draft.existingExperience,
+          keyExperiences: draft.keyExperiences,
+          environmentAndMaterials: draft.materialsAndEnvironment,
+          possiblePathways: draft.possiblePaths,
+          observationFocus: draft.observationFocus,
+          familyAndCommunity: draft.familyAndCommunity,
+          adjustmentBasis: draft.adjustmentBasis,
+          aiMeta: {
+            provider: generated?.provider,
+            model: generated?.model,
+            promptVersion: generated?.promptVersion,
+            fallbackUsed: Boolean(generated?.fallbackReason),
+          },
+          version: 1,
+        } : { existingExperience: group.map((item) => item.teacher_identification).filter(Boolean).slice(0, 6), version: 1 },
         child_ids: childIds,
         evidence_observation_ids: group.map((item) => item.id),
         time_point_count: timePoints.length,
@@ -218,7 +269,11 @@ export async function outcomeRoutes(app: FastifyInstance) {
       if (saveError) throw new ApiError(500, "CURRICULUM_CLUE_SAVE_FAILED", "课程线索保存失败");
       results.push(saved);
     }
-    await audit(auth, "curriculum.scanned", "classroom", classroomId, { observationCount: observations?.length ?? 0, clueCount: results.length });
+    await audit(auth, "curriculum.scanned", "classroom", classroomId, {
+      observationCount: observations?.length ?? 0,
+      clueCount: results.length,
+      aiMode: config.AI_MODE,
+    });
     return { items: results };
   });
 

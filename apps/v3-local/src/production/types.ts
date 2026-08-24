@@ -60,13 +60,15 @@ export interface RemoteObservation {
 
 export interface AnalysisResult {
   objectiveSummary: string;
-  facts: Array<{ content: string; evidence: string; confidence: number }>;
+  facts: Array<{ content: string; evidence: string; evidenceIds?: string[]; confidence: number }>;
   interpretations: Array<{
     content: string;
     indicatorCode: string;
+    evidenceIds?: string[];
+    limitation?: string;
     confidence: number;
   }>;
-  hypotheses: Array<{ content: string; confidence: number }>;
+  hypotheses: Array<{ content: string; nextObservation?: string; confidence: number }>;
   currentExperience: string;
   interestsAndStrengths: string[];
   evidenceGaps: string[];
@@ -266,6 +268,12 @@ export interface RemotePeriodReport {
     nextPlan: string[];
     familySuggestions: string[];
     audience: string;
+    aiMeta?: {
+      provider: string;
+      model: string;
+      promptVersion: string;
+      fallbackUsed: boolean;
+    };
   };
   evidence_observation_ids: string[];
   status: "draft" | "reviewed" | "published" | "withdrawn";
@@ -279,7 +287,16 @@ export interface RemoteCurriculumClue {
   theme: string;
   origin: string;
   inquiry_questions: string[];
-  plan: Record<string, unknown> & { version?: number; existingExperience?: string[] };
+  plan: Record<string, unknown> & {
+    version?: number;
+    existingExperience?: string[];
+    aiMeta?: {
+      provider?: string;
+      model?: string;
+      promptVersion?: string;
+      fallbackUsed?: boolean;
+    };
+  };
   child_ids: string[];
   evidence_observation_ids: string[];
   time_point_count: number;

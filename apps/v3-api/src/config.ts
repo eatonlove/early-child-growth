@@ -15,7 +15,24 @@ const envSchema = z.object({
   SUPABASE_SCHEMA: z.literal("tongji_v3").default("tongji_v3"),
   SUPABASE_STORAGE_BUCKET: z.literal("tongji-v3-evidence").default("tongji-v3-evidence"),
   INTERNAL_EMAIL_DOMAIN: z.string().regex(/^[a-z0-9.-]+$/).default("tongji-v3.local"),
-  AI_MODE: z.literal("simulated").default("simulated"),
+  AI_MODE: z.enum(["simulated", "qianwen"]).default("simulated"),
+  DASHSCOPE_API_KEY: z.string().trim().optional(),
+  QIANWEN_API_KEY: z.string().trim().optional(),
+  QWEN_BASE_URL: z.string().url().default("https://dashscope.aliyuncs.com/compatible-mode/v1"),
+  QWEN_TEXT_MODEL: z.string().trim().min(1).default("qwen3.7-plus"),
+  QWEN_VISION_MODEL: z.string().trim().min(1).default("qwen3.7-plus"),
+  QWEN_TIMEOUT_MS: z.coerce.number().int().min(5000).max(300000).default(120000),
+  QWEN_MEDIA_ANALYSIS_ENABLED: z.enum(["true", "false"]).default("false"),
+  QWEN_MAX_MEDIA: z.coerce.number().int().min(0).max(3).default(2),
+  AI_FALLBACK_TO_SIMULATED: z.enum(["true", "false"]).default("true"),
+}).superRefine((value, context) => {
+  const key = value.QIANWEN_API_KEY || value.DASHSCOPE_API_KEY;
+  if (value.AI_MODE === "qianwen" && (!key || key === "sk-your-key-here" || !/^sk-[A-Za-z0-9_-]{8,}$/.test(key))) {
+    context.addIssue({ code: z.ZodIssueCode.custom, path: ["DASHSCOPE_API_KEY"], message: "千问模式必须配置标准API密钥" });
+  }
+  if (value.AI_MODE === "qianwen" && key?.startsWith("sk-sp-")) {
+    context.addIssue({ code: z.ZodIssueCode.custom, path: ["DASHSCOPE_API_KEY"], message: "后端不能使用Token Plan密钥" });
+  }
 });
 
 const parsed = envSchema.safeParse(process.env);
@@ -29,6 +46,9 @@ export const config = {
   trustProxy: parsed.data.TRUST_PROXY === "true",
   cookieSecure: parsed.data.COOKIE_SECURE === "true",
   corsOrigins: parsed.data.CORS_ORIGIN.split(",").map((item) => item.trim()).filter(Boolean),
+  qwenApiKey: parsed.data.QIANWEN_API_KEY || parsed.data.DASHSCOPE_API_KEY || "",
+  qwenMediaAnalysisEnabled: parsed.data.QWEN_MEDIA_ANALYSIS_ENABLED === "true",
+  aiFallbackToSimulated: parsed.data.AI_FALLBACK_TO_SIMULATED === "true",
 };
 
 export const internalEmail = (username: string) => `${username.trim().toLowerCase()}@${config.INTERNAL_EMAIL_DOMAIN}`;

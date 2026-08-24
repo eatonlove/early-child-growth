@@ -1,7 +1,8 @@
 import { randomUUID } from "node:crypto";
 import type { FastifyInstance } from "fastify";
 import { z } from "zod";
-import { buildScenarioAnalysis, type KnowledgeRow } from "../ai/scenario-provider.js";
+import type { KnowledgeRow, MediaForAnalysis } from "../ai/contracts.js";
+import { createAIProvider } from "../ai/provider.js";
 import { config } from "../config.js";
 import { ApiError, audit, authenticate } from "../http.js";
 import { serviceClient } from "../supabase.js";
@@ -37,6 +38,16 @@ const mimeTypes = new Map([
   ["video/quicktime", { type: "video", ext: "mov", max: 100 * 1024 * 1024 }],
   ["application/pdf", { type: "document", ext: "pdf", max: 10 * 1024 * 1024 }],
 ]);
+
+const aiProvider = createAIProvider({
+  mode: config.AI_MODE,
+  apiKey: config.qwenApiKey,
+  baseUrl: config.QWEN_BASE_URL,
+  textModel: config.QWEN_TEXT_MODEL,
+  visionModel: config.QWEN_VISION_MODEL,
+  timeoutMs: config.QWEN_TIMEOUT_MS,
+  fallbackToSimulated: config.aiFallbackToSimulated,
+});
 
 export async function observationRoutes(app: FastifyInstance) {
   app.get("/api/observations", async (request) => {
@@ -166,26 +177,64 @@ export async function observationRoutes(app: FastifyInstance) {
     if (observation.status === "draft") throw new ApiError(409, "OBSERVATION_NOT_SUBMITTED", "请先提交教师观察、识别和应答");
     const [{ data: classroom }, { data: child }, { data: evidence }] = await Promise.all([
       auth.data.from("classrooms").select("id, grade").eq("id", observation.classroom_id).single(),
-      auth.data.from("children").select("id, display_name, birth_month").eq("id", observation.child_id).single(),
-      auth.data.from("evidence_assets").select("id, evidence_type, transcript, event_segments, upload_status").eq("observation_id", id).eq("upload_status", "ready"),
+      auth.data.from("children").select("id, display_name, birth_month, guardian_consent_status").eq("id", observation.child_id).single(),
+      auth.data.from("evidence_assets").select("id, evidence_type, transcript, event_segments, upload_status, storage_path, mime_type").eq("observation_id", id).eq("upload_status", "ready"),
     ]);
     if (!classroom || !child) throw new ApiError(422, "ANALYSIS_CONTEXT_MISSING", "幼儿或班级信息不完整");
     const { data: knowledge, error: knowledgeError } = await auth.data.from("knowledge_cards").select("*").eq("grade", classroom.grade).eq("status", "active").limit(200);
     if (knowledgeError || !knowledge?.length) throw new ApiError(409, "KNOWLEDGE_NOT_READY", "当前班级年龄段知识库尚未初始化");
 
-    const structuredResult = buildScenarioAnalysis(observation, knowledge as KnowledgeRow[]);
+    let media: MediaForAnalysis[] = [];
+    if (config.AI_MODE === "qianwen" && config.qwenMediaAnalysisEnabled && child.guardian_consent_status === "granted") {
+      const candidates = (evidence ?? [])
+        .filter((item) => ["photo", "video"].includes(item.evidence_type) && item.storage_path)
+        .slice(0, config.QWEN_MAX_MEDIA);
+      const signed = await Promise.all(candidates.map(async (item) => {
+        const { data } = await serviceClient.storage.from(config.SUPABASE_STORAGE_BUCKET).createSignedUrl(item.storage_path, 900);
+        if (!data?.signedUrl) return null;
+        return {
+          id: item.id,
+          evidenceType: item.evidence_type as "photo" | "video",
+          mimeType: item.mime_type || (item.evidence_type === "video" ? "video/mp4" : "image/jpeg"),
+          signedUrl: data.signedUrl,
+        } satisfies MediaForAnalysis;
+      }));
+      media = signed.filter((item): item is MediaForAnalysis => item !== null);
+    }
+
+    let generated;
+    try {
+      generated = await aiProvider.analyzeObservation({
+        observation,
+        child,
+        classroom,
+        knowledge: knowledge as KnowledgeRow[],
+        evidence: (evidence ?? []).map(({ storage_path: _storagePath, ...item }) => item),
+        media,
+      });
+    } catch {
+      throw new ApiError(502, "AI_ANALYSIS_FAILED", "AI分析暂时不可用，请稍后重试");
+    }
+    const structuredResult = generated.data;
     const matchedCodes = structuredResult.developmentReferences.map((item) => item.indicatorCode);
     const matchedCards = (knowledge as KnowledgeRow[]).filter((card) => matchedCodes.includes(card.code));
     const now = new Date().toISOString();
-    const inputSnapshot = { observation, child, classroom, evidence: evidence ?? [], generatedAt: now };
+    const inputSnapshot = {
+      observation,
+      child,
+      classroom,
+      evidence: (evidence ?? []).map(({ storage_path: _storagePath, ...item }) => item),
+      mediaAnalyzed: generated.mediaAnalyzed,
+      generatedAt: now,
+    };
     const { data: analysis, error } = await serviceClient.schema(config.SUPABASE_SCHEMA).from("analysis_runs").insert({
       tenant_id: auth.tenantId,
       classroom_id: observation.classroom_id,
       child_id: observation.child_id,
       observation_id: observation.id,
-      provider: "ScenarioAIProvider",
-      model: "simulated-ai-v3",
-      prompt_version: "observation-analysis.v3.1",
+      provider: generated.provider,
+      model: generated.model,
+      prompt_version: generated.promptVersion,
       knowledge_version: "guide-cn-2012.v1.0.0",
       input_snapshot: inputSnapshot,
       knowledge_card_ids: matchedCards.map((card) => card.id),
@@ -200,8 +249,15 @@ export async function observationRoutes(app: FastifyInstance) {
       .update({ status: "ai_ready" })
       .eq("id", observation.id)
       .eq("tenant_id", auth.tenantId);
-    await audit(auth, "analysis.generated", "analysis", analysis.id, { observationId: observation.id, provider: "simulated", knowledgeCardIds: matchedCards.map((card) => card.id) });
-    return reply.status(201).send({ item: analysis, simulationNotice: "当前为模拟AI：仅依据教师文字和结构化知识库生成，不读取视频画面或音轨。" });
+    await audit(auth, "analysis.generated", "analysis", analysis.id, {
+      observationId: observation.id,
+      provider: generated.provider,
+      model: generated.model,
+      mediaAnalyzed: generated.mediaAnalyzed,
+      fallbackUsed: Boolean(generated.fallbackReason),
+      knowledgeCardIds: matchedCards.map((card) => card.id),
+    });
+    return reply.status(201).send({ item: analysis, aiNotice: generated.notice, simulationNotice: generated.notice });
   });
 
   app.post("/api/analyses/:id/decision", async (request) => {

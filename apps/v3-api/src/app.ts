@@ -29,7 +29,18 @@ export async function buildApp() {
   });
   registerErrorHandler(app);
 
-  app.get("/healthz", async () => ({ status: "ok", service: "tongji-v3-api", schema: config.SUPABASE_SCHEMA, ai: config.AI_MODE }));
+  app.get("/healthz", async () => ({
+    status: "ok",
+    service: "tongji-v3-api",
+    schema: config.SUPABASE_SCHEMA,
+    ai: {
+      mode: config.AI_MODE,
+      textModel: config.AI_MODE === "qianwen" ? config.QWEN_TEXT_MODEL : "simulated-ai-v3",
+      visionModel: config.AI_MODE === "qianwen" ? config.QWEN_VISION_MODEL : "simulated-ai-v3",
+      mediaAnalysisEnabled: config.AI_MODE === "qianwen" && config.qwenMediaAnalysisEnabled,
+      fallbackEnabled: config.aiFallbackToSimulated,
+    },
+  }));
   await authRoutes(app);
   await managementRoutes(app);
   await observationRoutes(app);
