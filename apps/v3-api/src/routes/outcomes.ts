@@ -144,6 +144,13 @@ export async function outcomeRoutes(app: FastifyInstance) {
     } catch {
       throw new ApiError(502, "AI_REPORT_FAILED", "AI报告生成暂时不可用，请稍后重试");
     }
+    if (generated.fallbackReason) {
+      request.log.warn({
+        childId: child.id,
+        reportType: input.reportType,
+        fallbackReason: generated.fallbackReason,
+      }, "AI report provider used safe fallback");
+    }
     const content = {
       ...generated.data,
       aiMeta: {
@@ -228,6 +235,13 @@ export async function outcomeRoutes(app: FastifyInstance) {
           });
         } catch {
           throw new ApiError(502, "AI_CURRICULUM_FAILED", "AI课程草案生成暂时不可用，请稍后重试");
+        }
+        if (generated.fallbackReason) {
+          request.log.warn({
+            classroomId,
+            theme,
+            fallbackReason: generated.fallbackReason,
+          }, "AI curriculum provider used safe fallback");
         }
       }
       const draft = generated?.data;
