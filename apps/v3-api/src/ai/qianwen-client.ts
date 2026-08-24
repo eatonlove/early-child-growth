@@ -52,6 +52,9 @@ function parseJsonValue(content: string) {
     if (!looksLikeJson) break;
     parsed = JSON.parse(nested);
   }
+  if (Array.isArray(parsed) && parsed.length === 1 && parsed[0] && typeof parsed[0] === "object") {
+    parsed = parsed[0];
+  }
   return parsed;
 }
 

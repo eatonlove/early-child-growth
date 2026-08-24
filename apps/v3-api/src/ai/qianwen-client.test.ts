@@ -64,6 +64,34 @@ describe("QwenClient", () => {
     expect(result).toEqual({ answer: "视频证据草稿" });
   });
 
+  it("unwraps a single structured object returned in an array", async () => {
+    const fetcher = vi.fn(async () => new Response(JSON.stringify({
+      choices: [{ message: { content: JSON.stringify([{ answer: "单份视频分析" }]) } }],
+    }), { status: 200, headers: { "Content-Type": "application/json" } }));
+    const client = new QwenClient({
+      apiKey: "sk-test-only",
+      baseUrl: "https://dashscope.aliyuncs.com/compatible-mode/v1",
+      timeoutMs: 5000,
+      retries: 0,
+      fetcher: fetcher as typeof fetch,
+    });
+
+    const result = await client.structuredCompletion({
+      model: "qwen3.7-plus",
+      messages: [{ role: "user", content: "分析视频并生成唯一结果" }],
+      schemaName: "single_video_result_schema",
+      jsonSchema: {
+        type: "object",
+        additionalProperties: false,
+        required: ["answer"],
+        properties: { answer: { type: "string" } },
+      },
+      validator: z.object({ answer: z.string() }).strict(),
+    });
+
+    expect(result).toEqual({ answer: "单份视频分析" });
+  });
+
   it("rejects Token Plan keys for backend automation", () => {
     expect(() => new QwenClient({
       apiKey: "sk-sp-test-only",
