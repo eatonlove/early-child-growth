@@ -159,6 +159,82 @@ export async function observationRoutes(app: FastifyInstance) {
     return { item: updated };
   });
 
+  app.post(
+    "/api/evidence/:id/upload",
+    { bodyLimit: 100 * 1024 * 1024 },
+    async (request) => {
+      const auth = await authenticate(request);
+      const { id } = z.object({ id: uuid }).parse(request.params);
+      if (!Buffer.isBuffer(request.body) || request.body.length === 0) {
+        throw new ApiError(422, "EMPTY_MEDIA_UPLOAD", "上传文件为空");
+      }
+
+      const { data: evidence } = await auth.data
+        .from("evidence_assets")
+        .select("*")
+        .eq("id", id)
+        .maybeSingle();
+      if (!evidence?.storage_path) {
+        throw new ApiError(404, "EVIDENCE_NOT_FOUND", "证据不存在或无权访问");
+      }
+      if (evidence.upload_status !== "pending") {
+        throw new ApiError(409, "EVIDENCE_NOT_PENDING", "该证据已完成上传或不可重复上传");
+      }
+
+      const media = mimeTypes.get(evidence.mime_type);
+      if (!media) {
+        throw new ApiError(422, "UNSUPPORTED_MEDIA_TYPE", "证据媒体类型不受支持");
+      }
+      if (request.body.length !== evidence.size_bytes) {
+        throw new ApiError(422, "MEDIA_SIZE_MISMATCH", "上传文件大小与凭证不一致");
+      }
+      if (request.body.length > media.max) {
+        throw new ApiError(422, "MEDIA_TOO_LARGE", media.type === "video" ? "视频片段不能超过100MB" : "图片或文档不能超过10MB");
+      }
+
+      const { data: child } = await auth.data
+        .from("children")
+        .select("guardian_consent_status")
+        .eq("id", evidence.child_id)
+        .maybeSingle();
+      if (child?.guardian_consent_status === "withdrawn") {
+        throw new ApiError(422, "CONSENT_WITHDRAWN", "监护人已撤回授权，不能新增媒体证据");
+      }
+
+      const { error: uploadError } = await serviceClient.storage
+        .from(config.SUPABASE_STORAGE_BUCKET)
+        .upload(evidence.storage_path, request.body, {
+          contentType: evidence.mime_type,
+          cacheControl: "3600",
+          upsert: false,
+        });
+      if (uploadError) {
+        request.log.error({ err: uploadError, evidenceId: id }, "evidence storage upload failed");
+        throw new ApiError(500, "MEDIA_UPLOAD_FAILED", "媒体文件写入存储失败");
+      }
+
+      const { data: updated, error: updateError } = await serviceClient
+        .schema(config.SUPABASE_SCHEMA)
+        .from("evidence_assets")
+        .update({ upload_status: "ready" })
+        .eq("id", id)
+        .eq("tenant_id", auth.tenantId)
+        .select()
+        .single();
+      if (updateError) {
+        throw new ApiError(500, "EVIDENCE_CONFIRM_FAILED", "媒体已上传，但证据状态确认失败");
+      }
+
+      await audit(auth, "evidence.uploaded", "evidence", id, {
+        observationId: evidence.observation_id,
+        mimeType: evidence.mime_type,
+        sizeBytes: evidence.size_bytes,
+        uploadChannel: "api-proxy",
+      });
+      return { item: updated };
+    },
+  );
+
   app.get("/api/evidence/:id/download", async (request) => {
     const auth = await authenticate(request);
     const { id } = z.object({ id: uuid }).parse(request.params);

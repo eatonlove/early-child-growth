@@ -13,6 +13,11 @@ import { outcomeRoutes } from "./routes/outcomes.js";
 
 export async function buildApp() {
   const app = Fastify({ logger: true, trustProxy: config.trustProxy, bodyLimit: 2 * 1024 * 1024 });
+  app.addContentTypeParser(
+    "application/octet-stream",
+    { parseAs: "buffer", bodyLimit: 100 * 1024 * 1024 },
+    (_request, body, done) => done(null, body),
+  );
   await app.register(cookie);
   await app.register(cors, {
     origin: (origin, callback) => {

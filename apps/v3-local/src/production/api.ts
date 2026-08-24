@@ -1,4 +1,3 @@
-import { createClient } from "@supabase/supabase-js";
 import type {
   RemoteAccount,
   RemoteAnalysis,
@@ -39,7 +38,7 @@ async function request<T>(
   retry = true,
 ): Promise<T> {
   const headers = new Headers(init.headers);
-  if (init.body && !(init.body instanceof FormData))
+  if (init.body && !(init.body instanceof FormData) && !headers.has("Content-Type"))
     headers.set("Content-Type", "application/json");
   const response = await fetch(`${baseUrl}${path}`, {
     ...init,
@@ -165,21 +164,14 @@ export const remoteApi = {
     }),
   async uploadEvidence(observationId: string, file: File) {
     const ticket = await this.evidenceTicket(observationId, file);
-    const client = createClient(ticket.supabaseUrl, ticket.publishableKey, {
-      auth: { persistSession: false, autoRefreshToken: false },
-    });
-    const { error } = await client.storage
-      .from(ticket.bucket)
-      .uploadToSignedUrl(ticket.path, ticket.token, file, {
-        contentType: file.type,
-      });
-    if (error)
-      throw new RemoteApiError(
-        500,
-        "MEDIA_UPLOAD_FAILED",
-        `“${file.name}”上传失败`,
-      );
-    return this.completeEvidence(ticket.evidenceId);
+    return request<{ item: RemoteEvidence }>(
+      `/api/evidence/${ticket.evidenceId}/upload`,
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/octet-stream" },
+        body: file,
+      },
+    );
   },
   knowledge: (params = "") =>
     request<{ items: RemoteKnowledgeCard[]; version: string }>(
