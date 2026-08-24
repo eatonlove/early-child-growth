@@ -869,6 +869,7 @@ export function RemoteObservationPage() {
     }
   };
   const latest = detail?.analyses[0];
+  const canRunAnalysis = !latest || latest.decision === "abandoned";
 
   return (
     <div className="page remote-page">
@@ -981,14 +982,20 @@ export function RemoteObservationPage() {
                 </small>
               </Panel>
             </div>
-            {!latest && (
+            {canRunAnalysis && (
               <Panel className="remote-ai-launch">
                 <Sparkles />
                 <div>
                   <Badge tone="purple">AI 循证分析</Badge>
-                  <h2>让AI结合年龄段知识库提供第二视角</h2>
+                  <h2>
+                    {latest
+                      ? "重新运行AI分析"
+                      : "让AI结合年龄段知识库提供第二视角"}
+                  </h2>
                   <p>
-                    系统优先使用已配置的千问模型；结果会明确显示实际模型。未启用或调用失败时，只生成可识别的模拟规则草稿。
+                    {latest
+                      ? "已放弃的建议稿会保留在审计记录中；重新运行将生成一份新的待审核结果。"
+                      : "系统优先使用已配置的千问模型；结果会明确显示实际模型。未启用或调用失败时，只生成可识别的模拟规则草稿。"}
                   </p>
                 </div>
                 <button
@@ -997,7 +1004,7 @@ export function RemoteObservationPage() {
                   onClick={runAnalysis}
                 >
                   <BrainCircuit />
-                  运行分析
+                  {latest ? "重新运行分析" : "运行分析"}
                 </button>
               </Panel>
             )}
