@@ -2,12 +2,27 @@ import type { FastifyInstance } from "fastify";
 import { z } from "zod";
 import { createAIProvider } from "../ai/provider.js";
 import { effectiveAnalysisResult } from "../analysis-claims.js";
+import { classroomReportEvidenceCoverage, classroomReportMetrics } from "../classroom-report.js";
 import { config } from "../config.js";
 import { ApiError, audit, authenticate } from "../http.js";
 import { chinaCalendarDate, reportEvidenceCoverage } from "../report-evidence.js";
 
 const uuid = z.string().uuid();
 const date = z.string().regex(/^\d{4}-\d{2}-\d{2}$/);
+const reportInput = z.object({
+  classroomId: uuid,
+  childId: uuid.optional(),
+  reportType: z.enum(["teacher", "guardian", "classroom"]),
+  periodStart: date,
+  periodEnd: date,
+}).superRefine((value, context) => {
+  if (value.periodEnd < value.periodStart) {
+    context.addIssue({ code: z.ZodIssueCode.custom, path: ["periodEnd"], message: "结束日期不能早于开始日期" });
+  }
+  if (value.reportType !== "classroom" && !value.childId) {
+    context.addIssue({ code: z.ZodIssueCode.custom, path: ["childId"], message: "个体报告必须选择幼儿" });
+  }
+});
 
 const nextSupportStatus: Record<string, string[]> = {
   planned: ["implemented"],
@@ -126,14 +141,109 @@ export async function outcomeRoutes(app: FastifyInstance) {
 
   app.post("/api/reports/generate", async (request, reply) => {
     const auth = await authenticate(request);
-    const input = z.object({
-      classroomId: uuid,
-      childId: uuid,
-      reportType: z.enum(["teacher", "guardian"]),
-      periodStart: date,
-      periodEnd: date,
-    }).refine((value) => value.periodEnd >= value.periodStart, { message: "结束日期不能早于开始日期" }).parse(request.body);
-    const { data: child, error: childError } = await auth.data.from("children").select("id, classroom_id, display_name").eq("id", input.childId).eq("classroom_id", input.classroomId).maybeSingle();
+    const input = reportInput.parse(request.body);
+
+    if (input.reportType === "classroom") {
+      const { data: classroom, error: classroomError } = await auth.data
+        .from("classrooms")
+        .select("id, name")
+        .eq("id", input.classroomId)
+        .maybeSingle();
+      if (classroomError) throw new ApiError(500, "CLASSROOM_LOOKUP_FAILED", "班级信息读取失败");
+      if (!classroom) throw new ApiError(404, "CLASSROOM_NOT_FOUND", "班级不存在或无权访问");
+      const [
+        { data: observations, error: observationError },
+        { data: analyses, error: analysisError },
+        { data: supports, error: supportError },
+        { data: children, error: childrenError },
+        { data: curriculumClues, error: curriculumError },
+      ] = await Promise.all([
+        auth.data.from("observations").select("*").eq("classroom_id", classroom.id).eq("status", "adopted").gte("occurred_at", `${input.periodStart}T00:00:00+08:00`).lte("occurred_at", `${input.periodEnd}T23:59:59+08:00`).order("occurred_at"),
+        auth.data.from("analysis_runs").select("*").eq("classroom_id", classroom.id).eq("decision", "adopted"),
+        auth.data.from("support_actions").select("*").eq("classroom_id", classroom.id),
+        auth.data.from("children").select("id").eq("classroom_id", classroom.id).eq("status", "active"),
+        auth.data.from("curriculum_clues").select("id, title, theme, status").eq("classroom_id", classroom.id).neq("status", "archived").order("updated_at", { ascending: false }).limit(20),
+      ]);
+      if (observationError || analysisError || supportError || childrenError || curriculumError) {
+        throw new ApiError(500, "CLASSROOM_REPORT_CONTEXT_FAILED", "班级周期报告证据读取失败");
+      }
+      const adoptedObservations = observations ?? [];
+      const coverage = classroomReportEvidenceCoverage(adoptedObservations);
+      if (!coverage.eligible) {
+        throw new ApiError(409, "CLASSROOM_REPORT_COVERAGE_REQUIRED", "班级报告至少需要覆盖2名幼儿、2条观察、2个不同日期，且观察均已完成教师终审");
+      }
+      const observationIds = adoptedObservations.map((item) => item.id);
+      const usedAnalyses = (analyses ?? []).filter((item) => observationIds.includes(item.observation_id));
+      const analysisIds = usedAnalyses.map((item) => item.id);
+      const { data: claimReviews, error: reviewError } = analysisIds.length
+        ? await auth.data.from("analysis_claim_reviews").select("*").in("analysis_run_id", analysisIds)
+        : { data: [], error: null };
+      if (reviewError) throw new ApiError(500, "CLASSROOM_REPORT_REVIEW_CONTEXT_FAILED", "班级报告正式审核结论读取失败");
+      const effectiveAnalyses = usedAnalyses.map((analysis) => ({
+        ...analysis,
+        structured_result: effectiveAnalysisResult(analysis.structured_result, (claimReviews ?? []).filter((review) => review.analysis_run_id === analysis.id)),
+      }));
+      const usedSupports = (supports ?? []).filter((item) => observationIds.includes(item.observation_id));
+      const metrics = classroomReportMetrics({
+        observations: adoptedObservations,
+        analyses: effectiveAnalyses,
+        supports: usedSupports,
+        totalChildCount: children?.length ?? 0,
+        curriculumClues: curriculumClues ?? [],
+      });
+      let generated;
+      try {
+        generated = await aiProvider.generateClassroomReport({
+          classroomName: classroom.name,
+          periodStart: input.periodStart,
+          periodEnd: input.periodEnd,
+          observations: adoptedObservations,
+          analyses: effectiveAnalyses,
+          supports: usedSupports,
+          metrics,
+        });
+      } catch {
+        throw new ApiError(502, "AI_CLASSROOM_REPORT_FAILED", "AI班级报告生成暂时不可用，请稍后重试");
+      }
+      if (generated.fallbackReason) {
+        request.log.warn({ classroomId: classroom.id, fallbackReason: generated.fallbackReason }, "AI classroom report provider used safe fallback");
+      }
+      const content = {
+        ...generated.data,
+        aiMeta: {
+          provider: generated.provider,
+          model: generated.model,
+          promptVersion: generated.promptVersion,
+          fallbackUsed: Boolean(generated.fallbackReason),
+        },
+      };
+      const { data, error } = await auth.data.from("period_reports").insert({
+        tenant_id: auth.tenantId,
+        classroom_id: classroom.id,
+        child_id: null,
+        report_type: "classroom",
+        period_start: input.periodStart,
+        period_end: input.periodEnd,
+        content,
+        evidence_observation_ids: observationIds,
+        created_by: auth.userId,
+      }).select().single();
+      if (error) throw new ApiError(500, "CLASSROOM_REPORT_GENERATE_FAILED", "班级周期报告生成失败");
+      await audit(auth, "report.generated", "period_report", data.id, {
+        reportType: "classroom",
+        evidenceCount: observationIds.length,
+        timePointCount: coverage.timePointCount,
+        childCount: coverage.childCount,
+        provider: generated.provider,
+        model: generated.model,
+        fallbackUsed: Boolean(generated.fallbackReason),
+      });
+      return reply.status(201).send({ item: data, aiNotice: generated.notice });
+    }
+
+    const childId = input.childId;
+    if (!childId) throw new ApiError(422, "CHILD_REQUIRED", "个体报告必须选择幼儿");
+    const { data: child, error: childError } = await auth.data.from("children").select("id, classroom_id, display_name").eq("id", childId).eq("classroom_id", input.classroomId).maybeSingle();
     if (childError) throw new ApiError(500, "CHILD_LOOKUP_FAILED", "幼儿档案读取失败");
     if (!child) throw new ApiError(404, "CHILD_NOT_FOUND", "幼儿不存在、班级不匹配或无权访问");
     const [{ data: observations, error: observationError }, { data: analyses, error: analysisError }, { data: supports, error: supportError }] = await Promise.all([
@@ -191,7 +301,7 @@ export async function outcomeRoutes(app: FastifyInstance) {
     const { data, error } = await auth.data.from("period_reports").insert({
       tenant_id: auth.tenantId,
       classroom_id: input.classroomId,
-      child_id: input.childId,
+      child_id: childId,
       report_type: input.reportType,
       period_start: input.periodStart,
       period_end: input.periodEnd,

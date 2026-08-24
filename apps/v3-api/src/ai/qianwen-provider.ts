@@ -1,10 +1,13 @@
 import {
   analysisResultSchema,
+  classroomReportContentSchema,
   curriculumDraftSchema,
   reportContentSchema,
   type AIGeneration,
   type AIAnalysisProvider,
   type AnalysisResult,
+  type ClassroomReportContent,
+  type ClassroomReportGenerationInput,
   type CurriculumDraft,
   type CurriculumGenerationInput,
   interestClusterResultSchema,
@@ -15,7 +18,7 @@ import {
   type ReportContent,
   type ReportGenerationInput,
 } from "./contracts.js";
-import { analysisJsonSchema, curriculumJsonSchema, interestClusterJsonSchema, reportJsonSchema } from "./json-schemas.js";
+import { analysisJsonSchema, classroomReportJsonSchema, curriculumJsonSchema, interestClusterJsonSchema, reportJsonSchema } from "./json-schemas.js";
 import { QwenClient, type QwenContentPart } from "./qianwen-client.js";
 import { rankKnowledgeCards } from "./scenario-provider.js";
 
@@ -29,6 +32,7 @@ export interface QianwenProviderOptions {
 
 const OBSERVATION_PROMPT_VERSION = "observation-analysis.qwen.v3";
 const REPORT_PROMPT_VERSION = "period-report.qwen.v2";
+const CLASSROOM_REPORT_PROMPT_VERSION = "classroom-period-report.qwen.v1";
 const CURRICULUM_PROMPT_VERSION = "curriculum-draft.qwen.v2";
 const INTEREST_CLUSTER_PROMPT_VERSION = "curriculum-interest-clustering.qwen.v1";
 
@@ -42,6 +46,9 @@ const interestClusterSystemPrompt = `你是幼儿园游戏兴趣证据聚类助�
 
 const reportSystemPrompt = `你是幼儿游戏成长报告助手。只使用教师已经采用的观察、AI分析和应答效果证据生成草稿，不新增事实，不与其他幼儿比较，不作诊断、排名、评分或达标判断。不得添加输入中不存在的日期、次数、时长、数量、幼儿原话或行为细节。
 教师版强调证据覆盖、变化、支持效果和下一轮观察；家长版使用自然、易懂、非标签化语言。没有后续证据时必须明确“仍需持续观察”，不得把单次表现写成稳定能力。输出必须完全符合JSON Schema，不要输出Markdown。`;
+
+const classroomReportSystemPrompt = `你是幼儿园班级游戏循证报告助手。只使用系统提供的班级汇总指标、教师已终审采用的观察、分析和支持效果生成草稿。
+报告用于改进班级环境、教师支持与生成性课程，不评价或比较具体幼儿。不得输出幼儿姓名、排名、综合分数、达标率、诊断或优良差标签。覆盖人数、观察次数、日期数、场景、五大领域证据条数、支持复察率和课程线索必须原样采用输入指标，不得改写或补造。共同兴趣、持续问题和下一步建议必须能从输入证据中找到依据。输出必须完全符合JSON Schema，不要输出Markdown。`;
 
 const curriculumSystemPrompt = `你是幼儿园游戏生成课程助手。课程草案必须来自多幼儿或多时间点的持续游戏证据，不预设固定活动路径，不替代教师决策。
 只使用输入中的兴趣、问题、教师识别和下一步观察重点，不新增幼儿行为事实。草案要保留开放性，包含材料环境、可能路径、观察重点、家庭社区资源和调整依据。不得生成幼儿排名、评分、诊断或统一完成标准。输出必须完全符合JSON Schema，不要输出Markdown。`;
@@ -271,6 +278,61 @@ export class QianwenAIProvider implements AIAnalysisProvider {
       promptVersion: REPORT_PROMPT_VERSION,
       mediaAnalyzed: false,
       notice: "千问AI仅汇总教师已采用的连续证据生成报告草稿，仍需教师审核发布。",
+    };
+  }
+
+  async generateClassroomReport(input: ClassroomReportGenerationInput): Promise<AIGeneration<ClassroomReportContent>> {
+    const subjectRefs = new Map<string, string>();
+    const subjectRef = (childId: string) => {
+      if (!subjectRefs.has(childId)) subjectRefs.set(childId, `child-${subjectRefs.size + 1}`);
+      return subjectRefs.get(childId);
+    };
+    const result = await this.client.structuredCompletion<ClassroomReportContent>({
+      model: this.options.textModel,
+      messages: [
+        { role: "system", content: classroomReportSystemPrompt },
+        { role: "user", content: JSON.stringify({
+          classroomName: input.classroomName,
+          periodStart: input.periodStart,
+          periodEnd: input.periodEnd,
+          fixedMetrics: input.metrics,
+          observations: input.observations.slice(0, 150).map((item) => ({
+            subjectRef: subjectRef(item.child_id),
+            occurredDate: chinaDate(item.occurred_at),
+            scene: item.scene,
+            theme: item.theme,
+            teacherObservation: item.teacher_observation,
+            teacherIdentification: item.teacher_identification,
+          })),
+          adoptedAnalyses: input.analyses.slice(0, 150).map((item) => ({
+            observationId: item.observation_id,
+            result: item.structured_result,
+          })),
+          supportActions: input.supports.slice(0, 100).map((item) => ({
+            strategy: item.strategy,
+            childResponse: item.child_response,
+            effectiveness: item.effectiveness,
+            status: item.status,
+          })),
+        }) },
+      ],
+      schemaName: "tongji_classroom_period_report",
+      jsonSchema: classroomReportJsonSchema,
+      validator: classroomReportContentSchema,
+    });
+    Object.assign(result, input.metrics, {
+      title: `${input.classroomName}游戏学习班级画像`,
+      audience: "classroom" as const,
+      observationCoverage: `${input.metrics.observationCount}次观察，覆盖${input.metrics.observedChildCount}/${input.metrics.totalChildCount}名幼儿、${input.metrics.sceneCoverage.length}类游戏场景和${input.metrics.timePointCount}个日期。`,
+    });
+    assertNoForbiddenJudgment(result);
+    return {
+      data: result,
+      provider: "QianwenAIProvider",
+      model: this.options.textModel,
+      promptVersion: CLASSROOM_REPORT_PROMPT_VERSION,
+      mediaAnalyzed: false,
+      notice: "千问AI仅提炼班级共同兴趣、持续问题和后续建议；覆盖指标由系统计算，报告仍需教师审核发布。",
     };
   }
 

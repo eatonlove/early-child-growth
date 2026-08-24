@@ -288,35 +288,68 @@ export interface RemoteGrowthResult {
   };
 }
 
-export interface RemotePeriodReport {
+interface RemoteReportAiMeta {
+  provider: string;
+  model: string;
+  promptVersion: string;
+  fallbackUsed: boolean;
+}
+
+export interface RemoteIndividualReportContent {
+  title: string;
+  evidenceBoundary: string;
+  observationCoverage: string;
+  interests: string[];
+  evidencedGrowth: string[];
+  teacherSupport: string[];
+  pendingQuestions: string[];
+  nextPlan: string[];
+  familySuggestions: string[];
+  audience: "teacher" | "guardian";
+  aiMeta?: RemoteReportAiMeta;
+}
+
+export interface RemoteClassroomReportContent {
+  title: string;
+  evidenceBoundary: string;
+  observationCoverage: string;
+  observationCount: number;
+  timePointCount: number;
+  observedChildCount: number;
+  totalChildCount: number;
+  sceneCoverage: string[];
+  commonInterests: string[];
+  recurringQuestions: string[];
+  domainEvidence: Record<"健康" | "语言" | "社会" | "科学" | "艺术", number>;
+  supportFollowUpRate: number;
+  nextSuggestions: string[];
+  curriculumClues: Array<{ id: string; title: string; theme: string; status: string }>;
+  audience: "classroom";
+  aiMeta?: RemoteReportAiMeta;
+}
+
+interface RemotePeriodReportBase {
   id: string;
   classroom_id: string;
-  child_id: string;
-  report_type: "teacher" | "guardian" | "classroom";
   period_start: string;
   period_end: string;
-  content: {
-    title: string;
-    evidenceBoundary: string;
-    observationCoverage: string;
-    interests: string[];
-    evidencedGrowth: string[];
-    teacherSupport: string[];
-    pendingQuestions: string[];
-    nextPlan: string[];
-    familySuggestions: string[];
-    audience: string;
-    aiMeta?: {
-      provider: string;
-      model: string;
-      promptVersion: string;
-      fallbackUsed: boolean;
-    };
-  };
   evidence_observation_ids: string[];
   status: "draft" | "reviewed" | "published" | "withdrawn";
   created_at: string;
 }
+
+export type RemotePeriodReport = RemotePeriodReportBase & (
+  | {
+    child_id: string;
+    report_type: "teacher" | "guardian";
+    content: RemoteIndividualReportContent;
+  }
+  | {
+    child_id: null;
+    report_type: "classroom";
+    content: RemoteClassroomReportContent;
+  }
+);
 
 export interface RemoteCurriculumClue {
   id: string;

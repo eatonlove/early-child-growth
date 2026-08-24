@@ -200,6 +200,52 @@ export const reportJsonSchema = {
   },
 } as const;
 
+export const classroomReportJsonSchema = {
+  type: "object",
+  additionalProperties: false,
+  required: [
+    "title", "evidenceBoundary", "observationCoverage", "observationCount", "timePointCount",
+    "observedChildCount", "totalChildCount", "sceneCoverage", "commonInterests", "recurringQuestions",
+    "domainEvidence", "supportFollowUpRate", "nextSuggestions", "curriculumClues", "audience",
+  ],
+  properties: {
+    title: string(200),
+    evidenceBoundary: string(1000),
+    observationCoverage: string(1000),
+    observationCount: { type: "integer", minimum: 0 },
+    timePointCount: { type: "integer", minimum: 0 },
+    observedChildCount: { type: "integer", minimum: 0 },
+    totalChildCount: { type: "integer", minimum: 0 },
+    sceneCoverage: stringArray(30, 120),
+    commonInterests: stringArray(8),
+    recurringQuestions: stringArray(8),
+    domainEvidence: {
+      type: "object",
+      additionalProperties: false,
+      required: ["健康", "语言", "社会", "科学", "艺术"],
+      properties: Object.fromEntries(["健康", "语言", "社会", "科学", "艺术"].map((domain) => [domain, { type: "integer", minimum: 0 }])),
+    },
+    supportFollowUpRate: { type: "integer", minimum: 0, maximum: 100 },
+    nextSuggestions: { ...stringArray(8), minItems: 1 },
+    curriculumClues: {
+      type: "array",
+      maxItems: 20,
+      items: {
+        type: "object",
+        additionalProperties: false,
+        required: ["id", "title", "theme", "status"],
+        properties: {
+          id: { type: "string", format: "uuid" },
+          title: string(200),
+          theme: string(160),
+          status: string(80),
+        },
+      },
+    },
+    audience: { type: "string", enum: ["classroom"] },
+  },
+} as const;
+
 export const curriculumJsonSchema = {
   type: "object",
   additionalProperties: false,

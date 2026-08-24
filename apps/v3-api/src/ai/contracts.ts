@@ -134,6 +134,39 @@ export const reportContentSchema = z.object({
 
 export type ReportContent = z.infer<typeof reportContentSchema>;
 
+const domainEvidenceSchema = z.object({
+  健康: z.number().int().min(0),
+  语言: z.number().int().min(0),
+  社会: z.number().int().min(0),
+  科学: z.number().int().min(0),
+  艺术: z.number().int().min(0),
+}).strict();
+
+export const classroomReportContentSchema = z.object({
+  title: z.string().trim().min(1).max(200),
+  evidenceBoundary: z.string().trim().min(1).max(1000),
+  observationCoverage: z.string().trim().min(1).max(1000),
+  observationCount: z.number().int().min(0),
+  timePointCount: z.number().int().min(0),
+  observedChildCount: z.number().int().min(0),
+  totalChildCount: z.number().int().min(0),
+  sceneCoverage: z.array(z.string().trim().min(1).max(120)).max(30),
+  commonInterests: z.array(shortText).max(8),
+  recurringQuestions: z.array(shortText).max(8),
+  domainEvidence: domainEvidenceSchema,
+  supportFollowUpRate: z.number().int().min(0).max(100),
+  nextSuggestions: z.array(shortText).min(1).max(8),
+  curriculumClues: z.array(z.object({
+    id: z.string().uuid(),
+    title: z.string().trim().min(1).max(200),
+    theme: z.string().trim().min(1).max(160),
+    status: z.string().trim().min(1).max(80),
+  }).strict()).max(20),
+  audience: z.literal("classroom"),
+}).strict();
+
+export type ClassroomReportContent = z.infer<typeof classroomReportContentSchema>;
+
 export const curriculumDraftSchema = z.object({
   title: z.string().trim().min(2).max(160),
   origin: z.string().trim().min(1).max(2000),
@@ -173,6 +206,25 @@ export interface ReportGenerationInput {
   observations: Array<Record<string, any>>;
   analyses: Array<Record<string, any>>;
   supports: Array<Record<string, any>>;
+}
+
+export interface ClassroomReportGenerationInput {
+  classroomName: string;
+  periodStart: string;
+  periodEnd: string;
+  observations: Array<Record<string, any>>;
+  analyses: Array<Record<string, any>>;
+  supports: Array<Record<string, any>>;
+  metrics: Pick<ClassroomReportContent,
+    | "observationCount"
+    | "timePointCount"
+    | "observedChildCount"
+    | "totalChildCount"
+    | "sceneCoverage"
+    | "domainEvidence"
+    | "supportFollowUpRate"
+    | "curriculumClues"
+  >;
 }
 
 export interface CurriculumGenerationInput {
@@ -217,6 +269,7 @@ export interface AIGeneration<T> {
 export interface AIAnalysisProvider {
   analyzeObservation(input: ObservationAnalysisInput): Promise<AIGeneration<AnalysisResult>>;
   generateReport(input: ReportGenerationInput): Promise<AIGeneration<ReportContent>>;
+  generateClassroomReport(input: ClassroomReportGenerationInput): Promise<AIGeneration<ClassroomReportContent>>;
   generateCurriculum(input: CurriculumGenerationInput): Promise<AIGeneration<CurriculumDraft>>;
   clusterInterests(input: InterestClusteringInput): Promise<AIGeneration<InterestClusterResult>>;
 }

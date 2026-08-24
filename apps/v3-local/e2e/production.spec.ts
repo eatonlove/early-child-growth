@@ -19,7 +19,36 @@ const analysis = {
   claim_reviews: [{ id: "77777777-7777-4777-8777-777777777777", analysis_run_id: "55555555-5555-4555-8555-555555555555", claim_key: "objective-summary", claim_type: "objective_summary", original_content: { content: "幼儿移动桥墩并再次测试桥面。", evidenceIds: ["teacher-observation"] }, reviewed_content: null, decision: "pending", review_note: null, reviewed_by: null, reviewed_at: null }],
 };
 
-async function mockApi(page: Page, role: "teacher" | "researcher", withAnalysis = false) {
+const classroomReport = {
+  id: "88888888-8888-4888-8888-888888888888",
+  classroom_id: classroom.id,
+  child_id: null,
+  report_type: "classroom",
+  period_start: "2026-08-01",
+  period_end: "2026-08-24",
+  content: {
+    title: "中一班游戏学习班级画像",
+    evidenceBoundary: "只汇总多幼儿、多时间点的已终审证据，不展示排名。",
+    observationCoverage: "6次观察，覆盖2/3名幼儿、2类游戏场景和3个日期。",
+    observationCount: 6,
+    timePointCount: 3,
+    observedChildCount: 2,
+    totalChildCount: 3,
+    sceneCoverage: ["建构区", "沙水区"],
+    commonInterests: ["桥梁结构", "材料比较"],
+    recurringQuestions: ["怎样让结构更稳定？"],
+    domainEvidence: { 健康: 0, 语言: 1, 社会: 1, 科学: 3, 艺术: 0 },
+    supportFollowUpRate: 50,
+    nextSuggestions: ["补充健康、艺术领域的真实游戏证据。"],
+    curriculumClues: [{ id: "99999999-9999-4999-8999-999999999999", title: "稳固的桥", theme: "结构", status: "draft" }],
+    audience: "classroom",
+  },
+  evidence_observation_ids: [observation.id],
+  status: "draft",
+  created_at: "2026-08-24T10:00:00+08:00",
+};
+
+async function mockApi(page: Page, role: "teacher" | "researcher", withAnalysis = false, withClassroomReport = false) {
   await page.route("**/api/**", async (route) => {
     const url = new URL(route.request().url());
     const path = url.pathname;
@@ -36,7 +65,7 @@ async function mockApi(page: Page, role: "teacher" | "researcher", withAnalysis 
       : path === "/api/export-requests" ? { items: [] }
       : path === "/api/research-activities" ? { items: [] }
       : path === `/api/children/${child.id}/growth` ? { child, timeline: [], coverage: { observations: 0, scenes: [], themes: [], verifiedSupports: 0 } }
-      : path === "/api/reports" ? { items: [] }
+      : path === "/api/reports" ? { items: withClassroomReport ? [classroomReport] : [] }
       : path === "/api/curriculum-clues" ? { items: [] }
       : { code: "NOT_MOCKED", message: path };
     await route.fulfill({
@@ -90,6 +119,21 @@ test("AI结果展示历史比较、证据链与逐条教师审核", async ({ pag
   await page.getByRole("button", { name: "修改", exact: true }).click();
   await expect(page.getByLabel("教师修改后的结论")).toBeVisible();
   await expect(page.getByRole("button", { name: "保存教师修改" })).toBeVisible();
+});
+
+test("周期报告支持班级维度生成与画像展示", async ({ page }) => {
+  await mockApi(page, "teacher", false, true);
+  await page.goto("/reports");
+  await page.getByRole("button", { name: "班级周期报告" }).click();
+  await expect(page.getByRole("heading", { name: "中一班游戏学习班级画像" })).toBeVisible();
+  await expect(page.getByText("已观察2/3名幼儿")).toBeVisible();
+  await expect(page.getByText("支持策略复察率：50%")).toBeVisible();
+  await expect(page.getByText(/科学：3条已终审证据/)).toBeVisible();
+  await page.getByRole("button", { name: "生成报告" }).click();
+  const dialog = page.getByRole("dialog", { name: "生成标准周期报告" });
+  await dialog.getByLabel("报告维度").selectOption("classroom");
+  await expect(dialog.getByLabel("幼儿", { exact: true })).toHaveCount(0);
+  await expect(dialog.getByText(/至少需要覆盖2名幼儿/)).toBeVisible();
 });
 
 test("手机端提供清晰的全部功能入口", async ({ page }) => {

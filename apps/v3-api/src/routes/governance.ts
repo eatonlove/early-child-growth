@@ -20,7 +20,7 @@ const qualityInput = z.object({
 });
 
 const exportInput = z.object({
-  exportType: z.enum(["individual_report", "curriculum_case", "anonymized_research"]),
+  exportType: z.enum(["individual_report", "classroom_report", "curriculum_case", "anonymized_research"]),
   resourceId: uuid,
   purpose: z.string().trim().min(2).max(1000),
   recipient: z.string().trim().min(2).max(300),
@@ -28,7 +28,8 @@ const exportInput = z.object({
 });
 
 const exportResources = {
-  individual_report: { table: "period_reports", type: "period_report" },
+  individual_report: { table: "period_reports", type: "period_report", reportTypes: ["teacher", "guardian"] },
+  classroom_report: { table: "period_reports", type: "period_report", reportTypes: ["classroom"] },
   curriculum_case: { table: "curriculum_clues", type: "curriculum_clue" },
   anonymized_research: { table: "research_activities", type: "research_activity" },
 } as const;
@@ -121,11 +122,12 @@ export async function governanceRoutes(app: FastifyInstance) {
     const auth = await authenticate(request);
     const input = exportInput.parse(request.body);
     const resource = exportResources[input.exportType];
-    const { data: source, error: sourceError } = await auth.data
+    let sourceQuery = auth.data
       .from(resource.table)
       .select("id, classroom_id")
-      .eq("id", input.resourceId)
-      .maybeSingle();
+      .eq("id", input.resourceId);
+    if ("reportTypes" in resource) sourceQuery = sourceQuery.in("report_type", resource.reportTypes);
+    const { data: source, error: sourceError } = await sourceQuery.maybeSingle();
     if (sourceError) throw new ApiError(500, "EXPORT_RESOURCE_LOOKUP_FAILED", "导出对象读取失败");
     if (!source) throw new ApiError(404, "EXPORT_RESOURCE_NOT_FOUND", "导出对象不存在或无权访问");
     const { data, error } = await auth.data

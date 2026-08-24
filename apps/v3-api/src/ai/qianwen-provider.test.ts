@@ -187,6 +187,67 @@ describe("QianwenAIProvider", () => {
     expect(prompt.observations[0].occurredDate).toBe("2026-08-24");
   });
 
+  it("keeps classroom coverage metrics deterministic and pseudonymizes children", async () => {
+    let requestBody = "";
+    const classroomReport = {
+      title: "模型草稿",
+      evidenceBoundary: "只使用班级证据。",
+      observationCoverage: "模型给出的错误覆盖。",
+      observationCount: 99,
+      timePointCount: 99,
+      observedChildCount: 99,
+      totalChildCount: 99,
+      sceneCoverage: ["错误场景"],
+      commonInterests: ["桥梁结构"],
+      recurringQuestions: ["怎样让桥更稳？"],
+      domainEvidence: { 健康: 99, 语言: 99, 社会: 99, 科学: 99, 艺术: 99 },
+      supportFollowUpRate: 99,
+      nextSuggestions: ["继续比较支撑位置。"],
+      curriculumClues: [],
+      audience: "classroom",
+    };
+    const fetcher = vi.fn(async (_url: string | URL | Request, init?: RequestInit) => {
+      requestBody = String(init?.body ?? "");
+      return new Response(JSON.stringify({ choices: [{ message: { content: JSON.stringify(classroomReport) } }] }), {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      });
+    });
+    const provider = new QianwenAIProvider({
+      apiKey: "sk-test-only",
+      baseUrl: "https://dashscope.aliyuncs.com/compatible-mode/v1",
+      textModel: "qwen3.7-plus",
+      visionModel: "qwen3.7-plus",
+      timeoutMs: 5000,
+    }, fetcher as typeof fetch);
+    const metrics = {
+      observationCount: 2,
+      timePointCount: 2,
+      observedChildCount: 2,
+      totalChildCount: 3,
+      sceneCoverage: ["建构区"],
+      domainEvidence: { 健康: 0, 语言: 0, 社会: 0, 科学: 2, 艺术: 0 },
+      supportFollowUpRate: 50,
+      curriculumClues: [{ id: "11111111-1111-4111-8111-111111111111", title: "桥梁探究", theme: "结构", status: "draft" }],
+    };
+    const generated = await provider.generateClassroomReport({
+      classroomName: "星星一班",
+      periodStart: "2026-08-01",
+      periodEnd: "2026-08-24",
+      observations: [{ id: "observation-1", child_id: "sensitive-child-id", occurred_at: "2026-08-23T16:30:00.000Z", scene: "建构区", theme: "桥梁", teacher_observation: "移动支撑。", teacher_identification: "比较位置。" }],
+      analyses: [],
+      supports: [],
+      metrics,
+    });
+
+    const apiRequest = JSON.parse(requestBody);
+    const prompt = JSON.parse(apiRequest.messages[1].content);
+    expect(prompt.observations[0].subjectRef).toBe("child-1");
+    expect(requestBody).not.toContain("sensitive-child-id");
+    expect(generated.data).toMatchObject(metrics);
+    expect(generated.data.title).toBe("星星一班游戏学习班级画像");
+  });
+
   it("accepts only allowlisted historical evidence in growth comparison", async () => {
     let requestBody = "";
     const historyId = "11111111-1111-4111-8111-111111111111";

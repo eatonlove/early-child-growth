@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { buildScenarioAnalysis, buildScenarioInterestClusters, rankKnowledgeCards, type KnowledgeRow } from "./scenario-provider.js";
+import { buildScenarioAnalysis, buildScenarioClassroomReport, buildScenarioInterestClusters, rankKnowledgeCards, type KnowledgeRow } from "./scenario-provider.js";
 
 const cards: KnowledgeRow[] = [
   { id: "science", code: "SCI", domain: "科学", subdomain: "科学探究", title: "具有初步的探究能力", age_band: "4-5岁", official_expectations: [], observable_behaviors: ["观察积木倒塌并调整"], evidence_requirements: ["再次观察策略变化"], assessment_guidance: [], misunderstanding_warning: "不要把一次成功写成稳定能力。", response_strategies: { 材料支持: ["提供不同形状积木"] }, next_observation_prompts: ["幼儿是否主动比较材料？"], keywords: ["积木", "调整", "倒塌"] },
@@ -43,5 +43,33 @@ describe("scenario AI provider", () => {
     ] });
     expect(clustered.clusters.find((item) => item.label === "建构与结构探究")?.observationIds).toHaveLength(2);
     expect(clustered.clusters).toHaveLength(2);
+  });
+
+  it("生成不含排名的班级证据画像", () => {
+    const report = buildScenarioClassroomReport({
+      classroomName: "星星一班",
+      periodStart: "2026-08-01",
+      periodEnd: "2026-08-24",
+      observations: [
+        { id: "observation-1", child_id: "child-1", theme: "桥梁建构", scene: "建构区" },
+        { id: "observation-2", child_id: "child-2", theme: "桥梁建构", scene: "建构区" },
+      ],
+      analyses: [{ observation_id: "observation-1", structured_result: { evidenceGaps: ["继续观察支撑策略"], nextObservation: ["比较不同桥墩位置"] } }],
+      supports: [],
+      metrics: {
+        observationCount: 2,
+        timePointCount: 2,
+        observedChildCount: 2,
+        totalChildCount: 3,
+        sceneCoverage: ["建构区"],
+        domainEvidence: { 健康: 0, 语言: 0, 社会: 0, 科学: 1, 艺术: 0 },
+        supportFollowUpRate: 0,
+        curriculumClues: [],
+      },
+    });
+    expect(report.commonInterests).toEqual(["桥梁建构"]);
+    expect(report.observationCoverage).toContain("2/3名幼儿");
+    expect(report.nextSuggestions.join(" ")).toContain("优先为尚未覆盖的1名幼儿");
+    expect(JSON.stringify(report)).not.toMatch(/第[一二三四五六七八九十\d]+名|优良差/);
   });
 });

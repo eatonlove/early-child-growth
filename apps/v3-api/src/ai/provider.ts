@@ -2,6 +2,8 @@ import type {
   AIGeneration,
   AIAnalysisProvider,
   AnalysisResult,
+  ClassroomReportContent,
+  ClassroomReportGenerationInput,
   CurriculumDraft,
   CurriculumGenerationInput,
   InterestClusteringInput,
@@ -11,7 +13,7 @@ import type {
   ReportGenerationInput,
 } from "./contracts.js";
 import { QianwenAIProvider, type QianwenProviderOptions } from "./qianwen-provider.js";
-import { buildScenarioAnalysis, buildScenarioCurriculum, buildScenarioInterestClusters, buildScenarioReport } from "./scenario-provider.js";
+import { buildScenarioAnalysis, buildScenarioClassroomReport, buildScenarioCurriculum, buildScenarioInterestClusters, buildScenarioReport } from "./scenario-provider.js";
 
 export interface AIProviderConfig extends QianwenProviderOptions {
   mode: "simulated" | "qianwen";
@@ -38,6 +40,17 @@ class ScenarioAIProvider implements AIAnalysisProvider {
       promptVersion: "period-report.v3.1",
       mediaAnalyzed: false,
       notice: "当前使用模拟AI规则汇总已采用证据，报告仍需教师审核。",
+    };
+  }
+
+  async generateClassroomReport(input: ClassroomReportGenerationInput): Promise<AIGeneration<ClassroomReportContent>> {
+    return {
+      data: buildScenarioClassroomReport(input),
+      provider: "ScenarioAIProvider",
+      model: "simulated-ai-v3",
+      promptVersion: "classroom-period-report.v3.1",
+      mediaAnalyzed: false,
+      notice: "当前使用模拟AI规则提炼班级共同兴趣与后续建议；覆盖指标由系统计算，报告仍需教师审核。",
     };
   }
 
@@ -77,6 +90,10 @@ class ResilientAIProvider implements AIAnalysisProvider {
 
   generateReport(input: ReportGenerationInput) {
     return this.withFallback("report", () => this.primary.generateReport(input), () => this.fallback.generateReport(input));
+  }
+
+  generateClassroomReport(input: ClassroomReportGenerationInput) {
+    return this.withFallback("classroom-report", () => this.primary.generateClassroomReport(input), () => this.fallback.generateClassroomReport(input));
   }
 
   generateCurriculum(input: CurriculumGenerationInput) {

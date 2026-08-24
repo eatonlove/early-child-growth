@@ -1,5 +1,7 @@
 import type {
   AnalysisResult,
+  ClassroomReportContent,
+  ClassroomReportGenerationInput,
   CurriculumDraft,
   CurriculumGenerationInput,
   HistoricalObservationEvidence,
@@ -209,6 +211,33 @@ export function buildScenarioReport(input: ReportGenerationInput): ReportContent
     nextPlan: analyses.flatMap((item) => item.structured_result?.nextObservation ?? []).slice(0, 5),
     familySuggestions: analyses.flatMap((item) => item.structured_result?.responseSuggestions?.activity ?? []).slice(0, 4),
     audience: input.reportType,
+  };
+}
+
+export function buildScenarioClassroomReport(input: ClassroomReportGenerationInput): ClassroomReportContent {
+  const observationIds = new Set(input.observations.map((item) => item.id));
+  const analyses = input.analyses.filter((item) => observationIds.has(item.observation_id));
+  const evidenceGaps = analyses.flatMap((item) => item.structured_result?.evidenceGaps ?? []);
+  const nextObservation = analyses.flatMap((item) => item.structured_result?.nextObservation ?? []);
+  const uncoveredDomains = Object.entries(input.metrics.domainEvidence)
+    .filter(([, count]) => count === 0)
+    .map(([domain]) => domain);
+  const nextSuggestions = [
+    ...mostFrequent(nextObservation, 5),
+    ...(uncoveredDomains.length ? [`补充${uncoveredDomains.join("、")}领域的真实游戏证据。`] : []),
+    ...(input.metrics.observedChildCount < input.metrics.totalChildCount
+      ? [`优先为尚未覆盖的${input.metrics.totalChildCount - input.metrics.observedChildCount}名幼儿创造自然观察机会。`]
+      : []),
+  ].slice(0, 8);
+  return {
+    title: `${input.classroomName}游戏学习班级画像`,
+    evidenceBoundary: "只汇总班级中经教师终审采用的多幼儿、多时间点证据，不展示幼儿排名、综合分数或个体比较。",
+    observationCoverage: `${input.metrics.observationCount}次观察，覆盖${input.metrics.observedChildCount}/${input.metrics.totalChildCount}名幼儿、${input.metrics.sceneCoverage.length}类游戏场景和${input.metrics.timePointCount}个日期。`,
+    ...input.metrics,
+    commonInterests: mostFrequent(input.observations.map((item) => item.theme), 6),
+    recurringQuestions: mostFrequent(evidenceGaps, 6),
+    nextSuggestions: nextSuggestions.length ? nextSuggestions : ["继续积累多幼儿、多场景的连续观察，并依据后续证据调整支持。"],
+    audience: "classroom",
   };
 }
 
