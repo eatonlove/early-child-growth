@@ -10,6 +10,7 @@
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "test": "vitest run",
     "bootstrap:admin": "tsx scripts/bootstrap-admin.ts",
+    "smoke:authenticated": "tsx scripts/smoke-authenticated.ts",
     "seed:knowledge": "tsx scripts/seed-knowledge.ts"
   },
   "dependencies": {
