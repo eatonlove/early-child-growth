@@ -42,4 +42,12 @@ describe("QwenClient", () => {
       timeoutMs: 5000,
     })).toThrow("Token Plan");
   });
+
+  it("accepts punctuation used by standard Qwen keys", () => {
+    expect(() => new QwenClient({
+      apiKey: "sk-standard.key/value+suffix",
+      baseUrl: "https://dashscope.aliyuncs.com/compatible-mode/v1",
+      timeoutMs: 5000,
+    })).not.toThrow();
+  });
 });

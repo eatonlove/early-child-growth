@@ -1,4 +1,5 @@
 import type { z } from "zod";
+import { isStandardQwenApiKey } from "./key-validation.js";
 
 export type QwenContentPart =
   | { type: "text"; text: string }
@@ -67,8 +68,8 @@ export class QwenClient {
   private readonly retries: number;
 
   constructor(private readonly options: QwenClientOptions) {
-    if (options.apiKey.startsWith("sk-sp-")) {
-      throw new Error("童迹后端不能使用Token Plan密钥，请配置标准DASHSCOPE_API_KEY");
+    if (!isStandardQwenApiKey(options.apiKey)) {
+      throw new Error("童迹后端必须使用标准DASHSCOPE_API_KEY，不能使用Token Plan密钥");
     }
     this.fetcher = options.fetcher ?? fetch;
     this.retries = options.retries ?? 2;

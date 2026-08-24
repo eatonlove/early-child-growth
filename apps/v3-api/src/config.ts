@@ -1,5 +1,6 @@
 import "dotenv/config";
 import { z } from "zod";
+import { isStandardQwenApiKey } from "./ai/key-validation.js";
 
 const envSchema = z.object({
   NODE_ENV: z.enum(["development", "test", "production"]).default("development"),
@@ -27,7 +28,7 @@ const envSchema = z.object({
   AI_FALLBACK_TO_SIMULATED: z.enum(["true", "false"]).default("true"),
 }).superRefine((value, context) => {
   const key = value.QIANWEN_API_KEY || value.DASHSCOPE_API_KEY;
-  if (value.AI_MODE === "qianwen" && (!key || key === "sk-your-key-here" || !/^sk-[A-Za-z0-9_-]{8,}$/.test(key))) {
+  if (value.AI_MODE === "qianwen" && !isStandardQwenApiKey(key)) {
     context.addIssue({ code: z.ZodIssueCode.custom, path: ["DASHSCOPE_API_KEY"], message: "千问模式必须配置标准API密钥" });
   }
   if (value.AI_MODE === "qianwen" && key?.startsWith("sk-sp-")) {
