@@ -7,9 +7,7 @@ const serverSupabaseUrl = config.SUPABASE_INTERNAL_URL ?? config.SUPABASE_URL;
 export function publicSupabaseUrl(value: string) {
   const publicBase = new URL(config.SUPABASE_URL);
   const target = new URL(value);
-  target.protocol = publicBase.protocol;
-  target.host = publicBase.host;
-  return target.toString();
+  return new URL(`${target.pathname}${target.search}${target.hash}`, publicBase).toString();
 }
 
 export const serviceClient = createClient(serverSupabaseUrl, config.SUPABASE_SERVICE_ROLE_KEY, {
