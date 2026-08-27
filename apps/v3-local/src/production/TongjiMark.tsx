@@ -1,0 +1,22 @@
+interface TongjiMarkProps {
+  className?: string;
+  title?: string;
+}
+
+export function TongjiMark({ className = "", title = "同迹" }: TongjiMarkProps) {
+  return (
+    <svg
+      className={`tongji-mark ${className}`.trim()}
+      viewBox="0 0 64 64"
+      role="img"
+      aria-label={title}
+    >
+      <rect width="64" height="64" rx="17" fill="#F47C45" />
+      <path d="M13 17.5c7.2-.7 13.4.9 19 4.6v29.2c-5.7-3.2-12-4.6-19-3.9V17.5Z" fill="#FFF7E8" />
+      <path d="M51 17.5c-7.2-.7-13.4.9-19 4.6v29.2c5.7-3.2 12-4.6 19-3.9V17.5Z" fill="#FFE9C4" />
+      <path d="M18.5 39.5c5.2-6.1 10.2 2.1 15.3-5.3 3.7-5.4 7.8-6 12.3-11.4" fill="none" stroke="#356B55" strokeWidth="3.4" strokeLinecap="round" strokeDasharray="1 6" />
+      <circle cx="18.5" cy="39.5" r="3.1" fill="#356B55" />
+      <circle cx="46.1" cy="22.8" r="3.8" fill="#FFD568" />
+    </svg>
+  );
+}

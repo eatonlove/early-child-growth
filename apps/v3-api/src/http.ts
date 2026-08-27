@@ -1,6 +1,7 @@
 import type { FastifyReply, FastifyRequest } from "fastify";
 import { ZodError } from "zod";
 import { config } from "./config.js";
+import { authProvider } from "./runtime/auth-provider.js";
 import { serviceClient, userClient } from "./supabase.js";
 
 export type AppRole = "teacher" | "researcher";
@@ -25,8 +26,8 @@ export async function authenticate(request: FastifyRequest): Promise<AuthContext
   const authorization = request.headers.authorization;
   const token = authorization?.startsWith("Bearer ") ? authorization.slice(7) : request.cookies.tj_access;
   if (!token) throw new ApiError(401, "AUTH_REQUIRED", "请先登录");
-  const { data: userResult, error: userError } = await serviceClient.auth.getUser(token);
-  if (userError || !userResult.user) throw new ApiError(401, "SESSION_INVALID", "登录已失效，请重新登录");
+  const { data: userResult, error: userError } = await authProvider.getUser(token);
+  if (userError || !userResult?.user) throw new ApiError(401, "SESSION_INVALID", "登录已失效，请重新登录");
 
   const { data: profile, error: profileError } = await serviceClient
     .schema(config.SUPABASE_SCHEMA)

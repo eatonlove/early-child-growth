@@ -300,48 +300,6 @@ export interface RemoteObservationTemplate {
   version: number;
 }
 
-export interface RemoteQualityReview {
-  id: string;
-  observation_id: string;
-  factuality: number;
-  specificity: number;
-  chronology: number;
-  evidence_alignment: number;
-  subjective_phrases: string[];
-  comment: string;
-  status: "pending" | "passed" | "revision_requested";
-  reviewed_at?: string | null;
-  updated_at: string;
-}
-
-export interface RemoteQualityQueueItem {
-  observation: RemoteObservation;
-  childName: string;
-  review: RemoteQualityReview | null;
-}
-
-export interface RemoteExportRequest {
-  id: string;
-  classroom_id?: string | null;
-  requested_by: string;
-  export_type:
-    | "individual_report"
-    | "classroom_report"
-    | "curriculum_case"
-    | "anonymized_research"
-    | "observation_record"
-    | "curriculum_plan";
-  resource_type: string;
-  resource_id: string;
-  purpose: string;
-  recipient: string;
-  anonymized: boolean;
-  status: "pending" | "approved" | "rejected" | "cancelled";
-  decision_note?: string | null;
-  created_at: string;
-  document_export?: RemoteDocumentExport | null;
-}
-
 export interface RemoteDocumentExport {
   id: string;
   export_request_id: string;

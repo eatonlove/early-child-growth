@@ -53,17 +53,17 @@ export function App() {
     navigate(next === "teacher" ? "/today" : next === "research_admin" ? "/quality" : "/today");
   };
 
-  if (loading) return <div className="loading-screen"><span className="brand-glyph">童</span><h1>正在准备同迹 3.0</h1><p>载入证据包、教师原始判断与本地治理数据…</p><span className="loading-line" /></div>;
+  if (loading) return <div className="loading-screen"><span className="brand-glyph">同</span><h1>正在准备同迹</h1><p>载入观察记录、教师判断与成长支持数据…</p><span className="loading-line" /></div>;
 
   return (
     <div className="app-shell v3-shell">
       <aside className={`sidebar ${menuOpen ? "sidebar-open" : ""}`}>
         <div className="brand">
           <span className="brand-glyph">童</span>
-          <div><strong>同迹 3.0</strong><small>循证游戏观察 · 本地完整演示</small></div>
+          <div><strong>同迹</strong><small>循证游戏观察 · 本地完整演示</small></div>
           <button className="icon-btn mobile-close" onClick={() => setMenuOpen(false)} aria-label="关闭菜单"><X /></button>
         </div>
-        <div className="version-ribbon"><span>3.0</span> 教师判断先行 · AI 对照增强</div>
+        <div className="version-ribbon">教师判断先行 · AI 对照增强</div>
         <nav className="main-nav">{nav.map(([path, label, Icon]) => <NavLink key={path} to={path} className={({ isActive }) => isActive ? "active" : ""}><Icon size={19} /><span>{label}</span></NavLink>)}</nav>
         <div className="sidebar-principle"><Sprout size={20} /><div><strong>证据先于结论</strong><span>观察 · 识别 · 应答 · 再观察</span></div></div>
         <div className="local-chip"><Database size={14} /> 模拟 AI · 数据仅存本机</div>

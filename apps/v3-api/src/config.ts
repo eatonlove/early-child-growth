@@ -2,8 +2,11 @@ import "dotenv/config";
 import { z } from "zod";
 import { isStandardQwenApiKey } from "./ai/key-validation.js";
 
+const optionalUrl = z.preprocess((value) => value === "" ? undefined : value, z.string().url().optional());
+
 const envSchema = z.object({
   NODE_ENV: z.enum(["development", "test", "production"]).default("development"),
+  RUNTIME_MODE: z.enum(["supabase", "local-lite"]).default("supabase"),
   HOST: z.string().default("0.0.0.0"),
   PORT: z.coerce.number().int().positive().default(4310),
   TRUST_PROXY: z.enum(["true", "false"]).default("false"),
@@ -15,6 +18,12 @@ const envSchema = z.object({
   SUPABASE_SERVICE_ROLE_KEY: z.string().min(20),
   SUPABASE_SCHEMA: z.literal("tongji_v3").default("tongji_v3"),
   SUPABASE_STORAGE_BUCKET: z.literal("tongji-v3-evidence").default("tongji-v3-evidence"),
+  LOCAL_DATABASE_URL: z.string().url().optional(),
+  LOCAL_POSTGREST_URL: z.string().url().optional(),
+  LOCAL_JWT_SECRET: z.string().min(32).optional(),
+  LOCAL_MEDIA_ROOT: z.string().min(1).default("/tmp/tongji-v3-media"),
+  LOCAL_MEDIA_PUBLIC_BASE_URL: optionalUrl,
+  PUBLIC_APP_URL: z.string().url().default("http://127.0.0.1:5300"),
   INTERNAL_EMAIL_DOMAIN: z.string().regex(/^[a-z0-9.-]+$/).default("tongji-v3.local"),
   AI_MODE: z.enum(["simulated", "qianwen"]).default("simulated"),
   DASHSCOPE_API_KEY: z.string().trim().optional(),
@@ -34,6 +43,14 @@ const envSchema = z.object({
   if (value.AI_MODE === "qianwen" && key?.startsWith("sk-sp-")) {
     context.addIssue({ code: z.ZodIssueCode.custom, path: ["DASHSCOPE_API_KEY"], message: "后端不能使用Token Plan密钥" });
   }
+  if (value.RUNTIME_MODE === "local-lite") {
+    if (!value.LOCAL_DATABASE_URL) context.addIssue({ code: z.ZodIssueCode.custom, path: ["LOCAL_DATABASE_URL"], message: "本地精简模式必须配置PostgreSQL连接" });
+    if (!value.LOCAL_POSTGREST_URL) context.addIssue({ code: z.ZodIssueCode.custom, path: ["LOCAL_POSTGREST_URL"], message: "本地精简模式必须配置PostgREST地址" });
+    if (!value.LOCAL_JWT_SECRET) context.addIssue({ code: z.ZodIssueCode.custom, path: ["LOCAL_JWT_SECRET"], message: "本地精简模式必须配置JWT密钥" });
+    if (value.AI_MODE === "qianwen" && value.QWEN_MEDIA_ANALYSIS_ENABLED === "true" && !value.LOCAL_MEDIA_PUBLIC_BASE_URL?.startsWith("https://")) {
+      context.addIssue({ code: z.ZodIssueCode.custom, path: ["LOCAL_MEDIA_PUBLIC_BASE_URL"], message: "本地真实媒体分析必须配置千问可访问的HTTPS媒体地址" });
+    }
+  }
 });
 
 const parsed = envSchema.safeParse(process.env);
@@ -50,6 +67,7 @@ export const config = {
   qwenApiKey: parsed.data.QIANWEN_API_KEY || parsed.data.DASHSCOPE_API_KEY || "",
   qwenMediaAnalysisEnabled: parsed.data.QWEN_MEDIA_ANALYSIS_ENABLED === "true",
   aiFallbackToSimulated: parsed.data.AI_FALLBACK_TO_SIMULATED === "true",
+  isLocalLite: parsed.data.RUNTIME_MODE === "local-lite",
 };
 
 export const internalEmail = (username: string) => `${username.trim().toLowerCase()}@${config.INTERNAL_EMAIL_DOMAIN}`;

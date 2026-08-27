@@ -13,9 +13,6 @@ import type {
   RemoteObservationSubject,
   RemoteObservationTemplate,
   RemoteObserver,
-  RemoteQualityQueueItem,
-  RemoteQualityReview,
-  RemoteExportRequest,
   RemoteResearchActivity,
   RemoteResearchEntry,
   RemoteSupportAction,
@@ -144,6 +141,12 @@ export const remoteApi = {
       method: "PATCH",
       body: body(value),
     }),
+  downloadChildImportTemplate: () => download("/api/children/import-template", "同迹幼儿批量导入模板.csv"),
+  importChildren: (value: { classroomId: string; rows: Array<Record<string, unknown>> }) =>
+    request<{ items: RemoteChild[]; importedCount: number }>("/api/children/import", {
+      method: "POST",
+      body: body(value),
+    }),
   observations: () =>
     request<{ items: RemoteObservation[] }>("/api/observations"),
   observation: (id: string) =>
@@ -209,8 +212,8 @@ export const remoteApi = {
       method: "POST", headers: { "Content-Type": "application/octet-stream" }, body: file,
     });
   },
-  requestObservationDocument: (id: string, value: { variant: "teacher" | "professional"; purpose: string; recipient: string }) =>
-    request<{ request: RemoteExportRequest; documentExport: { id: string } }>(`/api/observations/${id}/document-exports`, { method: "POST", body: body(value) }),
+  createObservationDocument: (id: string, variant: "teacher" | "professional") =>
+    request<{ documentExport: { id: string } }>(`/api/observations/${id}/document-exports`, { method: "POST", body: body({ variant }) }),
   documentExportDownload: async (id: string) => {
     const item = await request<{ url: string; fileName: string }>(`/api/document-exports/${id}/download`);
     window.location.assign(item.url);
@@ -282,29 +285,6 @@ export const remoteApi = {
       method: "PATCH",
       body: body({ password }),
     }),
-  qualityReviews: () =>
-    request<{ items: RemoteQualityQueueItem[] }>("/api/quality-reviews"),
-  saveQualityReview: (value: Record<string, unknown>) =>
-    request<{ item: RemoteQualityReview }>("/api/quality-reviews", {
-      method: "POST",
-      body: body(value),
-    }),
-  exportRequests: () =>
-    request<{ items: RemoteExportRequest[] }>("/api/export-requests"),
-  createExportRequest: (value: Record<string, unknown>) =>
-    request<{ item: RemoteExportRequest }>("/api/export-requests", {
-      method: "POST",
-      body: body(value),
-    }),
-  decideExportRequest: (
-    id: string,
-    decision: "approved" | "rejected",
-    note: string,
-  ) =>
-    request<{ item: RemoteExportRequest }>(
-      `/api/export-requests/${id}/decision`,
-      { method: "PATCH", body: body({ decision, note }) },
-    ),
   researchActivities: () =>
     request<{ items: RemoteResearchActivity[] }>("/api/research-activities"),
   createResearchActivity: (value: Record<string, unknown>) =>
@@ -339,6 +319,11 @@ export const remoteApi = {
       method: "POST",
       body: body(value),
     }),
+  updateReport: (id: string, content: Record<string, unknown>) =>
+    request<{ item: RemotePeriodReport }>(`/api/reports/${id}`, { method: "PATCH", body: body({ content }) }),
+  reviseReport: (id: string, instruction: string) =>
+    request<{ item: RemotePeriodReport; aiNotice: string }>(`/api/reports/${id}/revise`, { method: "POST", body: body({ instruction }) }),
+  deleteReport: (id: string) => request<void>(`/api/reports/${id}`, { method: "DELETE" }),
   updateReportStatus: (id: string, status: string) =>
     request<{ item: RemotePeriodReport }>(`/api/reports/${id}/status`, {
       method: "PATCH",
@@ -373,5 +358,5 @@ export const remoteApi = {
   selectCurriculumOptions: (id: string, selectedOptionIds: string[]) => request<{ items: RemoteCurriculumWorkspace["options"] }>(`/api/curriculum-clues/${id}/activity-options`, { method: "PATCH", body: body({ selectedOptionIds }) }),
   generateCurriculumPlan: (id: string, value: { implementationPeriod: string; templateVersionId?: string }) => request<{ item: RemoteCurriculumWorkspace["plans"][number]; aiNotice: string }>(`/api/curriculum-clues/${id}/plan`, { method: "POST", body: body(value) }),
   createCurriculumCycle: (planId: string, value: Record<string, unknown>) => request<{ item: RemoteCurriculumWorkspace["cycles"][number] }>(`/api/curriculum-plans/${planId}/cycles`, { method: "POST", body: body(value) }),
-  requestCurriculumDocument: (planId: string, value: { purpose: string; recipient: string }) => request<{ request: RemoteExportRequest; documentExport: { id: string } }>(`/api/curriculum-plans/${planId}/document-exports`, { method: "POST", body: body(value) }),
+  createCurriculumDocument: (planId: string) => request<{ documentExport: { id: string } }>(`/api/curriculum-plans/${planId}/document-exports`, { method: "POST", body: body({}) }),
 };

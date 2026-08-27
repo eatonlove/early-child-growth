@@ -2,6 +2,7 @@ import type { FastifyInstance } from "fastify";
 import { z } from "zod";
 import { config, internalEmail } from "../config.js";
 import { ApiError, audit, authenticate, requireResearcher } from "../http.js";
+import { authProvider } from "../runtime/auth-provider.js";
 import { serviceClient } from "../supabase.js";
 
 const uuid = z.string().uuid();
@@ -20,6 +21,32 @@ const childInput = z.object({
   enrolledOn: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
   guardianConsentStatus: z.enum(["granted", "partial", "pending", "withdrawn"]).default("pending"),
   interests: z.array(z.string().trim().min(1).max(40)).max(20).default([]),
+});
+const childImportInput = z.object({
+  classroomId: uuid,
+  rows: z.array(z.object({
+    internalCode: z.string().trim().min(1).max(40),
+    displayName: z.string().trim().min(1).max(40),
+    birthMonth: z.string().regex(/^\d{4}-\d{2}$/),
+    enrolledOn: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
+    guardianConsentStatus: z.enum(["granted", "partial", "pending", "withdrawn"]).default("pending"),
+    interests: z.array(z.string().trim().min(1).max(40)).max(20).default([]),
+  })).min(1).max(200),
+}).superRefine((value, context) => {
+  const firstRowByCode = new Map<string, number>();
+  value.rows.forEach((row, index) => {
+    const code = row.internalCode.toLowerCase();
+    const firstRow = firstRowByCode.get(code);
+    if (firstRow !== undefined) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["rows", index, "internalCode"],
+        message: `园内编号与第${firstRow + 1}行重复`,
+      });
+    } else {
+      firstRowByCode.set(code, index);
+    }
+  });
 });
 
 export async function managementRoutes(app: FastifyInstance) {
@@ -101,6 +128,58 @@ export async function managementRoutes(app: FastifyInstance) {
     return { items: data ?? [] };
   });
 
+  app.get("/api/children/import-template", async (request, reply) => {
+    await authenticate(request);
+    const rows = [
+      ["园内编号*", "园内使用名*", "出生年月(YYYY-MM)*", "入园日期(YYYY-MM-DD)", "监护人授权", "已知兴趣(用|分隔)"],
+      ["M2026001", "晨晨", "2022-03", "2025-09-01", "pending", "建构|汽车"],
+    ];
+    const csv = `\uFEFF${rows.map((row) => row.map((cell) => `"${cell.replaceAll('"', '""')}"`).join(",")).join("\r\n")}`;
+    return reply
+      .header("Content-Type", "text/csv; charset=utf-8")
+      .header("Content-Disposition", `attachment; filename*=UTF-8''${encodeURIComponent("同迹幼儿批量导入模板.csv")}`)
+      .send(csv);
+  });
+
+  app.post("/api/children/import", async (request, reply) => {
+    const auth = await authenticate(request);
+    const input = childImportInput.parse(request.body);
+    const { data: classroom, error: classroomError } = await auth.data
+      .from("classrooms")
+      .select("id")
+      .eq("id", input.classroomId)
+      .maybeSingle();
+    if (classroomError) throw new ApiError(500, "CHILD_IMPORT_CLASSROOM_FAILED", "批量导入班级读取失败");
+    if (!classroom) throw new ApiError(404, "CHILD_IMPORT_CLASSROOM_NOT_FOUND", "班级不存在或无权访问");
+
+    const codes = input.rows.map((row) => row.internalCode);
+    const { data: existing, error: existingError } = await auth.data
+      .from("children")
+      .select("internal_code")
+      .in("internal_code", codes);
+    if (existingError) throw new ApiError(500, "CHILD_IMPORT_DUPLICATE_CHECK_FAILED", "幼儿编号重复校验失败");
+    if (existing?.length) {
+      throw new ApiError(409, "CHILD_IMPORT_DUPLICATE", `以下园内编号已存在：${existing.map((item) => item.internal_code).join("、")}`);
+    }
+
+    const { data, error } = await auth.data.from("children").insert(input.rows.map((row) => ({
+      tenant_id: auth.tenantId,
+      classroom_id: input.classroomId,
+      internal_code: row.internalCode,
+      display_name: row.displayName,
+      birth_month: `${row.birthMonth}-01`,
+      enrolled_on: row.enrolledOn || null,
+      guardian_consent_status: row.guardianConsentStatus,
+      interests: row.interests,
+      created_by: auth.userId,
+    }))).select();
+    if (error) {
+      throw new ApiError(error.code === "23505" ? 409 : 500, "CHILD_IMPORT_FAILED", error.code === "23505" ? "导入数据中包含已存在的幼儿编号" : "幼儿批量导入失败");
+    }
+    await audit(auth, "child.batch_imported", "classroom", input.classroomId, { count: data?.length ?? 0 });
+    return reply.status(201).send({ items: data ?? [], importedCount: data?.length ?? 0 });
+  });
+
   app.post("/api/children", async (request, reply) => {
     const auth = await authenticate(request);
     const input = childInput.parse(request.body);
@@ -173,13 +252,12 @@ export async function managementRoutes(app: FastifyInstance) {
       if (count !== input.classroomIds.length) throw new ApiError(422, "INVALID_CLASSROOM_ASSIGNMENT", "包含无权分配的班级");
     }
 
-    const { data: created, error: authError } = await serviceClient.auth.admin.createUser({
+    const { data: created, error: authError } = await authProvider.createUser({
       email: internalEmail(input.username),
       password: input.password,
-      email_confirm: true,
-      app_metadata: { application: "tongji_v3" },
+      appMetadata: { application: "tongji_v3" },
     });
-    if (authError || !created.user) throw new ApiError(authError?.status === 422 ? 409 : 500, "ACCOUNT_CREATE_FAILED", authError?.status === 422 ? "账号已存在或密码不符合要求" : "账号创建失败");
+    if (authError || !created?.user) throw new ApiError(authError?.status === 422 ? 409 : 500, "ACCOUNT_CREATE_FAILED", authError?.status === 422 ? "账号已存在或密码不符合要求" : "账号创建失败");
 
     try {
       const { error: profileError } = await serviceClient.schema(config.SUPABASE_SCHEMA).from("profiles").insert({
@@ -202,7 +280,7 @@ export async function managementRoutes(app: FastifyInstance) {
         .from("profiles")
         .delete()
         .eq("user_id", created.user.id);
-      await serviceClient.auth.admin.deleteUser(created.user.id);
+      await authProvider.deleteUser(created.user.id);
       throw new ApiError(500, "ACCOUNT_PROFILE_CREATE_FAILED", "登录身份已回滚，账号资料创建失败");
     }
     await audit(auth, "account.created", "account", created.user.id, { username: input.username, role: input.role, classroomIds: input.classroomIds });
@@ -222,13 +300,13 @@ export async function managementRoutes(app: FastifyInstance) {
     if (input.status === "disabled") {
       const { error: profileError } = await serviceClient.schema(config.SUPABASE_SCHEMA).from("profiles").update({ status: "disabled", disabled_at: new Date().toISOString(), disabled_reason: input.reason || "教研员停用" }).eq("user_id", userId).eq("tenant_id", auth.tenantId);
       if (profileError) throw new ApiError(500, "ACCOUNT_DISABLE_FAILED", "账号停用失败");
-      const { error: banError } = await serviceClient.auth.admin.updateUserById(userId, { ban_duration: "876000h" });
+      const { error: banError } = await authProvider.setUserBan(userId, true);
       if (banError) {
         await serviceClient.schema(config.SUPABASE_SCHEMA).from("profiles").update({ status: "active", disabled_at: null, disabled_reason: null }).eq("user_id", userId);
         throw new ApiError(500, "AUTH_BAN_FAILED", "身份服务停用失败，资料状态已回滚");
       }
     } else {
-      const { error: unbanError } = await serviceClient.auth.admin.updateUserById(userId, { ban_duration: "none" });
+      const { error: unbanError } = await authProvider.setUserBan(userId, false);
       if (unbanError) throw new ApiError(500, "AUTH_UNBAN_FAILED", "身份服务恢复失败");
       const { error: profileError } = await serviceClient.schema(config.SUPABASE_SCHEMA).from("profiles").update({ status: "active", disabled_at: null, disabled_reason: null }).eq("user_id", userId).eq("tenant_id", auth.tenantId);
       if (profileError) throw new ApiError(500, "ACCOUNT_ENABLE_FAILED", "账号资料恢复失败");
@@ -245,7 +323,7 @@ export async function managementRoutes(app: FastifyInstance) {
     const { data: target, error: targetError } = await serviceClient.schema(config.SUPABASE_SCHEMA).from("profiles").select("user_id").eq("user_id", userId).eq("tenant_id", auth.tenantId).maybeSingle();
     if (targetError) throw new ApiError(500, "ACCOUNT_LOOKUP_FAILED", "账号读取失败");
     if (!target) throw new ApiError(404, "ACCOUNT_NOT_FOUND", "账号不存在");
-    const { error } = await serviceClient.auth.admin.updateUserById(userId, { password: input.password });
+    const { error } = await authProvider.updatePassword(userId, input.password);
     if (error) throw new ApiError(500, "PASSWORD_RESET_FAILED", "密码重置失败");
     await audit(auth, "account.password_reset", "account", userId);
     return { ok: true };

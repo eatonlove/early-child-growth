@@ -1,6 +1,7 @@
 import type { FastifyInstance } from "fastify";
 import { z } from "zod";
 import { createAIProvider } from "../ai/provider.js";
+import { classroomReportContentSchema, reportContentSchema } from "../ai/contracts.js";
 import { effectiveAnalysisResult } from "../analysis-claims.js";
 import { classroomReportEvidenceCoverage, classroomReportMetrics } from "../classroom-report.js";
 import { config } from "../config.js";
@@ -108,7 +109,7 @@ export async function outcomeRoutes(app: FastifyInstance) {
         applicability: { classroomId: current.classroom_id, childId: current.child_id, category: current.category },
         evidence_refs: [{ observationId: current.observation_id, supportActionId: id }],
         quality_score: input.effectiveness === "supported" ? 0.75 : 0.55,
-        status: "pending",
+        status: "active",
         created_by: auth.userId,
       }, { onConflict: "tenant_id,memory_type,source_resource_type,source_resource_id" });
     }
@@ -361,6 +362,77 @@ export async function outcomeRoutes(app: FastifyInstance) {
       fallbackUsed: Boolean(generated.fallbackReason),
     });
     return reply.status(201).send({ item: data, aiNotice: generated.notice });
+  });
+
+  app.patch("/api/reports/:id", async (request) => {
+    const auth = await authenticate(request);
+    const { id } = z.object({ id: uuid }).parse(request.params);
+    const input = z.object({ content: z.record(z.unknown()) }).parse(request.body);
+    const { data: current, error: currentError } = await auth.data.from("period_reports").select("*").eq("id", id).maybeSingle();
+    if (currentError) throw new ApiError(500, "REPORT_READ_FAILED", "报告读取失败");
+    if (!current) throw new ApiError(404, "REPORT_NOT_FOUND", "报告不存在或无权访问");
+    const merged = { ...(current.content ?? {}), ...input.content } as Record<string, unknown>;
+    const aiMeta = merged.aiMeta;
+    delete merged.aiMeta;
+    delete merged.teacherEditedAt;
+    const validated = current.report_type === "classroom"
+      ? classroomReportContentSchema.parse(merged)
+      : reportContentSchema.parse(merged);
+    const { data, error } = await auth.data.from("period_reports").update({
+      content: { ...validated, ...(aiMeta ? { aiMeta } : {}), teacherEditedAt: new Date().toISOString() },
+      status: "draft",
+    }).eq("id", id).select().single();
+    if (error) throw new ApiError(500, "REPORT_UPDATE_FAILED", "报告修改保存失败");
+    await audit(auth, "report.updated", "period_report", id);
+    return { item: data };
+  });
+
+  app.post("/api/reports/:id/revise", async (request) => {
+    const auth = await authenticate(request);
+    const { id } = z.object({ id: uuid }).parse(request.params);
+    const { instruction } = z.object({ instruction: z.string().trim().min(2).max(2000) }).parse(request.body);
+    const { data: current, error: currentError } = await auth.data.from("period_reports").select("*").eq("id", id).maybeSingle();
+    if (currentError) throw new ApiError(500, "REPORT_READ_FAILED", "报告读取失败");
+    if (!current) throw new ApiError(404, "REPORT_NOT_FOUND", "报告不存在或无权访问");
+    const existing = { ...(current.content ?? {}) } as Record<string, unknown>;
+    delete existing.aiMeta;
+    delete existing.teacherEditedAt;
+    const existingContent = current.report_type === "classroom"
+      ? classroomReportContentSchema.parse(existing)
+      : reportContentSchema.parse(existing);
+    let generated;
+    try {
+      generated = await aiProvider.reviseReport({ reportType: current.report_type, existingContent, instruction });
+    } catch {
+      throw new ApiError(502, "AI_REPORT_REVISION_FAILED", "AI报告修订暂时不可用，请稍后重试");
+    }
+    const { data, error } = await auth.data.from("period_reports").update({
+      content: {
+        ...generated.data,
+        aiMeta: {
+          provider: generated.provider,
+          model: generated.model,
+          promptVersion: generated.promptVersion,
+          fallbackUsed: Boolean(generated.fallbackReason),
+        },
+      },
+      status: "draft",
+    }).eq("id", id).select().single();
+    if (error) throw new ApiError(500, "REPORT_REVISION_SAVE_FAILED", "AI修订报告保存失败");
+    await audit(auth, "report.ai_revised", "period_report", id, { instruction, provider: generated.provider });
+    return { item: data, aiNotice: generated.notice };
+  });
+
+  app.delete("/api/reports/:id", async (request, reply) => {
+    const auth = await authenticate(request);
+    const { id } = z.object({ id: uuid }).parse(request.params);
+    const { data: current, error: currentError } = await auth.data.from("period_reports").select("id").eq("id", id).maybeSingle();
+    if (currentError) throw new ApiError(500, "REPORT_READ_FAILED", "报告读取失败");
+    if (!current) throw new ApiError(404, "REPORT_NOT_FOUND", "报告不存在或无权访问");
+    const { error } = await serviceClient.schema(config.SUPABASE_SCHEMA).from("period_reports").delete().eq("id", id).eq("tenant_id", auth.tenantId);
+    if (error) throw new ApiError(500, "REPORT_DELETE_FAILED", "报告删除失败");
+    await audit(auth, "report.deleted", "period_report", id);
+    return reply.status(204).send();
   });
 
   app.patch("/api/reports/:id/status", async (request) => {

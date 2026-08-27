@@ -4,9 +4,7 @@ import {
   Activity,
   BookOpen,
   ChevronRight,
-  ClipboardCheck,
   Database,
-  FileCheck2,
   FileText,
   Home,
   KeyRound,
@@ -15,7 +13,6 @@ import {
   Menu,
   Microscope,
   School,
-  ShieldCheck,
   Sprout,
   Users,
   X,
@@ -34,14 +31,13 @@ import {
   RemoteAccountsPage,
   RemoteClassroomPage,
   RemoteDashboardPage,
-  RemoteExportsPage,
   RemoteGrowthPage,
   RemoteKnowledgePage,
   RemoteReportsPage,
-  RemoteQualityPage,
   RemoteResearchPage,
 } from "./pages";
 import { RemoteCurriculumV32Page, RemoteObservationV32Page, RemoteProfessionalMemoryPage } from "./evolution-pages";
+import { TongjiMark } from "./TongjiMark";
 import "./production-design.css";
 
 const navigation: Array<[string, string, LucideIcon]> = [
@@ -81,9 +77,9 @@ function LoginPage() {
     <main className="remote-login">
       <section className="remote-login-story">
         <div className="brand">
-          <span className="brand-glyph">同</span>
+          <TongjiMark />
           <div>
-            <strong>同迹 3.0</strong>
+            <strong>同迹</strong>
             <small>幼儿游戏循证评估系统</small>
           </div>
         </div>
@@ -106,7 +102,7 @@ function LoginPage() {
       </section>
       <section className="remote-login-card">
         <div className="remote-login-logo">
-          <span>同</span>
+          <TongjiMark />
           <div>
             <strong>欢迎使用同迹</strong>
             <small>请使用园所分配的账号登录</small>
@@ -141,10 +137,8 @@ function LoginPage() {
           </button>
         </form>
         <div className="remote-login-security">
-          <ShieldCheck />
-          <span>
-            账号密码由Supabase Auth验证，业务数据按园所schema与班级权限隔离。
-          </span>
+          <KeyRound />
+          <span>账号由园所统一分配，教师仅访问所负责班级的数据。</span>
         </div>
       </section>
     </main>
@@ -171,14 +165,11 @@ function RemoteShell() {
     user.role === "researcher"
       ? [
           ...navigation,
-          ["/quality", "观察质量审核", ClipboardCheck] as [string, string, LucideIcon],
-          ["/exports", "导出审批", FileCheck2] as [string, string, LucideIcon],
           ["/research", "教研活动", Microscope] as [string, string, LucideIcon],
           ["/accounts", "账号管理", KeyRound] as [string, string, LucideIcon],
         ]
       : [
           ...navigation,
-          ["/exports", "导出申请", FileCheck2] as [string, string, LucideIcon],
           ["/research", "教研活动", Microscope] as [string, string, LucideIcon],
         ];
   const currentPage = nav.find(([path]) =>
@@ -213,10 +204,10 @@ function RemoteShell() {
     <div className={`app-shell v3-shell remote-shell ${isHome ? "home-mode" : "workspace-mode"}`}>
       <aside id="app-sidebar" className={`sidebar ${menuOpen ? "sidebar-open" : ""}`}>
         <div className="brand">
-          <span className="brand-glyph">同</span>
+          <TongjiMark />
           <div>
-            <strong>同迹 3.0</strong>
-            <small>循证游戏观察 · 正式数据模式</small>
+            <strong>同迹</strong>
+            <small>幼儿游戏观察与成长支持</small>
           </div>
           <button
             className="icon-btn mobile-close"
@@ -225,9 +216,6 @@ function RemoteShell() {
           >
             <X />
           </button>
-        </div>
-        <div className="version-ribbon">
-          <span>3.0</span> Supabase · 证据链可追溯
         </div>
         <nav className="main-nav" aria-label="全部功能">
           {nav.map(([path, label, Icon]) => (
@@ -247,9 +235,6 @@ function RemoteShell() {
             <strong>教师判断先行</strong>
             <span>观察 · 识别 · 应答 · 拓展</span>
           </div>
-        </div>
-        <div className="remote-live-chip">
-          <Database /> Supabase 正式数据
         </div>
       </aside>
       {menuOpen && (
@@ -286,8 +271,8 @@ function RemoteShell() {
               <Menu />
             </button>
             <NavLink to="/" className="topbar-brand" aria-label="返回同迹主页">
-              <span>同</span>
-              <strong>同迹 3.0</strong>
+              <TongjiMark />
+              <strong>同迹</strong>
             </NavLink>
             <div className="school-context">
               <span>{user.tenantName} · {workspaceLabel}</span>
@@ -309,18 +294,7 @@ function RemoteShell() {
             <Route path="/curriculum" element={<RemoteCurriculumV32Page user={user} />} />
             <Route path="/knowledge" element={<RemoteKnowledgePage />} />
             <Route path="/memories" element={<RemoteProfessionalMemoryPage user={user} />} />
-            <Route path="/exports" element={<RemoteExportsPage user={user} />} />
             <Route path="/research" element={<RemoteResearchPage user={user} />} />
-            <Route
-              path="/quality"
-              element={
-                user.role === "researcher" ? (
-                  <RemoteQualityPage />
-                ) : (
-                  <Navigate to="/" replace />
-                )
-              }
-            />
             <Route
               path="/accounts"
               element={
@@ -352,7 +326,7 @@ function RemoteGate() {
   if (loading)
     return (
       <div className="loading-screen">
-        <span className="brand-glyph">同</span>
+        <TongjiMark />
         <h1>正在验证同迹会话</h1>
         <p>连接账号权限、班级范围和知识库…</p>
         <span className="loading-line" />
@@ -361,7 +335,7 @@ function RemoteGate() {
   if (error)
     return (
       <div className="loading-screen service-error-screen" role="alert">
-        <span className="brand-glyph">!</span>
+        <span className="service-error-mark">!</span>
         <h1>暂时无法连接同迹服务</h1>
         <p>{error}。这不是登录状态问题，请稍后重试。</p>
         <button className="btn btn-primary" onClick={() => void retry()}>

@@ -176,7 +176,7 @@ export interface AIAnalysisRun extends BaseEntity {
   evidencePackageId: string;
   subjectId: string;
   childId: string;
-  providerLabel: "模拟 AI 3.0";
+  providerLabel: "模拟 AI";
   summary: string;
   currentExperience: string;
   interestsAndStrengths: string[];

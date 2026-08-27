@@ -8,16 +8,15 @@ import {
   CheckCircle2,
   ChevronRight,
   CircleAlert,
-  ClipboardCheck,
   Database,
   Download,
-  FileCheck2,
   FileVideo,
   Home,
   KeyRound,
   Layers3,
   Microscope,
   Play,
+  Pencil,
   Plus,
   RefreshCcw,
   Save,
@@ -26,6 +25,7 @@ import {
   ShieldCheck,
   Sparkles,
   Sprout,
+  Trash2,
   Upload,
   UserPlus,
   Users,
@@ -53,8 +53,6 @@ import type {
   RemoteKnowledgeCard,
   RemoteObservation,
   RemoteObservationTemplate,
-  RemoteQualityQueueItem,
-  RemoteExportRequest,
   RemoteResearchActivity,
   RemoteSupportAction,
   RemoteGrowthResult,
@@ -73,14 +71,14 @@ const statusLabel: Record<string, string> = {
   active: "启用",
   disabled: "已停用",
   submitted: "教师已提交",
-  ai_ready: "待逐条审核",
+  ai_ready: "待教师确认",
   adopted: "已采用AI建议",
   abandoned: "已放弃AI建议",
-  pending: "待逐条审核",
+  pending: "待确认",
   modified: "教师已修改",
   rejected: "教师已拒绝",
   to_verify: "待后续验证",
-  passed: "审核通过",
+  passed: "已确认",
   revision_requested: "退回修改",
   approved: "已批准",
   preparing: "准备中",
@@ -88,7 +86,7 @@ const statusLabel: Record<string, string> = {
   completed: "已完成",
   archived: "已归档",
   draft: "草稿",
-  reviewed: "已审核",
+  reviewed: "已完善",
   published: "已发布",
   withdrawn: "已撤回",
   clue: "继续观察",
@@ -124,6 +122,74 @@ const tone = (
 const showError = (error: unknown) =>
   error instanceof RemoteApiError ? error.message : "操作失败，请稍后重试";
 
+type ChildImportRow = {
+  internalCode: string;
+  displayName: string;
+  birthMonth: string;
+  enrolledOn?: string;
+  guardianConsentStatus: "granted" | "partial" | "pending" | "withdrawn";
+  interests: string[];
+};
+
+function parseCsvLine(line: string) {
+  const cells: string[] = [];
+  let value = "";
+  let quoted = false;
+  for (let index = 0; index < line.length; index += 1) {
+    const character = line[index];
+    if (character === '"') {
+      if (quoted && line[index + 1] === '"') {
+        value += '"';
+        index += 1;
+      } else quoted = !quoted;
+    } else if (character === "," && !quoted) {
+      cells.push(value.trim());
+      value = "";
+    } else value += character;
+  }
+  cells.push(value.trim());
+  return cells;
+}
+
+function parseChildImportCsv(text: string) {
+  const lines = text.replace(/^\uFEFF/, "").split(/\r?\n/).filter((line) => line.trim());
+  const rows: ChildImportRow[] = [];
+  const errors: string[] = [];
+  const seen = new Set<string>();
+  lines.slice(1).forEach((line, index) => {
+    const rowNumber = index + 2;
+    const [internalCode = "", displayName = "", birthMonth = "", enrolledOn = "", consent = "pending", interests = ""] = parseCsvLine(line);
+    if (!internalCode || !displayName || !/^\d{4}-\d{2}$/.test(birthMonth)) {
+      errors.push(`第${rowNumber}行：园内编号、园内使用名和YYYY-MM出生年月为必填项。`);
+      return;
+    }
+    if (seen.has(internalCode.toLowerCase())) {
+      errors.push(`第${rowNumber}行：园内编号“${internalCode}”在文件中重复。`);
+      return;
+    }
+    if (enrolledOn && !/^\d{4}-\d{2}-\d{2}$/.test(enrolledOn)) {
+      errors.push(`第${rowNumber}行：入园日期应为YYYY-MM-DD。`);
+      return;
+    }
+    const status = consent || "pending";
+    if (!["granted", "partial", "pending", "withdrawn"].includes(status)) {
+      errors.push(`第${rowNumber}行：监护人授权应填写pending、granted、partial或withdrawn。`);
+      return;
+    }
+    seen.add(internalCode.toLowerCase());
+    rows.push({
+      internalCode,
+      displayName,
+      birthMonth,
+      enrolledOn: enrolledOn || undefined,
+      guardianConsentStatus: status as ChildImportRow["guardianConsentStatus"],
+      interests: interests.split(/[|｜]/).map((item) => item.trim()).filter(Boolean),
+    });
+  });
+  if (lines.length < 2) errors.push("文件中没有可导入的幼儿数据。");
+  return { rows, errors };
+}
+
 export function RemoteDashboardPage({ user }: { user: RemoteUser }) {
   const navigate = useNavigate();
   const [counts, setCounts] = useState({
@@ -147,19 +213,16 @@ export function RemoteDashboardPage({ user }: { user: RemoteUser }) {
     { path: "/classrooms", label: "班级与幼儿", image: "icon-classroom-children.webp" },
     { path: "/knowledge", label: "知识库", image: "icon-knowledge-base.webp" },
     { path: "/memories", label: "园所经验库", image: "icon-knowledge-base.webp" },
-    { path: "/exports", label: "导出申请", image: "icon-export-request.webp" },
     { path: "/research", label: "教研活动", image: "icon-research-activity.webp" },
   ];
   const researcherModules = [
     { path: "/classrooms", label: "班级与幼儿", image: "icon-classroom-children.webp" },
-    { path: "/observations", label: "标准观察", image: "icon-standard-observation.webp" },
+    { path: "/observations", label: "标准观察", image: "icon-standard-observation.webp", primary: true },
     { path: "/growth", label: "成长与应答", image: "icon-growth-response.webp" },
     { path: "/reports", label: "周期报告", image: "icon-period-report.webp" },
     { path: "/curriculum", label: "课程生成", image: "icon-curriculum-generation.webp" },
     { path: "/knowledge", label: "知识库", image: "icon-knowledge-base.webp" },
     { path: "/memories", label: "园所经验库", image: "icon-knowledge-base.webp" },
-    { path: "/quality", label: "观察质量审核", image: "icon-quality-review.webp", primary: true },
-    { path: "/exports", label: "导出审批", image: "icon-export-request.webp" },
     { path: "/research", label: "教研活动", image: "icon-research-activity.webp" },
     { path: "/accounts", label: "账号管理", image: "icon-account-management.webp" },
   ];
@@ -170,15 +233,9 @@ export function RemoteDashboardPage({ user }: { user: RemoteUser }) {
         <div className="home-glass-content">
           <header className="home-hero-copy">
             <div>
-              <strong className="home-wordmark">同迹 3.0</strong>
-              <span className="home-cycle">观察&nbsp;&nbsp;·&nbsp;&nbsp;识别&nbsp;&nbsp;·&nbsp;&nbsp;应答&nbsp;&nbsp;·&nbsp;&nbsp;拓展</span>
-              <h1>每一次，从老师的观察开始</h1>
-              <p>观察游戏情况，识别儿童经验，应答下一步支持</p>
+              <h1><strong>同迹</strong><span>｜</span>每一次，从老师的观察开始</h1>
+              <p>观察&nbsp;&nbsp;·&nbsp;&nbsp;识别&nbsp;&nbsp;·&nbsp;&nbsp;应答&nbsp;&nbsp;·&nbsp;&nbsp;拓展 <span>｜</span> 观察游戏情况，识别儿童经验，应答下一步支持</p>
             </div>
-            <span className={`home-role ${user.role === "researcher" ? "researcher" : "teacher"}`}>
-              {user.role === "researcher" ? <Microscope /> : <School />}
-              {user.role === "researcher" ? "教研员空间" : "教师空间"}
-            </span>
           </header>
           {error && (
             <div className="home-error" role="alert">
@@ -199,8 +256,7 @@ export function RemoteDashboardPage({ user }: { user: RemoteUser }) {
                   aria-hidden="true"
                 />
                 <strong>{item.label}</strong>
-                {item.primary && <span>{user.role === "researcher" ? "进入审核" : "开始记录"}</span>}
-                <ChevronRight className="home-module-arrow" />
+                {item.primary && <span>开始观察</span>}
               </button>
             ))}
           </div>
@@ -240,6 +296,9 @@ export function RemoteClassroomPage({ user }: { user: RemoteUser }) {
   const [editingChildId, setEditingChildId] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
+  const [importModal, setImportModal] = useState(false);
+  const [importRows, setImportRows] = useState<ChildImportRow[]>([]);
+  const [importErrors, setImportErrors] = useState<string[]>([]);
   const [classForm, setClassForm] = useState({
     name: "",
     grade: "middle",
@@ -385,9 +444,31 @@ export function RemoteClassroomPage({ user }: { user: RemoteUser }) {
       setBusy(false);
     }
   };
+  const readImportFile = async (file?: File) => {
+    if (!file) return;
+    const result = parseChildImportCsv(await file.text());
+    setImportRows(result.rows);
+    setImportErrors(result.errors);
+  };
+  const importChildren = async () => {
+    if (!selected || !importRows.length || importErrors.length) return;
+    setBusy(true);
+    setError("");
+    try {
+      await remoteApi.importChildren({ classroomId: selected, rows: importRows });
+      setImportModal(false);
+      setImportRows([]);
+      setImportErrors([]);
+      await load();
+    } catch (reason) {
+      setImportErrors([showError(reason)]);
+    } finally {
+      setBusy(false);
+    }
+  };
 
   return (
-    <div className="page remote-page">
+    <div className="page remote-page classrooms-page">
       <PageHeader
         eyebrow="班级与幼儿"
         title="班级与幼儿管理"
@@ -398,6 +479,12 @@ export function RemoteClassroomPage({ user }: { user: RemoteUser }) {
         }
         actions={
           <div className="page-action-row">
+            <button className="btn btn-secondary" onClick={() => void remoteApi.downloadChildImportTemplate()}>
+              <Download />下载导入模板
+            </button>
+            <button className="btn btn-secondary" disabled={!selected} onClick={() => { setImportRows([]); setImportErrors([]); setImportModal(true); }}>
+              <Upload />批量导入幼儿
+            </button>
             {user.role === "researcher" && (
               <button
                 className="btn btn-secondary"
@@ -518,6 +605,7 @@ export function RemoteClassroomPage({ user }: { user: RemoteUser }) {
                       </p>
                     </div>
                     <Badge
+                      className="child-status-badge"
                       tone={
                         child.guardian_consent_status === "granted"
                           ? "green"
@@ -706,6 +794,26 @@ export function RemoteClassroomPage({ user }: { user: RemoteUser }) {
               保存幼儿
             </button>
           </form>
+        </Modal>
+      )}
+      {importModal && (
+        <Modal
+          wide
+          title={`批量导入幼儿 · ${selectedClass?.name ?? ""}`}
+          description="下载标准CSV模板后可用Excel编辑，再以CSV UTF-8格式保存并上传；单次最多200名幼儿。"
+          onClose={() => setImportModal(false)}
+        >
+          <div className="child-import-workspace">
+            <label className="child-import-drop">
+              <Upload />
+              <strong>选择填写完成的CSV表格</strong>
+              <span>系统会先校验必填项、日期格式和重复编号，不会直接写入错误数据。</span>
+              <input type="file" accept=".csv,text/csv" onChange={(event) => void readImportFile(event.target.files?.[0])} />
+            </label>
+            {importErrors.length > 0 && <div className="import-error-list" role="alert">{importErrors.map((item) => <p key={item}>{item}</p>)}</div>}
+            {importRows.length > 0 && <div className="child-import-preview"><div><strong>导入预览</strong><span>{importRows.length}名幼儿</span></div><div className="table-wrap"><table><thead><tr><th>园内编号</th><th>园内使用名</th><th>出生年月</th><th>授权</th><th>兴趣</th></tr></thead><tbody>{importRows.slice(0, 20).map((row) => <tr key={row.internalCode}><td>{row.internalCode}</td><td>{row.displayName}</td><td>{row.birthMonth}</td><td>{row.guardianConsentStatus}</td><td>{row.interests.join("、") || "-"}</td></tr>)}</tbody></table></div>{importRows.length > 20 && <small>仅预览前20行，其余数据会一并导入。</small>}</div>}
+            <div className="modal-actions"><button className="btn btn-secondary" onClick={() => void remoteApi.downloadChildImportTemplate()}><Download />重新下载模板</button><button className="btn btn-primary" disabled={busy || !importRows.length || importErrors.length > 0} onClick={() => void importChildren()}><Check />确认导入{importRows.length || ""}名幼儿</button></div>
+          </div>
         </Modal>
       )}
     </div>
@@ -2023,7 +2131,7 @@ export function RemoteAccountsPage({
     }
   };
   return (
-    <div className="page remote-page">
+    <div className="page remote-page accounts-page">
       <PageHeader
         eyebrow="账号与权限"
         title="账号与权限管理"
@@ -2044,8 +2152,8 @@ export function RemoteAccountsPage({
       <div className="account-principle">
         <KeyRound />
         <div>
-          <strong>密码由Supabase Auth安全存储</strong>
-          <p>前端和同迹业务表均不保存明文密码；service role只存在后端容器。</p>
+          <strong>账号密码由身份服务安全保存</strong>
+          <p>前端和同迹业务数据均不保存明文密码，账号权限由园所统一管理。</p>
         </div>
       </div>
       <Panel>
@@ -2102,7 +2210,7 @@ export function RemoteAccountsPage({
           description="账号只能由教研员创建，不开放自主注册。"
           onClose={() => setModal(false)}
         >
-          <form className="remote-form" onSubmit={create}>
+          <form className="remote-form account-create-form" onSubmit={create}>
             <label>
               <span>登录账号</span>
               <input
@@ -2196,222 +2304,6 @@ export function RemoteAccountsPage({
   );
 }
 
-export function RemoteQualityPage() {
-  const [items, setItems] = useState<RemoteQualityQueueItem[]>([]);
-  const [selectedId, setSelectedId] = useState("");
-  const [busy, setBusy] = useState(false);
-  const [error, setError] = useState("");
-  const [form, setForm] = useState({
-    factuality: 4,
-    specificity: 4,
-    chronology: 4,
-    evidenceAlignment: 4,
-    subjectivePhrases: "",
-    comment: "",
-  });
-  const load = async () => {
-    const result = await remoteApi.qualityReviews();
-    setItems(result.items);
-    setSelectedId((current) => current || result.items[0]?.observation.id || "");
-  };
-  useEffect(() => {
-    load().catch((reason) => setError(showError(reason)));
-  }, []);
-  const selected = items.find((item) => item.observation.id === selectedId) ?? items[0];
-  useEffect(() => {
-    if (!selected) return;
-    setForm({
-      factuality: selected.review?.factuality ?? 4,
-      specificity: selected.review?.specificity ?? 4,
-      chronology: selected.review?.chronology ?? 4,
-      evidenceAlignment: selected.review?.evidence_alignment ?? 4,
-      subjectivePhrases: selected.review?.subjective_phrases.join("，") ?? "",
-      comment: selected.review?.comment ?? "",
-    });
-  }, [selectedId, selected?.review?.updated_at]);
-  const save = async (status: "pending" | "passed" | "revision_requested") => {
-    if (!selected) return;
-    setBusy(true);
-    setError("");
-    try {
-      await remoteApi.saveQualityReview({
-        observationId: selected.observation.id,
-        ...form,
-        subjectivePhrases: form.subjectivePhrases
-          .split(/[，,]/)
-          .map((item) => item.trim())
-          .filter(Boolean),
-        status,
-      });
-      await load();
-    } catch (reason) {
-      setError(showError(reason));
-    } finally {
-      setBusy(false);
-    }
-  };
-  return (
-    <div className="page remote-page">
-      <PageHeader
-        eyebrow="观察质量审核"
-        title="观察质量审核"
-        description="独立检查白描的事实性、具体性、时序和证据匹配，只评价记录质量，不评价幼儿能力。"
-      />
-      {error && <div className="remote-error"><CircleAlert />{error}</div>}
-      <div className="quality-banner">
-        <ClipboardCheck />
-        <div><strong>审核教师怎样记录，不审核幼儿好不好</strong><p>主观词需要替换为可观察动作、原话、材料变化或事件顺序。</p></div>
-      </div>
-      {!selected ? <EmptyState title="暂无待审核观察" description="教师提交标准观察后会进入此队列。" /> : (
-        <div className="master-detail">
-          <Panel className="master-list" title="观察队列">
-            {items.map((item) => (
-              <button className={item.observation.id === selected.observation.id ? "selected" : ""} key={item.observation.id} onClick={() => setSelectedId(item.observation.id)}>
-                <div><Badge tone={tone(item.review?.status ?? "pending")}>{statusLabel[item.review?.status ?? "pending"]}</Badge><strong>{item.observation.title}</strong><span>{item.childName} · {new Date(item.observation.occurred_at).toLocaleDateString("zh-CN")}</span></div><ChevronRight />
-              </button>
-            ))}
-          </Panel>
-          <div className="detail-stack">
-            <Panel title={`${selected.childName} · ${selected.observation.title}`} subtitle="教师原始白描保持只读">
-              <div className="review-original">
-                <strong>客观观察原稿</strong>
-                <p>{selected.observation.teacher_observation}</p>
-                {selected.observation.child_quote && <blockquote>幼儿原话：“{selected.observation.child_quote}”</blockquote>}
-              </div>
-            </Panel>
-            <Panel title="四维质量量表" subtitle="1分表示证据薄弱，5分表示记录清楚且可追溯">
-              <div className="quality-dimensions">
-                {([
-                  ["factuality", "事实性"],
-                  ["specificity", "具体性"],
-                  ["chronology", "时序性"],
-                  ["evidenceAlignment", "证据匹配"],
-                ] as const).map(([key, label]) => (
-                  <article key={key}><div><strong>{label}</strong><span>{form[key]}/5</span></div><input type="range" min="1" max="5" value={form[key]} onChange={(event) => setForm({ ...form, [key]: Number(event.target.value) })} /></article>
-                ))}
-              </div>
-              <form className="teacher-original-form" onSubmit={(event) => event.preventDefault()}>
-                <label><span>需改写的主观词语（逗号分隔）</span><input value={form.subjectivePhrases} onChange={(event) => setForm({ ...form, subjectivePhrases: event.target.value })} /></label>
-                <label><span>给教师的具体反馈</span><textarea rows={5} value={form.comment} onChange={(event) => setForm({ ...form, comment: event.target.value })} /></label>
-              </form>
-              <div className="decision-actions">
-                <button className="btn btn-secondary" disabled={busy} onClick={() => void save("pending")}>保存草稿</button>
-                <button className="btn btn-ghost-danger" disabled={busy || form.comment.trim().length < 2} onClick={() => void save("revision_requested")}>退回修改</button>
-                <button className="btn btn-primary" disabled={busy} onClick={() => void save("passed")}><Check />审核通过</button>
-              </div>
-            </Panel>
-          </div>
-        </div>
-      )}
-    </div>
-  );
-}
-
-export function RemoteExportsPage({ user }: { user: RemoteUser }) {
-  const [items, setItems] = useState<RemoteExportRequest[]>([]);
-  const [reports, setReports] = useState<RemotePeriodReport[]>([]);
-  const [curriculum, setCurriculum] = useState<RemoteCurriculumClue[]>([]);
-  const [research, setResearch] = useState<RemoteResearchActivity[]>([]);
-  const [selectedId, setSelectedId] = useState("");
-  const [modal, setModal] = useState(false);
-  const [busy, setBusy] = useState(false);
-  const [loaded, setLoaded] = useState(false);
-  const [error, setError] = useState("");
-  const [decisionNote, setDecisionNote] = useState("");
-  const [form, setForm] = useState({ exportType: "individual_report", resourceId: "", purpose: "", recipient: "", anonymized: true });
-  const load = async () => {
-    const [requests, reportResult, curriculumResult, researchResult] = await Promise.all([
-      remoteApi.exportRequests(),
-      remoteApi.reports(),
-      remoteApi.curriculumClues(),
-      remoteApi.researchActivities(),
-    ]);
-    setItems(requests.items);
-    setReports(reportResult.items);
-    setCurriculum(curriculumResult.items);
-    setResearch(researchResult.items);
-    setSelectedId((current) => current || requests.items[0]?.id || "");
-  };
-  useEffect(() => {
-    load()
-      .catch((reason) => setError(showError(reason)))
-      .finally(() => setLoaded(true));
-  }, []);
-  const resourceOptions = useMemo(() => {
-    if (form.exportType === "individual_report") {
-      return reports.filter((item) => item.report_type !== "classroom").map((item) => ({
-        id: item.id,
-        label: `${item.report_type === "guardian" ? "家长版" : "教师版"} · ${item.period_start}至${item.period_end}`,
-      }));
-    }
-    if (form.exportType === "classroom_report") {
-      return reports.filter((item) => item.report_type === "classroom").map((item) => ({
-        id: item.id,
-        label: `${item.content.title} · ${item.period_start}至${item.period_end}`,
-      }));
-    }
-    if (form.exportType === "curriculum_case") {
-      return curriculum.map((item) => ({ id: item.id, label: item.title }));
-    }
-    return research.map((item) => ({
-      id: item.id,
-      label: `${item.title} · ${new Date(item.scheduled_at).toLocaleDateString("zh-CN")}`,
-    }));
-  }, [curriculum, form.exportType, reports, research]);
-  const selectedResourceId = resourceOptions.some((item) => item.id === form.resourceId)
-    ? form.resourceId
-    : resourceOptions[0]?.id || "";
-  const selected = items.find((item) => item.id === selectedId) ?? items[0];
-  const create = async (event: FormEvent) => {
-    event.preventDefault();
-    setBusy(true);
-    setError("");
-    try {
-      await remoteApi.createExportRequest({ ...form, resourceId: selectedResourceId });
-      setModal(false);
-      setForm({ ...form, resourceId: "", purpose: "", recipient: "" });
-      await load();
-    } catch (reason) { setError(showError(reason)); } finally { setBusy(false); }
-  };
-  const decide = async (decision: "approved" | "rejected") => {
-    if (!selected) return;
-    setBusy(true);
-    setError("");
-    try { await remoteApi.decideExportRequest(selected.id, decision, decisionNote); setDecisionNote(""); await load(); }
-    catch (reason) { setError(showError(reason)); } finally { setBusy(false); }
-  };
-  const exportLabel: Record<string, string> = { individual_report: "个体报告", classroom_report: "班级报告", curriculum_case: "课程案例", anonymized_research: "匿名研究数据", observation_record: "观察记录Word", curriculum_plan: "课程计划Word" };
-  const availableExportLabels = Object.entries(exportLabel);
-  return (
-    <div className="page remote-page">
-      <PageHeader eyebrow="导出与数据治理" title={user.role === "researcher" ? "敏感数据导出审批" : "我的导出申请"} description="报告、观察记录、课程档案和研究数据离开系统前，确认用途、接收方、授权与去标识条件。" actions={<button className="btn btn-primary" onClick={() => setModal(true)}><Download />申请导出</button>} />
-      {error && <div className="remote-error"><CircleAlert />{error}</div>}
-      {!loaded ? <LoadingState label="正在加载导出申请…" /> : !selected ? <EmptyState title="暂无导出申请" description="需要将材料带出系统时先创建审批申请。" action={<button className="btn btn-primary" onClick={() => setModal(true)}><Download />创建第一份申请</button>} /> : (
-        <div className="master-detail">
-          <Panel className="master-list" title="导出申请">
-            {items.map((item) => <button className={item.id === selected.id ? "selected" : ""} key={item.id} onClick={() => setSelectedId(item.id)}><div><Badge tone={tone(item.status)}>{statusLabel[item.status] ?? item.status}</Badge><strong>{exportLabel[item.export_type]}</strong><span>{item.recipient} · {new Date(item.created_at).toLocaleDateString("zh-CN")}</span></div><ChevronRight /></button>)}
-          </Panel>
-          <div className="detail-stack"><Panel>
-            <div className="approval-title"><div className="approval-icon"><FileCheck2 /></div><div><Badge tone={tone(selected.status)}>{statusLabel[selected.status]}</Badge><h2>{exportLabel[selected.export_type]}</h2><p>接收方：{selected.recipient}</p></div></div>
-            <dl className="approval-detail"><div><dt>业务对象</dt><dd>{selected.resource_type} · {selected.resource_id}</dd></div><div><dt>申请用途</dt><dd>{selected.purpose}</dd></div><div><dt>去标识</dt><dd>{selected.anonymized ? "要求匿名化" : "保留身份信息，需核验授权"}</dd></div><div><dt>审批意见</dt><dd>{selected.decision_note || "尚未审批"}</dd></div></dl>
-          </Panel>
-          {user.role === "researcher" && selected.status === "pending" && <Panel title="审批决定" subtitle="批准只表示允许按申请用途导出，不扩大数据使用范围"><div className="remote-decision"><textarea rows={4} value={decisionNote} onChange={(event) => setDecisionNote(event.target.value)} placeholder="填写匿名化条件、使用范围或拒绝原因" /><div><button className="btn btn-ghost-danger" disabled={busy || decisionNote.trim().length < 2} onClick={() => void decide("rejected")}>拒绝</button><button className="btn btn-primary" disabled={busy || decisionNote.trim().length < 2} onClick={() => void decide("approved")}><Check />批准并生成文件</button></div></div></Panel>}
-          {selected.status === "approved" && selected.document_export?.status === "ready" && <Panel title="审批文件已就绪" subtitle={selected.document_export.file_name || "Word文件"}><button className="btn btn-primary" disabled={busy} onClick={() => void remoteApi.documentExportDownload(selected.document_export!.id)}><Download />下载Word文件</button></Panel>}
-          </div>
-        </div>
-      )}
-      {modal && <Modal title="创建导出申请" description="系统只记录审批，不在浏览器内自动打包敏感文件。" onClose={() => setModal(false)}><form className="remote-form" onSubmit={create}>
-        <label><span>导出类型</span><select value={form.exportType} onChange={(event) => setForm({ ...form, exportType: event.target.value, resourceId: "" })}>{availableExportLabels.map(([value, label]) => <option value={value} key={value}>{label}</option>)}</select></label>
-        <label><span>选择系统内真实对象</span><select required value={selectedResourceId} onChange={(event) => setForm({ ...form, resourceId: event.target.value })}><option value="">{resourceOptions.length ? "请选择" : "暂无可申请对象"}</option>{resourceOptions.map((item) => <option value={item.id} key={item.id}>{item.label}</option>)}</select></label>
-        <label className="full-field"><span>用途</span><textarea required rows={3} value={form.purpose} onChange={(event) => setForm({ ...form, purpose: event.target.value })} /></label>
-        <label className="full-field"><span>接收方</span><input required value={form.recipient} onChange={(event) => setForm({ ...form, recipient: event.target.value })} /></label>
-        <label className="full-field"><span><input type="checkbox" checked={form.anonymized} onChange={(event) => setForm({ ...form, anonymized: event.target.checked })} /> 已完成或要求导出时去标识</span></label>
-        <button className="btn btn-primary" disabled={busy || !selectedResourceId} type="submit"><Save />提交审批</button>
-      </form></Modal>}
-    </div>
-  );
-}
-
 export function RemoteResearchPage({ user }: { user: RemoteUser }) {
   const [items, setItems] = useState<RemoteResearchActivity[]>([]);
   const [classrooms, setClassrooms] = useState<RemoteClassroom[]>([]);
@@ -2445,7 +2337,7 @@ export function RemoteResearchPage({ user }: { user: RemoteUser }) {
     catch (reason) { setError(showError(reason)); } finally { setBusy(false); }
   };
   return (
-    <div className="page remote-page">
+    <div className="page remote-page research-page">
       <PageHeader eyebrow="协同教研" title="教研活动模式" description="围绕同一份真实证据，教师先独立完成观察、识别、应答，再由教研员组织差异对照。" actions={user.role === "researcher" ? <button className="btn btn-primary" onClick={() => setModal(true)}><Microscope />新建教研活动</button> : undefined} />
       {error && <div className="remote-error"><CircleAlert />{error}</div>}
       <div className="research-process"><span>共同观看</span><ArrowRight /><span>独立记录</span><ArrowRight /><span>结构化对照</span><ArrowRight /><span>形成复察问题</span><ArrowRight /><span>回到班级验证</span></div>
@@ -2503,7 +2395,7 @@ export function RemoteGrowthPage() {
     try { await remoteApi.updateSupportAction(followUp.id, { status: "verified", ...followUpForm }); setFollowUp(null); setFollowUpForm({ childResponse: "", effectiveness: "continue" }); await loadGrowth(selectedId); }
     catch (reason) { setError(showError(reason)); } finally { setBusy(false); }
   };
-  return <div className="page remote-page">
+  return <div className="page remote-page growth-page">
     <PageHeader eyebrow="成长与应答追踪" title="成长轨迹与应答追踪" description="只纳入教师明确采用的AI建议和后续证据；应答必须实施、复察，才能讨论支持效果。" actions={<select className="child-select" value={selectedId} onChange={(event) => setSelectedId(event.target.value)}>{children.map((child) => <option value={child.id} key={child.id}>{child.display_name}</option>)}</select>} />
     {error && <div className="remote-error"><CircleAlert />{error}</div>}
     {loading ? <LoadingState label="正在整理成长轨迹…" /> : !growth ? <EmptyState title="暂无成长证据" description="完成观察并采用AI建议后，时间轴会显示在这里。" /> : <>
@@ -2514,7 +2406,7 @@ export function RemoteGrowthPage() {
   </div>;
 }
 
-export function RemoteReportsPage() {
+function RemoteReportsPageLegacy() {
   const [reports, setReports] = useState<RemotePeriodReport[]>([]);
   const [classrooms, setClassrooms] = useState<RemoteClassroom[]>([]);
   const [children, setChildren] = useState<RemoteChild[]>([]);
@@ -2556,8 +2448,169 @@ export function RemoteReportsPage() {
   return <div className="page remote-page"><PageHeader eyebrow="标准周期报告" title="标准周期报告" description="个体报告追踪一名幼儿的连续变化；班级报告分析覆盖、共同兴趣和支持改进，不展示排名或综合分数。" actions={<div className="page-action-row"><button className="btn btn-secondary" disabled={!selected} onClick={() => window.print()}>浏览器打印</button><button className="btn btn-primary" onClick={() => { setForm((current) => ({ ...current, dimension: view })); setModal(true); }}><Plus />生成报告</button></div>} />
     {error && <div className="remote-error"><CircleAlert />{error}</div>}
     <div className="segmented report-type"><button className={view === "individual" ? "active" : ""} onClick={() => { setView("individual"); setSelectedId(""); }}>个体周期报告</button><button className={view === "classroom" ? "active" : ""} onClick={() => { setView("classroom"); setSelectedId(""); }}>班级周期报告</button></div>
-    {!loaded ? <LoadingState label="正在加载周期报告…" /> : !selected ? <EmptyState title={view === "classroom" ? "暂无班级周期报告" : "暂无个体周期报告"} description={view === "classroom" ? "选择班级与周期后，系统汇总多幼儿、多时间点的已终审证据。" : "选择幼儿与周期后，系统只汇总教师已采用的证据。"} action={<button className="btn btn-primary" onClick={() => { setForm((current) => ({ ...current, dimension: view })); setModal(true); }}><Plus />生成第一份报告</button>} /> : <div className="report-layout"><Panel className="report-list" title={view === "classroom" ? "班级报告列表" : "个体报告列表"}>{visibleReports.map((report) => <button className={report.id === selected.id ? "selected" : ""} onClick={() => setSelectedId(report.id)} key={report.id}><div><strong>{report.content.title}</strong><span>{reportVersion(report)} · {report.period_start} 至 {report.period_end}</span></div><Badge tone={tone(report.status)}>{statusLabel[report.status]}</Badge></button>)}</Panel>{selected.report_type === "classroom" ? <article className="report-paper class-paper"><header><div><span>同迹 3.0 · 班级证据画像{selected.content.aiMeta ? ` · ${selected.content.aiMeta.provider === "QianwenAIProvider" ? "千问AI" : "模拟AI"}` : ""}</span><h1>{selected.content.title}</h1><p>{selected.period_start} 至 {selected.period_end} · 不展示个体排名与综合分数</p></div><Badge tone={tone(selected.status)}>{statusLabel[selected.status]}</Badge></header><section className="report-highlight"><Sprout /><div><strong>{selected.content.observationCoverage}</strong><p>{selected.content.evidenceBoundary}</p></div></section><div className="report-sections classroom-report-sections"><section><span>01</span><h2>观察覆盖</h2><p>已观察{selected.content.observedChildCount}/{selected.content.totalChildCount}名幼儿，累计{selected.content.observationCount}条证据、{selected.content.timePointCount}个日期。</p><p>场景：{selected.content.sceneCoverage.join("、") || "仍需补充"}</p></section><section><span>02</span><h2>共同兴趣</h2>{selected.content.commonInterests.length ? selected.content.commonInterests.map((item) => <p key={item}>• {item}</p>) : <p>仍需积累更多共同兴趣证据。</p>}</section><section><span>03</span><h2>持续问题</h2>{selected.content.recurringQuestions.length ? selected.content.recurringQuestions.map((item) => <p key={item}>• {item}</p>) : <p>当前没有形成跨观察的持续问题。</p>}</section><section><span>04</span><h2>五大领域证据</h2>{Object.entries(selected.content.domainEvidence).map(([domain, count]) => <p key={domain}>• {domain}：{count}条已终审证据</p>)}</section><section><span>05</span><h2>支持复察与课程线索</h2><p>支持策略复察率：{selected.content.supportFollowUpRate}%</p>{selected.content.curriculumClues.length ? selected.content.curriculumClues.map((item) => <p key={item.id}>• {item.title}（{item.theme}）</p>) : <p>本周期尚未形成课程线索。</p>}</section><section><span>06</span><h2>下一步建议</h2>{selected.content.nextSuggestions.map((item) => <p key={item}>• {item}</p>)}</section></div><footer><span>证据索引：{selected.evidence_observation_ids.join(" · ")}</span>{selected.status !== "withdrawn" && <button className="btn btn-secondary" disabled={busy} onClick={() => void advance()}>{selected.status === "draft" ? "完成教师审核" : selected.status === "reviewed" ? "正式发布" : "撤回报告"}</button>}</footer></article> : <article className="report-paper"><header><div><span>同迹 3.0 · {reportVersion(selected)}{selected.content.aiMeta ? ` · ${selected.content.aiMeta.provider === "QianwenAIProvider" ? "千问AI" : "模拟AI"}` : ""}</span><h1>{selected.content.title}</h1><p>{selected.period_start} 至 {selected.period_end}</p></div><Badge tone={tone(selected.status)}>{statusLabel[selected.status]}</Badge></header><section className="report-highlight"><Sprout /><div><strong>{selected.content.observationCoverage}</strong><p>{selected.content.evidenceBoundary}</p></div></section><div className="report-sections"><section><span>01</span><h2>主要兴趣</h2>{selected.content.interests.map((item) => <p key={item}>• {item}</p>)}</section><section><span>02</span><h2>有证据支持的变化</h2>{selected.content.evidencedGrowth.map((item) => <p key={item}>• {item}</p>)}</section><section><span>03</span><h2>教师支持及效果</h2>{selected.content.teacherSupport.map((item) => <p key={item}>• {item}</p>)}</section><section><span>04</span><h2>{selected.report_type === "guardian" ? "家庭共玩建议" : "待验证与下一计划"}</h2>{(selected.report_type === "guardian" ? selected.content.familySuggestions : [...selected.content.pendingQuestions, ...selected.content.nextPlan]).map((item) => <p key={item}>• {item}</p>)}</section></div><footer><span>证据索引：{selected.evidence_observation_ids.join(" · ")}</span>{selected.status !== "withdrawn" && <button className="btn btn-secondary" disabled={busy} onClick={() => void advance()}>{selected.status === "draft" ? "完成教师审核" : selected.status === "reviewed" ? "正式发布" : "撤回报告"}</button>}</footer></article>}</div>}
+    {!loaded ? <LoadingState label="正在加载周期报告…" /> : !selected ? <EmptyState title={view === "classroom" ? "暂无班级周期报告" : "暂无个体周期报告"} description={view === "classroom" ? "选择班级与周期后，系统汇总多幼儿、多时间点的教师确认证据。" : "选择幼儿与周期后，系统只汇总教师已采用的证据。"} action={<button className="btn btn-primary" onClick={() => { setForm((current) => ({ ...current, dimension: view })); setModal(true); }}><Plus />生成第一份报告</button>} /> : <div className="report-layout"><Panel className="report-list" title={view === "classroom" ? "班级报告列表" : "个体报告列表"}>{visibleReports.map((report) => <button className={report.id === selected.id ? "selected" : ""} onClick={() => setSelectedId(report.id)} key={report.id}><div><strong>{report.content.title}</strong><span>{reportVersion(report)} · {report.period_start} 至 {report.period_end}</span></div><Badge tone={tone(report.status)}>{statusLabel[report.status]}</Badge></button>)}</Panel>{selected.report_type === "classroom" ? <article className="report-paper class-paper"><header><div><span>同迹 · 班级证据画像{selected.content.aiMeta ? ` · ${selected.content.aiMeta.provider === "QianwenAIProvider" ? "千问AI" : "模拟AI"}` : ""}</span><h1>{selected.content.title}</h1><p>{selected.period_start} 至 {selected.period_end} · 不展示个体排名与综合分数</p></div><Badge tone={tone(selected.status)}>{statusLabel[selected.status]}</Badge></header><section className="report-highlight"><Sprout /><div><strong>{selected.content.observationCoverage}</strong><p>{selected.content.evidenceBoundary}</p></div></section><div className="report-sections classroom-report-sections"><section><span>01</span><h2>观察覆盖</h2><p>已观察{selected.content.observedChildCount}/{selected.content.totalChildCount}名幼儿，累计{selected.content.observationCount}条证据、{selected.content.timePointCount}个日期。</p><p>场景：{selected.content.sceneCoverage.join("、") || "仍需补充"}</p></section><section><span>02</span><h2>共同兴趣</h2>{selected.content.commonInterests.length ? selected.content.commonInterests.map((item) => <p key={item}>• {item}</p>) : <p>仍需积累更多共同兴趣证据。</p>}</section><section><span>03</span><h2>持续问题</h2>{selected.content.recurringQuestions.length ? selected.content.recurringQuestions.map((item) => <p key={item}>• {item}</p>) : <p>当前没有形成跨观察的持续问题。</p>}</section><section><span>04</span><h2>五大领域证据</h2>{Object.entries(selected.content.domainEvidence).map(([domain, count]) => <p key={domain}>• {domain}：{count}条教师确认证据</p>)}</section><section><span>05</span><h2>支持复察与课程线索</h2><p>支持策略复察率：{selected.content.supportFollowUpRate}%</p>{selected.content.curriculumClues.length ? selected.content.curriculumClues.map((item) => <p key={item.id}>• {item.title}（{item.theme}）</p>) : <p>本周期尚未形成课程线索。</p>}</section><section><span>06</span><h2>下一步建议</h2>{selected.content.nextSuggestions.map((item) => <p key={item}>• {item}</p>)}</section></div><footer><span>证据索引：{selected.evidence_observation_ids.join(" · ")}</span>{selected.status !== "withdrawn" && <button className="btn btn-secondary" disabled={busy} onClick={() => void advance()}>{selected.status === "draft" ? "完成教师确认" : selected.status === "reviewed" ? "正式发布" : "撤回报告"}</button>}</footer></article> : <article className="report-paper"><header><div><span>同迹 · {reportVersion(selected)}{selected.content.aiMeta ? ` · ${selected.content.aiMeta.provider === "QianwenAIProvider" ? "千问AI" : "模拟AI"}` : ""}</span><h1>{selected.content.title}</h1><p>{selected.period_start} 至 {selected.period_end}</p></div><Badge tone={tone(selected.status)}>{statusLabel[selected.status]}</Badge></header><section className="report-highlight"><Sprout /><div><strong>{selected.content.observationCoverage}</strong><p>{selected.content.evidenceBoundary}</p></div></section><div className="report-sections"><section><span>01</span><h2>主要兴趣</h2>{selected.content.interests.map((item) => <p key={item}>• {item}</p>)}</section><section><span>02</span><h2>有证据支持的变化</h2>{selected.content.evidencedGrowth.map((item) => <p key={item}>• {item}</p>)}</section><section><span>03</span><h2>教师支持及效果</h2>{selected.content.teacherSupport.map((item) => <p key={item}>• {item}</p>)}</section><section><span>04</span><h2>{selected.report_type === "guardian" ? "家庭共玩建议" : "待验证与下一计划"}</h2>{(selected.report_type === "guardian" ? selected.content.familySuggestions : [...selected.content.pendingQuestions, ...selected.content.nextPlan]).map((item) => <p key={item}>• {item}</p>)}</section></div><footer><span>证据索引：{selected.evidence_observation_ids.join(" · ")}</span>{selected.status !== "withdrawn" && <button className="btn btn-secondary" disabled={busy} onClick={() => void advance()}>{selected.status === "draft" ? "完成教师确认" : selected.status === "reviewed" ? "正式发布" : "撤回报告"}</button>}</footer></article>}</div>}
     {modal && <Modal title="生成标准周期报告" description={form.dimension === "classroom" ? "班级报告至少需要覆盖2名幼儿、2条已终审观察和2个不同日期。" : "个体报告至少需要2条已终审观察并覆盖2个不同日期。"} onClose={() => setModal(false)}><form className="remote-form" onSubmit={generate}><label><span>报告维度</span><select value={form.dimension} onChange={(event) => setForm({ ...form, dimension: event.target.value })}><option value="individual">幼儿个体</option><option value="classroom">班级画像</option></select></label><label><span>班级</span><select required value={form.classroomId} onChange={(event) => setForm({ ...form, classroomId: event.target.value })}>{classrooms.map((item) => <option value={item.id} key={item.id}>{item.name}</option>)}</select></label>{form.dimension === "individual" && <><label><span>幼儿</span><select required value={form.childId} onChange={(event) => setForm({ ...form, childId: event.target.value })}>{children.filter((child) => child.classroom_id === form.classroomId).map((child) => <option value={child.id} key={child.id}>{child.display_name}</option>)}</select></label><label><span>报告版本</span><select value={form.reportType} onChange={(event) => setForm({ ...form, reportType: event.target.value })}><option value="teacher">教师专业版</option><option value="guardian">家长交流版</option></select></label></>}<label><span>开始日期</span><input required type="date" value={form.periodStart} onChange={(event) => setForm({ ...form, periodStart: event.target.value })} /></label><label><span>结束日期</span><input required type="date" value={form.periodEnd} onChange={(event) => setForm({ ...form, periodEnd: event.target.value })} /></label><button className="btn btn-primary" disabled={busy || (form.dimension === "individual" && !form.childId)} type="submit"><Save />生成草稿</button></form></Modal>}
+  </div>;
+}
+
+type ReportEditorState = Record<string, string>;
+
+const splitReportLines = (value: string) => value.split(/\r?\n/).map((item) => item.trim()).filter(Boolean);
+
+export function RemoteReportsPage() {
+  const [reports, setReports] = useState<RemotePeriodReport[]>([]);
+  const [classrooms, setClassrooms] = useState<RemoteClassroom[]>([]);
+  const [children, setChildren] = useState<RemoteChild[]>([]);
+  const [view, setView] = useState<"individual" | "classroom">("individual");
+  const [selectedId, setSelectedId] = useState("");
+  const [createModal, setCreateModal] = useState(false);
+  const [editModal, setEditModal] = useState(false);
+  const [revisionModal, setRevisionModal] = useState(false);
+  const [editor, setEditor] = useState<ReportEditorState>({});
+  const [revisionInstruction, setRevisionInstruction] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [loaded, setLoaded] = useState(false);
+  const [error, setError] = useState("");
+  const [form, setForm] = useState({
+    dimension: "individual",
+    classroomId: "",
+    childId: "",
+    reportType: "teacher",
+    periodStart: new Date(new Date().setDate(1)).toISOString().slice(0, 10),
+    periodEnd: new Date().toISOString().slice(0, 10),
+  });
+  const load = async () => {
+    const [reportResult, classResult, childResult] = await Promise.all([
+      remoteApi.reports(), remoteApi.classrooms(), remoteApi.children(),
+    ]);
+    const activeClasses = classResult.items.filter((item) => item.status === "active");
+    const activeChildren = childResult.items.filter((item) => item.status === "active");
+    setReports(reportResult.items);
+    setClassrooms(activeClasses);
+    setChildren(activeChildren);
+    setForm((current) => ({
+      ...current,
+      classroomId: current.classroomId || activeClasses[0]?.id || "",
+      childId: current.childId || activeChildren[0]?.id || "",
+    }));
+  };
+  useEffect(() => {
+    load().catch((reason) => setError(showError(reason))).finally(() => setLoaded(true));
+  }, []);
+  useEffect(() => {
+    const first = children.find((child) => child.classroom_id === form.classroomId);
+    if (first && !children.some((child) => child.id === form.childId && child.classroom_id === form.classroomId)) {
+      setForm((current) => ({ ...current, childId: first.id }));
+    }
+  }, [form.classroomId, children]);
+
+  const visibleReports = reports.filter((item) => view === "classroom" ? item.report_type === "classroom" : item.report_type !== "classroom");
+  const selected = visibleReports.find((item) => item.id === selectedId) ?? visibleReports[0];
+  const reportVersion = (report: RemotePeriodReport) => report.report_type === "classroom" ? "班级证据画像" : report.report_type === "teacher" ? "教师专业版" : "家庭交流版";
+  const run = async (operation: () => Promise<void>) => {
+    setBusy(true);
+    setError("");
+    try { await operation(); } catch (reason) { setError(showError(reason)); } finally { setBusy(false); }
+  };
+  const generate = (event: FormEvent) => {
+    event.preventDefault();
+    void run(async () => {
+      const payload = form.dimension === "classroom"
+        ? { classroomId: form.classroomId, reportType: "classroom", periodStart: form.periodStart, periodEnd: form.periodEnd }
+        : { classroomId: form.classroomId, childId: form.childId, reportType: form.reportType, periodStart: form.periodStart, periodEnd: form.periodEnd };
+      const result = await remoteApi.generateReport(payload);
+      setView(result.item.report_type === "classroom" ? "classroom" : "individual");
+      setCreateModal(false);
+      await load();
+      setSelectedId(result.item.id);
+    });
+  };
+  const openEditor = () => {
+    if (!selected) return;
+    const common = {
+      title: selected.content.title,
+      evidenceBoundary: selected.content.evidenceBoundary,
+      observationCoverage: selected.content.observationCoverage,
+    };
+    setEditor(selected.report_type === "classroom" ? {
+      ...common,
+      commonInterests: selected.content.commonInterests.join("\n"),
+      recurringQuestions: selected.content.recurringQuestions.join("\n"),
+      nextSuggestions: selected.content.nextSuggestions.join("\n"),
+    } : {
+      ...common,
+      interests: selected.content.interests.join("\n"),
+      evidencedGrowth: selected.content.evidencedGrowth.join("\n"),
+      teacherSupport: selected.content.teacherSupport.join("\n"),
+      pendingQuestions: selected.content.pendingQuestions.join("\n"),
+      nextPlan: selected.content.nextPlan.join("\n"),
+      familySuggestions: selected.content.familySuggestions.join("\n"),
+    });
+    setEditModal(true);
+  };
+  const saveReport = () => void run(async () => {
+    if (!selected) return;
+    const content = selected.report_type === "classroom" ? {
+      ...selected.content,
+      title: editor.title,
+      evidenceBoundary: editor.evidenceBoundary,
+      observationCoverage: editor.observationCoverage,
+      commonInterests: splitReportLines(editor.commonInterests),
+      recurringQuestions: splitReportLines(editor.recurringQuestions),
+      nextSuggestions: splitReportLines(editor.nextSuggestions),
+    } : {
+      ...selected.content,
+      title: editor.title,
+      evidenceBoundary: editor.evidenceBoundary,
+      observationCoverage: editor.observationCoverage,
+      interests: splitReportLines(editor.interests),
+      evidencedGrowth: splitReportLines(editor.evidencedGrowth),
+      teacherSupport: splitReportLines(editor.teacherSupport),
+      pendingQuestions: splitReportLines(editor.pendingQuestions),
+      nextPlan: splitReportLines(editor.nextPlan),
+      familySuggestions: splitReportLines(editor.familySuggestions),
+    };
+    await remoteApi.updateReport(selected.id, content);
+    setEditModal(false);
+    await load();
+  });
+  const reviseReport = () => void run(async () => {
+    if (!selected) return;
+    await remoteApi.reviseReport(selected.id, revisionInstruction);
+    setRevisionInstruction("");
+    setRevisionModal(false);
+    await load();
+  });
+  const removeReport = () => {
+    if (!selected || !window.confirm(`确定删除“${selected.content.title}”吗？此操作不可撤销。`)) return;
+    void run(async () => {
+      await remoteApi.deleteReport(selected.id);
+      setSelectedId("");
+      await load();
+    });
+  };
+  const setEditorField = (key: string, value: string) => setEditor((current) => ({ ...current, [key]: value }));
+  const ReportActions = () => <div className="report-work-actions">
+    <button className="btn btn-secondary" disabled={!selected || busy} onClick={openEditor}><Pencil />编辑报告</button>
+    <button className="btn btn-secondary" disabled={!selected || busy} onClick={() => setRevisionModal(true)}><Sparkles />AI按意见修订</button>
+    <button className="btn btn-secondary" disabled={!selected} onClick={() => window.print()}><Download />打印 / 导出PDF</button>
+    <button className="btn btn-ghost-danger" disabled={!selected || busy} onClick={removeReport}><Trash2 />删除</button>
+  </div>;
+
+  return <div className="page remote-page reports-page">
+    <PageHeader eyebrow="标准周期报告" title="标准周期报告" description="报告生成后就是教师可编辑的工作稿。个体报告追踪连续变化，班级报告呈现共同兴趣与支持改进，不进行排名。" actions={<button className="btn btn-primary" onClick={() => { setForm((current) => ({ ...current, dimension: view })); setCreateModal(true); }}><Plus />生成报告</button>} />
+    {error && <div className="remote-error"><CircleAlert />{error}</div>}
+    <div className="report-toolbar"><div className="segmented report-type"><button className={view === "individual" ? "active" : ""} onClick={() => { setView("individual"); setSelectedId(""); }}>个体周期报告</button><button className={view === "classroom" ? "active" : ""} onClick={() => { setView("classroom"); setSelectedId(""); }}>班级周期报告</button></div>{selected && <ReportActions />}</div>
+    {!loaded ? <LoadingState label="正在加载周期报告…" /> : !selected ? <EmptyState title={view === "classroom" ? "暂无班级周期报告" : "暂无个体周期报告"} description={view === "classroom" ? "选择班级与周期，汇总多幼儿、多时间点的教师确认证据。" : "选择幼儿与周期，汇总教师确认采用的连续证据。"} action={<button className="btn btn-primary" onClick={() => { setForm((current) => ({ ...current, dimension: view })); setCreateModal(true); }}><Plus />生成第一份报告</button>} /> : <div className="report-layout">
+      <Panel className="report-list" title={view === "classroom" ? "班级报告" : "个体报告"}>{visibleReports.map((report) => <button className={report.id === selected.id ? "selected" : ""} onClick={() => setSelectedId(report.id)} key={report.id}><div><strong>{report.content.title}</strong><span>{reportVersion(report)} · {report.period_start} 至 {report.period_end}</span></div><Badge tone="blue">可编辑</Badge></button>)}</Panel>
+      {selected.report_type === "classroom" ? <article className="report-paper class-paper"><header><div><span>同迹 · 班级证据画像{selected.content.aiMeta ? ` · ${selected.content.aiMeta.provider === "QianwenAIProvider" ? "AI生成" : "演示AI"}` : ""}</span><h1>{selected.content.title}</h1><p>{selected.period_start} 至 {selected.period_end} · 不展示个体排名与综合分数</p></div><Badge tone="blue">教师工作稿</Badge></header><section className="report-highlight"><Sprout /><div><strong>{selected.content.observationCoverage}</strong><p>{selected.content.evidenceBoundary}</p></div></section><div className="report-sections classroom-report-sections"><section><span>01</span><h2>观察覆盖</h2><p>已观察{selected.content.observedChildCount}/{selected.content.totalChildCount}名幼儿，累计{selected.content.observationCount}条证据、{selected.content.timePointCount}个日期。</p><p>场景：{selected.content.sceneCoverage.join("、") || "仍需补充"}</p></section><section><span>02</span><h2>共同兴趣</h2>{selected.content.commonInterests.length ? selected.content.commonInterests.map((item) => <p key={item}>• {item}</p>) : <p>仍需积累更多共同兴趣证据。</p>}</section><section><span>03</span><h2>持续问题</h2>{selected.content.recurringQuestions.length ? selected.content.recurringQuestions.map((item) => <p key={item}>• {item}</p>) : <p>当前没有形成跨观察的持续问题。</p>}</section><section><span>04</span><h2>五大领域证据</h2>{Object.entries(selected.content.domainEvidence).map(([domain, count]) => <p key={domain}>• {domain}：{count}条教师确认的证据</p>)}</section><section><span>05</span><h2>支持复察与课程线索</h2><p>支持策略复察率：{selected.content.supportFollowUpRate}%</p>{selected.content.curriculumClues.length ? selected.content.curriculumClues.map((item) => <p key={item.id}>• {item.title}（{item.theme}）</p>) : <p>本周期尚未形成课程线索。</p>}</section><section><span>06</span><h2>下一步建议</h2>{selected.content.nextSuggestions.map((item) => <p key={item}>• {item}</p>)}</section></div><footer><span>证据索引：{selected.evidence_observation_ids.join(" · ")}</span></footer></article> : <article className="report-paper"><header><div><span>同迹 · {reportVersion(selected)}{selected.content.aiMeta ? ` · ${selected.content.aiMeta.provider === "QianwenAIProvider" ? "AI生成" : "演示AI"}` : ""}</span><h1>{selected.content.title}</h1><p>{selected.period_start} 至 {selected.period_end}</p></div><Badge tone="blue">教师工作稿</Badge></header><section className="report-highlight"><Sprout /><div><strong>{selected.content.observationCoverage}</strong><p>{selected.content.evidenceBoundary}</p></div></section><div className="report-sections"><section><span>01</span><h2>主要兴趣</h2>{selected.content.interests.map((item) => <p key={item}>• {item}</p>)}</section><section><span>02</span><h2>有证据支持的变化</h2>{selected.content.evidencedGrowth.map((item) => <p key={item}>• {item}</p>)}</section><section><span>03</span><h2>教师支持及效果</h2>{selected.content.teacherSupport.map((item) => <p key={item}>• {item}</p>)}</section><section><span>04</span><h2>{selected.report_type === "guardian" ? "家庭共玩建议" : "待验证与下一计划"}</h2>{(selected.report_type === "guardian" ? selected.content.familySuggestions : [...selected.content.pendingQuestions, ...selected.content.nextPlan]).map((item) => <p key={item}>• {item}</p>)}</section></div><footer><span>证据索引：{selected.evidence_observation_ids.join(" · ")}</span></footer></article>}
+    </div>}
+
+    {createModal && <Modal title="生成标准周期报告" description={form.dimension === "classroom" ? "班级报告至少覆盖2名幼儿、2条教师确认观察和2个不同日期。" : "个体报告至少需要2条教师确认观察并覆盖2个不同日期。"} onClose={() => setCreateModal(false)}><form className="remote-form" onSubmit={generate}><label><span>报告维度</span><select value={form.dimension} onChange={(event) => setForm({ ...form, dimension: event.target.value })}><option value="individual">幼儿个体</option><option value="classroom">班级画像</option></select></label><label><span>班级</span><select required value={form.classroomId} onChange={(event) => setForm({ ...form, classroomId: event.target.value })}>{classrooms.map((item) => <option value={item.id} key={item.id}>{item.name}</option>)}</select></label>{form.dimension === "individual" && <><label><span>幼儿</span><select required value={form.childId} onChange={(event) => setForm({ ...form, childId: event.target.value })}>{children.filter((child) => child.classroom_id === form.classroomId).map((child) => <option value={child.id} key={child.id}>{child.display_name}</option>)}</select></label><label><span>报告版本</span><select value={form.reportType} onChange={(event) => setForm({ ...form, reportType: event.target.value })}><option value="teacher">教师专业版</option><option value="guardian">家长交流版</option></select></label></>}<label><span>开始日期</span><input required type="date" value={form.periodStart} onChange={(event) => setForm({ ...form, periodStart: event.target.value })} /></label><label><span>结束日期</span><input required type="date" value={form.periodEnd} onChange={(event) => setForm({ ...form, periodEnd: event.target.value })} /></label><button className="btn btn-primary" disabled={busy || (form.dimension === "individual" && !form.childId)} type="submit"><Sparkles />生成报告</button></form></Modal>}
+
+    {editModal && selected && <Modal wide title="编辑周期报告" description="每行填写一条内容；班级覆盖人数、证据数量等统计值由系统维护。" onClose={() => setEditModal(false)}><div className="remote-form report-edit-form"><label className="full-field"><span>报告标题</span><input value={editor.title ?? ""} onChange={(event) => setEditorField("title", event.target.value)} /></label><label className="full-field"><span>观察覆盖说明</span><textarea rows={2} value={editor.observationCoverage ?? ""} onChange={(event) => setEditorField("observationCoverage", event.target.value)} /></label><label className="full-field"><span>证据边界</span><textarea rows={2} value={editor.evidenceBoundary ?? ""} onChange={(event) => setEditorField("evidenceBoundary", event.target.value)} /></label>{selected.report_type === "classroom" ? <><label><span>共同兴趣</span><textarea rows={6} value={editor.commonInterests ?? ""} onChange={(event) => setEditorField("commonInterests", event.target.value)} /></label><label><span>持续问题</span><textarea rows={6} value={editor.recurringQuestions ?? ""} onChange={(event) => setEditorField("recurringQuestions", event.target.value)} /></label><label className="full-field"><span>下一步建议</span><textarea rows={6} value={editor.nextSuggestions ?? ""} onChange={(event) => setEditorField("nextSuggestions", event.target.value)} /></label></> : <><label><span>主要兴趣</span><textarea rows={5} value={editor.interests ?? ""} onChange={(event) => setEditorField("interests", event.target.value)} /></label><label><span>有证据支持的变化</span><textarea rows={5} value={editor.evidencedGrowth ?? ""} onChange={(event) => setEditorField("evidencedGrowth", event.target.value)} /></label><label><span>教师支持及效果</span><textarea rows={5} value={editor.teacherSupport ?? ""} onChange={(event) => setEditorField("teacherSupport", event.target.value)} /></label><label><span>待验证问题</span><textarea rows={5} value={editor.pendingQuestions ?? ""} onChange={(event) => setEditorField("pendingQuestions", event.target.value)} /></label><label><span>下一周期计划</span><textarea rows={5} value={editor.nextPlan ?? ""} onChange={(event) => setEditorField("nextPlan", event.target.value)} /></label><label><span>家庭共玩建议</span><textarea rows={5} value={editor.familySuggestions ?? ""} onChange={(event) => setEditorField("familySuggestions", event.target.value)} /></label></>}<button className="btn btn-primary" disabled={busy || !editor.title?.trim()} onClick={saveReport}><Save />保存修改</button></div></Modal>}
+
+    {revisionModal && selected && <Modal title="让AI修订报告" description="写清希望保留、删除、补充或调整语气的内容。AI只修改报告文本，不改变证据数量等系统统计。" onClose={() => setRevisionModal(false)}><div className="remote-form"><label className="full-field"><span>修订意见</span><textarea rows={7} value={revisionInstruction} onChange={(event) => setRevisionInstruction(event.target.value)} placeholder="例如：家长版减少专业术语；补充建构游戏中的持续兴趣；删除证据不足的推断。" /></label><button className="btn btn-primary" disabled={busy || revisionInstruction.trim().length < 2} onClick={reviseReport}><Sparkles />生成修订稿</button></div></Modal>}
   </div>;
 }
 

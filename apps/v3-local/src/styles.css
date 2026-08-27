@@ -314,7 +314,7 @@ svg { flex: 0 0 auto; }
   .report-layout { display: block; }.report-paper { border: 0; box-shadow: none; }.report-cover, .report-paper > section { break-inside: avoid; }
 }
 
-/* Tongji 3.0: teacher-first evidence workspace and governance surfaces */
+/* Tongji: teacher-first evidence workspace and support surfaces */
 .v3-shell { --green: #2f6c58; --green-2: #4d8e73; --ink: #1f352d; }
 .version-ribbon { display: flex; align-items: center; gap: 7px; padding: 9px 11px; margin: -8px 5px 15px; border: 1px solid rgba(255,255,255,.12); border-radius: 11px; color: #c8ded5; background: rgba(255,255,255,.05); font-size: 10px; }
 .version-ribbon span { padding: 3px 6px; border-radius: 6px; color: #244f41; background: #f3cd84; font-weight: 800; }
@@ -407,7 +407,7 @@ svg { flex: 0 0 auto; }
   .report-paper { max-width: none; }
 }
 
-/* Production mode: real accounts, remote API and Supabase persistence. */
+/* Connected mode: real accounts and remote business services. */
 .btn-ghost-danger { color: var(--red); border-color: #e5c4c1; background: #fff8f7; }
 .page-action-row { display: flex; gap: 8px; }
 .remote-error { display: flex; align-items: center; gap: 9px; padding: 12px 15px; margin: 0 0 16px; border: 1px solid #e6c4c0; border-radius: 12px; color: #9b4444; background: #fff7f5; font-size: 11px; }

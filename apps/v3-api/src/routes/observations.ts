@@ -6,7 +6,8 @@ import { createAIProvider } from "../ai/provider.js";
 import { effectiveAnalysisResult, flattenAnalysisClaims, legacyClaimDecision, claimDecisions } from "../analysis-claims.js";
 import { config } from "../config.js";
 import { ApiError, audit, authenticate } from "../http.js";
-import { publicSupabaseUrl, serviceClient } from "../supabase.js";
+import { mediaStorage } from "../runtime/media-storage.js";
+import { serviceClient } from "../supabase.js";
 
 const uuid = z.string().uuid();
 const responseSchema = z.object({
@@ -73,13 +74,13 @@ async function queueAnalysisMemory(auth: Awaited<ReturnType<typeof authenticate>
     memory_type: "teacher_feedback",
     source_resource_type: "analysis_run",
     source_resource_id: analysis.id,
-    title: "教师终审的游戏分析案例",
-    summary: summary || "教师已完成该观察的专业终审。",
-    retrieval_text: `${result.objectiveSummary ?? ""}\n${summary}\n教师终审说明：${note}`.slice(0, 12000),
+    title: "教师确认的游戏分析案例",
+    summary: summary || "教师已确认该观察的专业分析。",
+    retrieval_text: `${result.objectiveSummary ?? ""}\n${summary}\n教师确认说明：${note}`.slice(0, 12000),
     applicability: { classroomId: analysis.classroom_id, childId: analysis.child_id, observationId: analysis.observation_id },
     evidence_refs: [{ observationId: analysis.observation_id, analysisRunId: analysis.id }],
     quality_score: 0.65,
-    status: "pending",
+    status: "active",
     created_by: auth.userId,
   }, { onConflict: "tenant_id,memory_type,source_resource_type,source_resource_id" });
 }
@@ -255,7 +256,7 @@ export async function observationRoutes(app: FastifyInstance) {
     if (child?.guardian_consent_status === "withdrawn") throw new ApiError(422, "CONSENT_WITHDRAWN", "监护人已撤回授权，不能新增媒体证据");
 
     const path = `${auth.tenantId}/${observation.classroom_id}/${observation.child_id}/${observation.id}/${randomUUID()}.${media.ext}`;
-    const { data: ticket, error: ticketError } = await serviceClient.storage.from(config.SUPABASE_STORAGE_BUCKET).createSignedUploadUrl(path);
+    const { data: ticket, error: ticketError } = await mediaStorage.createSignedUploadUrl(path);
     if (ticketError || !ticket) throw new ApiError(500, "UPLOAD_TICKET_FAILED", "上传凭证创建失败");
     const { data: evidence, error: evidenceError } = await auth.data.from("evidence_assets").insert({
       tenant_id: auth.tenantId,
@@ -284,7 +285,7 @@ export async function observationRoutes(app: FastifyInstance) {
     const slash = evidence.storage_path.lastIndexOf("/");
     const folder = evidence.storage_path.slice(0, slash);
     const fileName = evidence.storage_path.slice(slash + 1);
-    const { data: objects, error: listError } = await serviceClient.storage.from(config.SUPABASE_STORAGE_BUCKET).list(folder, { search: fileName, limit: 2 });
+    const { data: objects, error: listError } = await mediaStorage.list(folder, { search: fileName, limit: 2 });
     if (listError || !objects?.some((item) => item.name === fileName)) throw new ApiError(409, "UPLOAD_NOT_FOUND", "尚未检测到已上传文件");
     const { data: updated, error } = await serviceClient
       .schema(config.SUPABASE_SCHEMA)
@@ -343,9 +344,7 @@ export async function observationRoutes(app: FastifyInstance) {
         throw new ApiError(422, "CONSENT_WITHDRAWN", "监护人已撤回授权，不能新增媒体证据");
       }
 
-      const { error: uploadError } = await serviceClient.storage
-        .from(config.SUPABASE_STORAGE_BUCKET)
-        .upload(evidence.storage_path, request.body, {
+      const { error: uploadError } = await mediaStorage.upload(evidence.storage_path, request.body, {
           contentType: evidence.mime_type,
           cacheControl: "3600",
           upsert: false,
@@ -383,9 +382,9 @@ export async function observationRoutes(app: FastifyInstance) {
     const { data: evidence, error: evidenceError } = await auth.data.from("evidence_assets").select("storage_path, upload_status").eq("id", id).maybeSingle();
     if (evidenceError) throw new ApiError(500, "EVIDENCE_LOOKUP_FAILED", "证据读取失败");
     if (!evidence?.storage_path || evidence.upload_status !== "ready") throw new ApiError(404, "EVIDENCE_NOT_READY", "证据不存在或尚未上传完成");
-    const { data, error } = await serviceClient.storage.from(config.SUPABASE_STORAGE_BUCKET).createSignedUrl(evidence.storage_path, 300);
+    const { data, error } = await mediaStorage.createSignedUrl(evidence.storage_path, 300);
     if (error || !data) throw new ApiError(500, "DOWNLOAD_URL_FAILED", "证据查看链接创建失败");
-    return { url: publicSupabaseUrl(data.signedUrl), expiresIn: 300 };
+    return { url: data.signedUrl, expiresIn: 300 };
   });
 
   app.post("/api/observations/:id/analyze", { config: { rateLimit: { max: 20, timeWindow: "1 hour" } } }, async (request, reply) => {
@@ -452,9 +451,9 @@ export async function observationRoutes(app: FastifyInstance) {
         if (config.AI_MODE === "qianwen" && config.qwenMediaAnalysisEnabled && child.guardian_consent_status === "granted") {
           const candidates = (evidence ?? []).filter((item) => ["photo", "video"].includes(item.evidence_type) && item.storage_path).slice(0, config.QWEN_MAX_MEDIA);
           const signed = await Promise.all(candidates.map(async (item) => {
-            const { data } = await serviceClient.storage.from(config.SUPABASE_STORAGE_BUCKET).createSignedUrl(item.storage_path, 900);
+            const { data } = await mediaStorage.createSignedUrl(item.storage_path, 900);
             if (!data?.signedUrl) return null;
-            return { id: item.id, evidenceType: item.evidence_type as "photo" | "video", mimeType: item.mime_type || (item.evidence_type === "video" ? "video/mp4" : "image/jpeg"), signedUrl: publicSupabaseUrl(data.signedUrl) } satisfies MediaForAnalysis;
+            return { id: item.id, evidenceType: item.evidence_type as "photo" | "video", mimeType: item.mime_type || (item.evidence_type === "video" ? "video/mp4" : "image/jpeg"), signedUrl: data.signedUrl } satisfies MediaForAnalysis;
           }));
           media = signed.filter((item): item is MediaForAnalysis => item !== null);
         }

@@ -13,7 +13,8 @@ import {
   generateObservationDocument,
 } from "../documents.js";
 import { ApiError, audit, authenticate, requireResearcher } from "../http.js";
-import { publicSupabaseUrl, serviceClient } from "../supabase.js";
+import { mediaStorage } from "../runtime/media-storage.js";
+import { serviceClient } from "../supabase.js";
 
 const uuid = z.string().uuid();
 const aiProvider = createAIProvider({
@@ -51,54 +52,34 @@ const frameworkDimensions = {
 
 const safeFileName = (value: string) => value.replace(/[\\/:*?"<>|\u0000-\u001f]/g, "_").slice(0, 120);
 
-async function createDocumentExportRequest(auth: Awaited<ReturnType<typeof authenticate>>, input: {
+async function createDirectDocumentExport(auth: Awaited<ReturnType<typeof authenticate>>, input: {
   classroomId: string;
-  exportType: "observation_record" | "curriculum_plan";
   documentType: "observation_teacher" | "observation_professional" | "curriculum_plan";
   resourceType: "observation" | "curriculum_plan";
   resourceId: string;
-  purpose: string;
-  recipient: string;
   fileName: string;
   contentSnapshot: Record<string, unknown>;
 }) {
   const schema = serviceClient.schema(config.SUPABASE_SCHEMA);
-  const { data: requestRow, error: requestError } = await schema.from("export_requests").insert({
+  const { data, error } = await schema.from("document_exports").insert({
     tenant_id: auth.tenantId,
     classroom_id: input.classroomId,
-    requested_by: auth.userId,
-    export_type: input.exportType,
-    resource_type: input.resourceType,
-    resource_id: input.resourceId,
-    purpose: input.purpose,
-    recipient: input.recipient,
-    anonymized: false,
-  }).select().single();
-  if (requestError) throw new ApiError(500, "DOCUMENT_EXPORT_REQUEST_FAILED", "Word导出申请创建失败");
-  const { data: documentExport, error: exportError } = await schema.from("document_exports").insert({
-    tenant_id: auth.tenantId,
-    classroom_id: input.classroomId,
-    export_request_id: requestRow.id,
+    export_request_id: null,
     document_type: input.documentType,
     resource_type: input.resourceType,
     resource_id: input.resourceId,
     template_version: input.documentType === "curriculum_plan" ? "tongsheng-course.v1" : "observation-record.v1",
     content_snapshot: input.contentSnapshot,
     file_name: safeFileName(input.fileName),
-    status: "pending_approval",
+    status: "preview",
     created_by: auth.userId,
   }).select().single();
-  if (exportError) {
-    await schema.from("export_requests").delete().eq("id", requestRow.id);
-    throw new ApiError(500, "DOCUMENT_EXPORT_CREATE_FAILED", "Word导出任务创建失败");
-  }
-  return { request: requestRow, documentExport };
+  if (error) throw new ApiError(500, "DOCUMENT_EXPORT_CREATE_FAILED", "Word导出任务创建失败");
+  return materializeDocumentExport(data);
 }
 
-export async function materializeApprovedDocumentExport(exportRequestId: string) {
+async function materializeDocumentExport(item: any) {
   const schema = serviceClient.schema(config.SUPABASE_SCHEMA);
-  const { data: item, error } = await schema.from("document_exports").select("*").eq("export_request_id", exportRequestId).maybeSingle();
-  if (error) throw new Error("Word导出任务读取失败");
   if (!item || item.status === "ready") return item;
   let buffer: Buffer;
   if (item.document_type === "curriculum_plan") {
@@ -107,7 +88,7 @@ export async function materializeApprovedDocumentExport(exportRequestId: string)
     buffer = await generateObservationDocument(item.content_snapshot as any);
   }
   const path = `${item.tenant_id}/${item.classroom_id}/exports/${item.id}/${safeFileName(item.file_name || "同迹文档.docx")}`;
-  const { error: uploadError } = await serviceClient.storage.from(config.SUPABASE_STORAGE_BUCKET).upload(path, buffer, {
+  const { error: uploadError } = await mediaStorage.upload(path, buffer, {
     contentType: documentMimeTypes.docx,
     cacheControl: "3600",
     upsert: false,
@@ -169,7 +150,7 @@ export async function evolutionRoutes(app: FastifyInstance) {
     if (!item?.storage_path) throw new ApiError(404, "OBSERVATION_IMPORT_NOT_FOUND", "观察表导入任务不存在或无权访问");
     if (item.status !== "pending_upload") throw new ApiError(409, "OBSERVATION_IMPORT_NOT_PENDING", "观察表已经上传或正在处理");
     if (request.body.length !== Number(item.source_size_bytes)) throw new ApiError(422, "DOCUMENT_SIZE_MISMATCH", "上传文件大小与登记信息不一致");
-    const { error: uploadError } = await serviceClient.storage.from(config.SUPABASE_STORAGE_BUCKET).upload(item.storage_path, request.body, {
+    const { error: uploadError } = await mediaStorage.upload(item.storage_path, request.body, {
       contentType: item.source_mime_type,
       cacheControl: "3600",
       upsert: false,
@@ -183,8 +164,8 @@ export async function evolutionRoutes(app: FastifyInstance) {
       if (childError) throw new Error("班级幼儿读取失败");
       let mediaUrl: string | undefined;
       if (item.source_mime_type.startsWith("image/") && config.AI_MODE === "qianwen") {
-        const { data: signed } = await serviceClient.storage.from(config.SUPABASE_STORAGE_BUCKET).createSignedUrl(item.storage_path, 900);
-        if (signed?.signedUrl) mediaUrl = publicSupabaseUrl(signed.signedUrl);
+        const { data: signed } = await mediaStorage.createSignedUrl(item.storage_path, 900);
+        if (signed?.signedUrl) mediaUrl = signed.signedUrl;
       }
       const generated = await aiProvider.extractObservationDocument({
         fileName: item.source_file_name,
@@ -671,7 +652,7 @@ export async function evolutionRoutes(app: FastifyInstance) {
   app.post("/api/observations/:id/document-exports", async (request, reply) => {
     const auth = await authenticate(request);
     const { id } = z.object({ id: uuid }).parse(request.params);
-    const input = z.object({ variant: z.enum(["teacher", "professional"]), purpose: z.string().trim().min(2).max(1000), recipient: z.string().trim().min(2).max(300) }).parse(request.body);
+    const input = z.object({ variant: z.enum(["teacher", "professional"]) }).parse(request.body);
     const schema = serviceClient.schema(config.SUPABASE_SCHEMA);
     const { data: observation, error } = await auth.data.from("observations").select("*").eq("id", id).maybeSingle();
     if (error) throw new ApiError(500, "OBSERVATION_READ_FAILED", "观察记录读取失败");
@@ -694,7 +675,7 @@ export async function evolutionRoutes(app: FastifyInstance) {
     if (input.variant === "professional") {
       const subjectChildIds = (subjectRows ?? []).map((subject) => subject.child_id);
       const missingChildIds = subjectChildIds.filter((childId) => !latestAnalysisByChild.has(childId));
-      if (missingChildIds.length) throw new ApiError(409, "PROFESSIONAL_ANALYSIS_REQUIRED", "专业版Word需要先完成每名参与幼儿的教师终审");
+      if (missingChildIds.length) throw new ApiError(409, "PROFESSIONAL_ANALYSIS_REQUIRED", "专业版Word需要先确认每名参与幼儿的AI分析");
       const analysisIds = [...latestAnalysisByChild.values()].map((analysis) => analysis.id);
       const { data: reviews, error: reviewError } = await schema.from("analysis_claim_reviews").select("*").in("analysis_run_id", analysisIds);
       if (reviewError) throw new ApiError(500, "ANALYSIS_REVIEW_READ_FAILED", "分析审核记录读取失败");
@@ -718,20 +699,20 @@ export async function evolutionRoutes(app: FastifyInstance) {
       analyses: effectiveAnalyses,
       analysis: effectiveAnalyses[0]?.result ?? null,
     };
-    const result = await createDocumentExportRequest(auth, {
-      classroomId: observation.classroom_id, exportType: "observation_record",
+    const documentExport = await createDirectDocumentExport(auth, {
+      classroomId: observation.classroom_id,
       documentType: input.variant === "professional" ? "observation_professional" : "observation_teacher",
-      resourceType: "observation", resourceId: id, purpose: input.purpose, recipient: input.recipient,
+      resourceType: "observation", resourceId: id,
       fileName: `${observation.title}-${input.variant === "professional" ? "专业版" : "教师原稿版"}.docx`, contentSnapshot: snapshot,
     });
-    await audit(auth, "document_export.requested", "document_export", result.documentExport.id, { exportRequestId: result.request.id, variant: input.variant });
-    return reply.status(201).send(result);
+    await audit(auth, "document_export.created", "document_export", documentExport.id, { variant: input.variant });
+    return reply.status(201).send({ documentExport });
   });
 
   app.post("/api/curriculum-plans/:id/document-exports", async (request, reply) => {
     const auth = await authenticate(request);
     const { id } = z.object({ id: uuid }).parse(request.params);
-    const input = z.object({ purpose: z.string().trim().min(2).max(1000), recipient: z.string().trim().min(2).max(300) }).parse(request.body);
+    z.object({}).passthrough().parse(request.body ?? {});
     const schema = serviceClient.schema(config.SUPABASE_SCHEMA);
     const { data: plan, error } = await auth.data.from("curriculum_plans").select("*").eq("id", id).maybeSingle();
     if (error) throw new ApiError(500, "CURRICULUM_PLAN_READ_FAILED", "课程计划读取失败");
@@ -744,13 +725,13 @@ export async function evolutionRoutes(app: FastifyInstance) {
     ]);
     const isIndividualSupport = clue?.plan?.scope === "individual_support";
     const snapshot = { schoolName: tenant?.name ?? "幼儿园", classroomName: classroom?.name ?? "班级", implementationPeriod: plan.implementation_period, title: plan.title, coreInquiryClue: plan.core_inquiry_clue, content: plan.content, cycles: cycles ?? [] };
-    const result = await createDocumentExportRequest(auth, {
-      classroomId: plan.classroom_id, exportType: "curriculum_plan", documentType: "curriculum_plan",
-      resourceType: "curriculum_plan", resourceId: id, purpose: input.purpose, recipient: input.recipient,
+    const documentExport = await createDirectDocumentExport(auth, {
+      classroomId: plan.classroom_id, documentType: "curriculum_plan",
+      resourceType: "curriculum_plan", resourceId: id,
       fileName: `${plan.title}-${isIndividualSupport ? "个别支持计划" : "课程计划"}-V${plan.version}.docx`, contentSnapshot: snapshot,
     });
-    await audit(auth, "document_export.requested", "document_export", result.documentExport.id, { exportRequestId: result.request.id, planId: id });
-    return reply.status(201).send(result);
+    await audit(auth, "document_export.created", "document_export", documentExport.id, { planId: id });
+    return reply.status(201).send({ documentExport });
   });
 
   app.get("/api/document-exports/:id/download", async (request) => {
@@ -758,9 +739,9 @@ export async function evolutionRoutes(app: FastifyInstance) {
     const { id } = z.object({ id: uuid }).parse(request.params);
     const { data, error } = await auth.data.from("document_exports").select("storage_path, status, file_name").eq("id", id).maybeSingle();
     if (error) throw new ApiError(500, "DOCUMENT_EXPORT_READ_FAILED", "Word导出任务读取失败");
-    if (!data?.storage_path || data.status !== "ready") throw new ApiError(409, "DOCUMENT_EXPORT_NOT_READY", "Word文件尚未通过审批或生成完成");
-    const { data: signed, error: signedError } = await serviceClient.storage.from(config.SUPABASE_STORAGE_BUCKET).createSignedUrl(data.storage_path, 300);
+    if (!data?.storage_path || data.status !== "ready") throw new ApiError(409, "DOCUMENT_EXPORT_NOT_READY", "Word文件尚未生成完成");
+    const { data: signed, error: signedError } = await mediaStorage.createSignedUrl(data.storage_path, 300);
     if (signedError || !signed) throw new ApiError(500, "DOCUMENT_EXPORT_URL_FAILED", "Word下载链接创建失败");
-    return { url: publicSupabaseUrl(signed.signedUrl), expiresIn: 300, fileName: data.file_name };
+    return { url: signed.signedUrl, expiresIn: 300, fileName: data.file_name };
   });
 }

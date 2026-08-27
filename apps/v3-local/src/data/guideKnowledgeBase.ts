@@ -457,7 +457,7 @@ export const guideKnowledgeCards: KnowledgeCard[] = goals.flatMap((goal) =>
 
 const theoryBase = {
   kind: "理论原则" as const,
-  sourceVersion: "同迹3.0专业模型 v1.0",
+  sourceVersion: "同迹专业模型 v1.0",
   subdomain: "评价与课程",
   goalNumber: 0,
   grade: "跨年龄" as const,

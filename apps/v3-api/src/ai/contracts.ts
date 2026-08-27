@@ -407,6 +407,12 @@ export interface ClassroomReportGenerationInput {
   >;
 }
 
+export interface ReportRevisionInput {
+  reportType: "teacher" | "guardian" | "classroom";
+  existingContent: ReportContent | ClassroomReportContent;
+  instruction: string;
+}
+
 export interface CurriculumGenerationInput {
   theme: string;
   scope?: "classroom_curriculum" | "individual_support";
@@ -470,6 +476,7 @@ export interface AIAnalysisProvider {
   reviseAnalysis(input: AnalysisRevisionInput): Promise<AIGeneration<AnalysisResult>>;
   generateReport(input: ReportGenerationInput): Promise<AIGeneration<ReportContent>>;
   generateClassroomReport(input: ClassroomReportGenerationInput): Promise<AIGeneration<ClassroomReportContent>>;
+  reviseReport(input: ReportRevisionInput): Promise<AIGeneration<ReportContent | ClassroomReportContent>>;
   generateCurriculum(input: CurriculumGenerationInput): Promise<AIGeneration<CurriculumDraft>>;
   generateActivityOptions(input: CurriculumActivityOptionsInput): Promise<AIGeneration<CurriculumActivityOptions>>;
   generateCurriculumPlan(input: CurriculumPlanGenerationInput): Promise<AIGeneration<CurriculumPlanContent>>;

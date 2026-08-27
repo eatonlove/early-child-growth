@@ -6,11 +6,13 @@ import type { Child } from "../domain/types";
 export function Badge({
   children,
   tone = "green",
+  className = "",
 }: {
   children: ReactNode;
   tone?: "green" | "orange" | "blue" | "purple" | "gray" | "red";
+  className?: string;
 }) {
-  return <span className={`badge badge-${tone}`}>{children}</span>;
+  return <span className={`badge badge-${tone} ${className}`.trim()}>{children}</span>;
 }
 
 export function Avatar({ child, size = "md" }: { child: Child; size?: "sm" | "md" | "lg" }) {

@@ -138,7 +138,7 @@ export class ScenarioAIProvider implements AIAnalysisProvider {
       const knowledgeSupports = responseSuggestions(matches, subject);
       return {
         id: runId, tenantId: TENANT_ID, createdAt: now, updatedAt: now, createdBy: "scenario-ai", version: 1,
-        evidencePackageId: pkg.id, subjectId: subject.id, childId: subject.childId, providerLabel: "模拟 AI 3.0" as const,
+        evidencePackageId: pkg.id, subjectId: subject.id, childId: subject.childId, providerLabel: "模拟 AI" as const,
         summary: `在“${pkg.theme}”情境中，${subject.childName}的原始白描、幼儿原话和已确认媒体事件已被整理。此摘要不补写证据之外的行为。`,
         currentExperience: subject.teacherIdentification || "教师尚未提交明确识别，AI只生成待审核的证据整理。",
         interestsAndStrengths: subject.teacherIdentification

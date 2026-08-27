@@ -185,7 +185,7 @@ analyzedPackageIds.forEach((packageId, index) => {
   ];
   seedClaims.push(...claims);
   seedAnalysisRuns.push({
-    ...entity(runId, pkg.observedAt, "scenario-ai"), evidencePackageId: packageId, subjectId: subject.id, childId: subject.childId, providerLabel: "模拟 AI 3.0",
+    ...entity(runId, pkg.observedAt, "scenario-ai"), evidencePackageId: packageId, subjectId: subject.id, childId: subject.childId, providerLabel: "模拟 AI",
     summary: `在“${pkg.theme}”中，${subject.childName}围绕真实问题进行了观察、尝试和调整。`, currentExperience: subject.teacherIdentification,
     interestsAndStrengths: ["持续关注游戏结果", "愿意调整原有办法", "能够用行动或语言表达发现"], evidenceGaps: ["跨场景迁移证据仍不足", "需要记录撤回教师支持后的独立表现"],
     responseSuggestions: { "经验支持": ["邀请幼儿回顾不同尝试的结果"], "材料支持": [subject.teacherResponseDraft.strategy], "活动支持": ["在分享环节支持幼儿向同伴说明办法"] },

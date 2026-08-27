@@ -2,7 +2,8 @@ import type { FastifyInstance, FastifyReply } from "fastify";
 import { z } from "zod";
 import { config, internalEmail } from "../config.js";
 import { ApiError, authenticate } from "../http.js";
-import { publicAuthClient, serviceClient } from "../supabase.js";
+import { authProvider } from "../runtime/auth-provider.js";
+import { serviceClient } from "../supabase.js";
 
 const credentialsSchema = z.object({
   username: z.string().trim().toLowerCase().regex(/^[a-z0-9._-]{3,40}$/),
@@ -31,15 +32,14 @@ function sessionPayload(profile: Record<string, unknown>, tenant: Record<string,
 export async function authRoutes(app: FastifyInstance) {
   app.post("/api/auth/login", { config: { rateLimit: { max: 10, timeWindow: "5 minutes" } } }, async (request, reply) => {
     const input = credentialsSchema.parse(request.body);
-    const client = publicAuthClient();
-    const { data, error } = await client.auth.signInWithPassword({ email: internalEmail(input.username), password: input.password });
-    if (error || !data.session || !data.user) throw new ApiError(401, "LOGIN_FAILED", "账号或密码错误");
+    const { data, error } = await authProvider.signInWithPassword(internalEmail(input.username), input.password);
+    if (error || !data?.session || !data.user) throw new ApiError(401, "LOGIN_FAILED", "账号或密码错误");
 
     const { data: profile, error: profileError } = await serviceClient.schema(config.SUPABASE_SCHEMA).from("profiles")
       .select("user_id, tenant_id, username, display_name, role, status")
       .eq("user_id", data.user.id)
       .maybeSingle();
-    if (profileError || !profile) throw new ApiError(403, "APP_ACCOUNT_NOT_FOUND", "该账号不属于同迹3.0");
+    if (profileError || !profile) throw new ApiError(403, "APP_ACCOUNT_NOT_FOUND", "该账号不属于同迹");
     if (profile.status !== "active") throw new ApiError(403, "ACCOUNT_DISABLED", "账号已停用，请联系教研员");
 
     const { data: tenant, error: tenantError } = await serviceClient.schema(config.SUPABASE_SCHEMA).from("tenants").select("id, name").eq("id", profile.tenant_id).maybeSingle();
@@ -54,9 +54,8 @@ export async function authRoutes(app: FastifyInstance) {
   app.post("/api/auth/refresh", { config: { rateLimit: { max: 30, timeWindow: "5 minutes" } } }, async (request, reply) => {
     const refreshToken = request.cookies.tj_refresh;
     if (!refreshToken) throw new ApiError(401, "REFRESH_REQUIRED", "登录已失效，请重新登录");
-    const client = publicAuthClient();
-    const { data, error } = await client.auth.refreshSession({ refresh_token: refreshToken });
-    if (error || !data.session || !data.user) throw new ApiError(401, "REFRESH_FAILED", "登录已失效，请重新登录");
+    const { data, error } = await authProvider.refreshSession(refreshToken);
+    if (error || !data?.session || !data.user) throw new ApiError(401, "REFRESH_FAILED", "登录已失效，请重新登录");
     const { data: profile, error: profileError } = await serviceClient.schema(config.SUPABASE_SCHEMA).from("profiles")
       .select("user_id, tenant_id, username, display_name, role, status")
       .eq("user_id", data.user.id)
@@ -73,11 +72,7 @@ export async function authRoutes(app: FastifyInstance) {
   app.post("/api/auth/logout", async (request, reply) => {
     const accessToken = request.cookies.tj_access;
     const refreshToken = request.cookies.tj_refresh;
-    if (accessToken && refreshToken) {
-      const client = publicAuthClient();
-      const { error } = await client.auth.setSession({ access_token: accessToken, refresh_token: refreshToken });
-      if (!error) await client.auth.signOut({ scope: "local" });
-    }
+    await authProvider.signOut(accessToken, refreshToken);
     reply.clearCookie("tj_access", { path: "/api" });
     reply.clearCookie("tj_refresh", { path: "/api" });
     return { ok: true };

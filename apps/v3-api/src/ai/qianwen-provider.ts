@@ -27,6 +27,7 @@ import {
   type ObservationDocumentExtractionInput,
   type ReportContent,
   type ReportGenerationInput,
+  type ReportRevisionInput,
 } from "./contracts.js";
 import { analysisJsonSchema, classroomReportJsonSchema, curriculumActivityOptionsJsonSchema, curriculumJsonSchema, curriculumPlanContentJsonSchema, interestClusterJsonSchema, observationDocumentExtractionJsonSchema, reportJsonSchema } from "./json-schemas.js";
 import { QwenClient, type QwenContentPart } from "./qianwen-client.js";
@@ -44,6 +45,7 @@ const DOCUMENT_EXTRACTION_PROMPT_VERSION = "observation-document-extraction.qwen
 const OBSERVATION_PROMPT_VERSION = "observation-analysis.qwen.v4";
 const ANALYSIS_REVISION_PROMPT_VERSION = "observation-analysis-revision.qwen.v1";
 const REPORT_PROMPT_VERSION = "period-report.qwen.v2";
+const REPORT_REVISION_PROMPT_VERSION = "period-report-revision.qwen.v1";
 const CLASSROOM_REPORT_PROMPT_VERSION = "classroom-period-report.qwen.v1";
 const CURRICULUM_PROMPT_VERSION = "curriculum-draft.qwen.v2";
 const INTEREST_CLUSTER_PROMPT_VERSION = "curriculum-interest-clustering.qwen.v1";
@@ -70,6 +72,9 @@ const reportSystemPrompt = `你是幼儿游戏成长报告助手。只使用教�
 
 const classroomReportSystemPrompt = `你是幼儿园班级游戏循证报告助手。只使用系统提供的班级汇总指标、教师已终审采用的观察、分析和支持效果生成草稿。
 报告用于改进班级环境、教师支持与生成性课程，不评价或比较具体幼儿。不得输出幼儿姓名、排名、综合分数、达标率、诊断或优良差标签。覆盖人数、观察次数、日期数、场景、五大领域证据条数、支持复察率和课程线索必须原样采用输入指标，不得改写或补造。共同兴趣、持续问题和下一步建议必须能从输入证据中找到依据。输出必须完全符合JSON Schema，不要输出Markdown。`;
+
+const reportRevisionSystemPrompt = `你是幼儿游戏成长报告修订助手。你只能依据现有报告内容和教师修改意见调整结构、措辞、详略与建议，不得新增原报告中没有的幼儿行为、日期、次数、原话或发展结论。
+教师意见是编辑要求，不是新的观察证据。保留非比较、非标签化和形成性评价语言。班级报告中的覆盖人数、观察次数、时间点、场景、五大领域证据数量、支持复察率和课程线索属于固定数据，不得修改。输出必须完全符合对应JSON Schema，不要输出Markdown。`;
 
 const curriculumSystemPrompt = `你是幼儿园游戏生成课程助手。课程草案必须来自多幼儿或多时间点的持续游戏证据，不预设固定活动路径，不替代教师决策。
 只使用输入中的兴趣、问题、教师识别和下一步观察重点，不新增幼儿行为事实。草案要保留开放性，包含材料环境、可能路径、观察重点、家庭社区资源和调整依据。不得生成幼儿排名、评分、诊断或统一完成标准。输出必须完全符合JSON Schema，不要输出Markdown。`;
@@ -433,6 +438,50 @@ export class QianwenAIProvider implements AIAnalysisProvider {
       mediaAnalyzed: false,
       notice: "千问AI仅提炼班级共同兴趣、持续问题和后续建议；覆盖指标由系统计算，报告仍需教师审核发布。",
     };
+  }
+
+  async reviseReport(input: ReportRevisionInput): Promise<AIGeneration<ReportContent | ClassroomReportContent>> {
+    if (input.reportType === "classroom") {
+      const existing = input.existingContent as ClassroomReportContent;
+      const result = await this.client.structuredCompletion<ClassroomReportContent>({
+        model: this.options.textModel,
+        messages: [
+          { role: "system", content: reportRevisionSystemPrompt },
+          { role: "user", content: JSON.stringify({ reportType: input.reportType, existingReport: existing, teacherInstruction: input.instruction }) },
+        ],
+        schemaName: "tongji_classroom_period_report_revision",
+        jsonSchema: classroomReportJsonSchema,
+        validator: classroomReportContentSchema,
+      });
+      Object.assign(result, {
+        observationCount: existing.observationCount,
+        timePointCount: existing.timePointCount,
+        observedChildCount: existing.observedChildCount,
+        totalChildCount: existing.totalChildCount,
+        sceneCoverage: existing.sceneCoverage,
+        domainEvidence: existing.domainEvidence,
+        supportFollowUpRate: existing.supportFollowUpRate,
+        curriculumClues: existing.curriculumClues,
+        audience: "classroom" as const,
+      });
+      assertNoForbiddenJudgment(result);
+      return { data: result, provider: "QianwenAIProvider", model: this.options.textModel, promptVersion: REPORT_REVISION_PROMPT_VERSION, mediaAnalyzed: false, notice: "千问AI已按教师意见修订班级报告，固定证据数据保持不变。" };
+    }
+    const existing = input.existingContent as ReportContent;
+    const result = await this.client.structuredCompletion<ReportContent>({
+      model: this.options.textModel,
+      messages: [
+        { role: "system", content: reportRevisionSystemPrompt },
+        { role: "user", content: JSON.stringify({ reportType: input.reportType, existingReport: existing, teacherInstruction: input.instruction }) },
+      ],
+      schemaName: "tongji_period_report_revision",
+      jsonSchema: reportJsonSchema,
+      validator: reportContentSchema,
+    });
+    result.title = existing.title;
+    result.audience = input.reportType;
+    assertNoForbiddenJudgment(result);
+    return { data: result, provider: "QianwenAIProvider", model: this.options.textModel, promptVersion: REPORT_REVISION_PROMPT_VERSION, mediaAnalyzed: false, notice: "千问AI已按教师意见修订报告表达，原有证据边界保持不变。" };
   }
 
   async generateCurriculum(input: CurriculumGenerationInput): Promise<AIGeneration<CurriculumDraft>> {

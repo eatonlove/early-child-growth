@@ -18,6 +18,7 @@ import type {
   ObservationDocumentExtractionInput,
   ReportContent,
   ReportGenerationInput,
+  ReportRevisionInput,
 } from "./contracts.js";
 import { QianwenAIProvider, type QianwenProviderOptions } from "./qianwen-provider.js";
 import { buildScenarioActivityOptions, buildScenarioAnalysis, buildScenarioClassroomReport, buildScenarioCurriculum, buildScenarioCurriculumPlan, buildScenarioInterestClusters, buildScenarioObservationExtraction, buildScenarioReport, buildScenarioRevision } from "./scenario-provider.js";
@@ -80,6 +81,24 @@ class ScenarioAIProvider implements AIAnalysisProvider {
       promptVersion: "classroom-period-report.v3.1",
       mediaAnalyzed: false,
       notice: "当前使用模拟AI规则提炼班级共同兴趣与后续建议；覆盖指标由系统计算，报告仍需教师审核。",
+    };
+  }
+
+  async reviseReport(input: ReportRevisionInput): Promise<AIGeneration<ReportContent | ClassroomReportContent>> {
+    const instruction = input.instruction.trim();
+    const data = structuredClone(input.existingContent);
+    if ("nextSuggestions" in data) {
+      data.nextSuggestions = [...data.nextSuggestions.filter((item) => item !== instruction), instruction].slice(-8);
+    } else {
+      data.nextPlan = [...data.nextPlan.filter((item) => item !== instruction), instruction].slice(-8);
+    }
+    return {
+      data,
+      provider: "ScenarioAIProvider",
+      model: "simulated-report-revision-v1",
+      promptVersion: "period-report-revision.v1",
+      mediaAnalyzed: false,
+      notice: "当前使用模拟AI按教师意见调整报告表达，原有证据边界保持不变。",
     };
   }
 
@@ -153,6 +172,11 @@ class ResilientAIProvider implements AIAnalysisProvider {
 
   generateClassroomReport(input: ClassroomReportGenerationInput) {
     return this.withFallback("classroom-report", () => this.primary.generateClassroomReport(input), () => this.fallback.generateClassroomReport(input));
+  }
+
+
+  reviseReport(input: ReportRevisionInput) {
+    return this.withFallback("report-revision", () => this.primary.reviseReport(input), () => this.fallback.reviseReport(input));
   }
 
   generateCurriculum(input: CurriculumGenerationInput) {

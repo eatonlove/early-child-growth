@@ -1,0 +1,157 @@
+name: tongji_v3_local
+
+x-api-environment: &api-environment
+  NODE_ENV: production
+  RUNTIME_MODE: local-lite
+  HOST: 0.0.0.0
+  PORT: 4310
+  TRUST_PROXY: "false"
+  COOKIE_SECURE: "false"
+  CORS_ORIGIN: http://127.0.0.1:5300,http://localhost:5300
+  PUBLIC_APP_URL: http://127.0.0.1:5300
+  SUPABASE_URL: http://postgrest:3000
+  SUPABASE_PUBLISHABLE_KEY: ${LOCAL_ANON_KEY}
+  SUPABASE_SERVICE_ROLE_KEY: ${LOCAL_SERVICE_ROLE_KEY}
+  SUPABASE_SCHEMA: tongji_v3
+  SUPABASE_STORAGE_BUCKET: tongji-v3-evidence
+  LOCAL_DATABASE_URL: postgres://postgres:${POSTGRES_PASSWORD}@postgres:5432/postgres
+  LOCAL_POSTGREST_URL: http://postgrest:3000
+  LOCAL_JWT_SECRET: ${LOCAL_JWT_SECRET}
+  LOCAL_MEDIA_ROOT: /data/media
+  LOCAL_MEDIA_PUBLIC_BASE_URL: ${LOCAL_MEDIA_PUBLIC_BASE_URL:-}
+  INTERNAL_EMAIL_DOMAIN: tongji-v3.local
+  AI_MODE: ${AI_MODE:-simulated}
+  QIANWEN_API_KEY: ${QIANWEN_API_KEY:-}
+  DASHSCOPE_API_KEY: ${DASHSCOPE_API_KEY:-}
+  QWEN_BASE_URL: ${QWEN_BASE_URL:-https://dashscope.aliyuncs.com/compatible-mode/v1}
+  QWEN_TEXT_MODEL: ${QWEN_TEXT_MODEL:-qwen3.7-plus}
+  QWEN_VISION_MODEL: ${QWEN_VISION_MODEL:-qwen3.7-plus}
+  QWEN_MEDIA_ANALYSIS_ENABLED: ${QWEN_MEDIA_ANALYSIS_ENABLED:-false}
+  QWEN_MAX_MEDIA: ${QWEN_MAX_MEDIA:-2}
+  AI_FALLBACK_TO_SIMULATED: ${AI_FALLBACK_TO_SIMULATED:-false}
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_DB: postgres
+    ports:
+      - "127.0.0.1:55432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./sql/00-platform.sql:/docker-entrypoint-initdb.d/00-platform.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d postgres"]
+      interval: 3s
+      timeout: 3s
+      retries: 30
+    mem_limit: 640m
+    cpus: 1.0
+    pids_limit: 160
+
+  migrate:
+    build:
+      context: ../..
+      dockerfile: apps/v3-api/Dockerfile
+    command: ["node", "dist/scripts/migrate-local.js"]
+    environment: *api-environment
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: "no"
+    networks:
+      - default
+
+  postgrest:
+    image: postgrest/postgrest:v12.2.12
+    environment:
+      PGRST_DB_URI: postgres://authenticator:tongji_local_authenticator@postgres:5432/postgres
+      PGRST_DB_SCHEMAS: tongji_v3
+      PGRST_DB_ANON_ROLE: anon
+      PGRST_JWT_SECRET: ${LOCAL_JWT_SECRET}
+      PGRST_DB_EXTRA_SEARCH_PATH: public,auth,extensions
+      PGRST_SERVER_PORT: 3000
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+    ports:
+      - "127.0.0.1:5301:3000"
+    restart: unless-stopped
+    mem_limit: 160m
+    cpus: 0.5
+    pids_limit: 80
+
+  seed:
+    build:
+      context: ../..
+      dockerfile: apps/v3-api/Dockerfile
+    command: ["node", "dist/scripts/seed-local.js"]
+    environment: *api-environment
+    depends_on:
+      postgrest:
+        condition: service_started
+    restart: "no"
+    networks:
+      - default
+
+  api:
+    build:
+      context: ../..
+      dockerfile: apps/v3-api/Dockerfile
+    environment: *api-environment
+    depends_on:
+      seed:
+        condition: service_completed_successfully
+    volumes:
+      - media_data:/data/media
+    restart: unless-stopped
+    init: true
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:4310/healthz').then(r=>{if(!r.ok)process.exit(1)}).catch(()=>process.exit(1))"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+      start_period: 5s
+    mem_limit: 512m
+    cpus: 0.75
+    pids_limit: 160
+
+  web:
+    build:
+      context: ../..
+      dockerfile: apps/v3-local/Dockerfile
+      args:
+        VITE_APP_MODE: production
+        VITE_API_BASE_URL: ""
+    depends_on:
+      api:
+        condition: service_healthy
+    ports:
+      - "127.0.0.1:5300:8080"
+    restart: unless-stopped
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    cap_add:
+      - CHOWN
+      - SETGID
+      - SETUID
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1:8080/healthz"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+      start_period: 5s
+    mem_limit: 128m
+    cpus: 0.25
+    pids_limit: 80
+
+volumes:
+  postgres_data:
+  media_data:

@@ -222,7 +222,7 @@ export class IndexedDbRepository implements EvidenceRepository {
 
   async exportJson() {
     const snapshot = await this.snapshot();
-    return JSON.stringify({ ...snapshot, mediaEvidence: snapshot.mediaEvidence.map(({ blob: _blob, ...item }) => item), dataVersion: DEMO_DATA_VERSION, exportedAt: stamp(), notice: "同迹3.0本地演示数据，不含媒体Blob。" }, null, 2);
+    return JSON.stringify({ ...snapshot, mediaEvidence: snapshot.mediaEvidence.map(({ blob: _blob, ...item }) => item), dataVersion: DEMO_DATA_VERSION, exportedAt: stamp(), notice: "同迹本地演示数据，不含媒体Blob。" }, null, 2);
   }
 }
 

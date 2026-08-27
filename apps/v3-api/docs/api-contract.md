@@ -1,16 +1,17 @@
-# 同迹 3.0 生产 API 契约
+# 同迹生产 API 契约
 
 ## 1. 通用约定
 
 - Base path：`/api`
 - 数据格式：`application/json; charset=utf-8`
-- 会话：Supabase Auth access/refresh token 由 API 写入 `HttpOnly` Cookie，前端不读取令牌。
+- 会话：身份服务的 access/refresh token 由 API 写入 `HttpOnly` Cookie，前端不读取令牌。
 - 角色：`teacher`、`researcher`。
 - 数据 schema：`tongji_v3`；`tongji_v3_private` 仅保存 RLS 辅助函数，不对 Data API 暴露。
 - 成功响应：单对象使用 `{ "item": ... }`，列表使用 `{ "items": [...] }`。
 - 错误响应：`{ "code": "ERROR_CODE", "message": "用户可理解说明", "fields"?: {} }`。
 - 所有写操作由 API 写入 `tongji_v3.audit_events`。
 - `GET /api/healthz` 返回API服务、业务schema和实际AI配置；站点根路径的 `/healthz` 只表示Web容器存活。
+- `GET /api/local-media` 仅在 `RUNTIME_MODE=local-lite` 下提供本地限时签名文件；生产模式固定返回404。
 
 ## 2. 身份与账号
 
@@ -49,7 +50,7 @@
 账号停用同时执行两层控制：
 
 1. `tongji_v3.profiles.status=disabled`，使 API 中间件与 RLS 立即拒绝旧 access token。
-2. Supabase Auth `ban_duration`，阻止新登录和刷新。
+2. 身份服务同步禁止新登录和会话刷新。
 
 ## 3. 班级与幼儿
 
@@ -59,6 +60,8 @@
 | POST | `/classrooms` | 教研员 | 新建班级 |
 | PATCH | `/classrooms/:id` | 教研员 | 修改或归档班级 |
 | GET | `/children?classroomId=` | 两角色 | 查看授权班级幼儿 |
+| GET | `/children/import-template` | 两角色 | 下载Excel可直接打开的标准CSV导入模板 |
+| POST | `/children/import` | 两角色 | 校验并批量导入同一班级幼儿，单次最多200条 |
 | POST | `/children` | 两角色 | 在授权班级新增幼儿 |
 | PATCH | `/children/:id` | 两角色 | 修改、转班或归档幼儿 |
 
@@ -99,7 +102,7 @@
 ### 4.2 媒体证据
 
 1. `POST /observations/:id/evidence-ticket` 校验观察、授权、媒体类型和大小并创建待上传证据。
-2. `POST /evidence/:id/upload` 通过同迹API受控上传到私有 bucket，避免向浏览器暴露内部Supabase地址。
+2. `POST /evidence/:id/upload` 通过同迹API受控上传到私有媒体空间，避免向浏览器暴露内部存储地址。
 3. 服务端核对文件大小、媒体类型、租户和授权后将证据标记为 `ready`。
 4. `GET /evidence/:id/download` 返回5分钟有效、使用公网HTTPS域名的私有查看链接。
 
@@ -109,14 +112,15 @@
 {tenant_id}/{classroom_id}/{child_id}/{observation_id}/{random_uuid}.{ext}
 ```
 
-## 5. AI 分析与教师逐条审核
+## 5. AI 分析与教师确认
 
 | 方法 | 路径 | 作用 |
 |---|---|---|
 | POST | `/observations/:id/analyze` | 按班级年龄检索知识卡，由当前AI Provider生成结构化草稿 |
-| PATCH | `/analyses/:id/claims/:claimKey` | 对单条结论采用、修改、拒绝或标记待验证 |
-| POST | `/analyses/:id/finalize` | 所有结论处理完成后执行教师终审 |
-| POST | `/analyses/:id/decision` | 兼容旧客户端的整份处理接口，内部仍转换为逐条审核 |
+| POST | `/analyses/:id/decision` | 教师对整份“观察、识别、应答”AI结果确认采用或不采用 |
+| POST | `/analyses/:id/revise` | 根据教师反馈生成新的AI修订稿 |
+| PATCH | `/analyses/:id/claims/:claimKey` | 兼容历史精细审阅数据，不在当前教师页面暴露 |
+| POST | `/analyses/:id/finalize` | 兼容历史精细审阅数据，不在当前教师页面暴露 |
 
 分析只接受已经提交的教师记录。`AI_MODE=qianwen` 时使用 `QianwenAIProvider`；在监护授权为 `granted` 且 `QWEN_MEDIA_ANALYSIS_ENABLED=true` 时，可将私有图片或视频的15分钟签名链接作为多模态输入。视频只分析画面，不处理音轨。未启用千问或安全回退时使用 `ScenarioAIProvider`，页面必须显示实际 Provider 和模型。
 
@@ -153,23 +157,22 @@
     "caution": "只进行个体跨时间比较，仍需后续验证"
   },
   "evidenceSufficiency": "有限 | 初步充分",
-  "warnings": ["必须由教师审核"]
+  "warnings": ["必须由教师确认"]
 }
 ```
 
 接口同时返回 `aiNotice`；`analysis_runs.provider`、`model`、`prompt_version`、`knowledge_card_ids` 和 `risk_flags` 保存本次生成的可追溯信息。千问返回的指标编码和证据ID必须在请求白名单内，否则整次结果作废并按配置回退或报错。
 
-逐条审核请求：
+当前教师页面只保留整份确认：
 
 ```json
 {
-  "decision": "modified",
-  "content": "教师修改后的正式表述",
-  "note": "修改依据"
+  "decision": "adopted",
+  "note": "确认说明"
 }
 ```
 
-`decision` 可取 `adopted | modified | rejected | to_verify`。AI原文保存在 `analysis_runs.structured_result`，教师决定与修改稿保存在 `analysis_claim_reviews`，二者不会互相覆盖。所有审核项不再有 `pending` 后，调用终审接口；数据库函数 `tongji_v3.finalize_analysis_review` 在同一事务内更新分析和观察状态，并且只把教师采用或修改的应答建议创建为待实施行动。拒绝及待验证项不会进入成长轨迹或报告。
+`decision` 可取 `adopted | abandoned`。AI原文保存在 `analysis_runs.structured_result`，教师确认说明和AI修订版本独立留痕。只有教师确认采用的分析才进入成长轨迹、周期报告和课程线索；不采用的分析不会成为正式证据。
 
 ## 6. 知识库
 
@@ -190,36 +193,25 @@
 | PATCH | `/support-actions/:id` | 按“实施、复察、验证、关闭”状态机记录效果证据 |
 | GET | `/children/:id/growth` | 汇总该幼儿已采用观察、分析和应答效果时间轴 |
 | GET | `/reports` | 查看权限范围内的周期报告 |
-| POST | `/reports/generate` | 生成个体教师版、个体家长版或班级证据画像草稿 |
-| PATCH | `/reports/:id/status` | 完成审核、发布或撤回 |
+| POST | `/reports/generate` | 生成个体教师版、个体家长版或班级证据画像工作稿 |
+| PATCH | `/reports/:id` | 教师直接修改报告叙述内容 |
+| POST | `/reports/:id/revise` | AI按照教师意见修订报告，不改变系统统计指标 |
+| DELETE | `/reports/:id` | 教师直接删除报告 |
 | GET | `/curriculum-clues` | 查看多幼儿、多时间点课程线索 |
 | POST | `/curriculum-clues/scan` | 先按主题、场景和教师识别进行可解释语义聚类，再按证据门槛生成课程草案 |
 | PATCH | `/curriculum-clues/:id` | 保存可编辑课程草案新版本并推进状态 |
 
-个体报告至少需要2条、跨2个日期的终审证据。班级报告至少需要覆盖2名幼儿、2条观察和2个日期；覆盖人数、场景、五大领域证据条数、支持复察率和课程线索由系统计算，AI只提炼共同兴趣、持续问题和下一步建议。课程线索至少满足“2名幼儿或同一幼儿3次观察”，并跨越不少于2个时间点；系统只生成可修改草案。
+个体报告至少需要2条、跨2个日期的教师确认证据。班级报告至少需要覆盖2名幼儿、2条观察和2个日期；覆盖人数、场景、五大领域证据条数、支持复察率和课程线索由系统计算，AI只提炼共同兴趣、持续问题和下一步建议。报告不设审核、发布或撤回流程，教师可直接编辑、AI修订、打印为PDF或删除。课程线索至少满足“2名幼儿或同一幼儿3次观察”，并跨越不少于2个时间点；系统只生成可修改草案。
 
-## 8. 教研治理
+观察记录和课程计划Word采用即时生成：
 
-### 8.1 观察质量审核
+| 方法 | 路径 | 作用 |
+|---|---|---|
+| POST | `/observations/:id/document-exports` | 直接生成教师原稿版或专业版观察Word |
+| POST | `/curriculum-plans/:id/document-exports` | 直接生成课程计划Word |
+| GET | `/document-exports/:id/download` | 获取当前用户有权访问的下载地址 |
 
-| 方法 | 路径 | 权限 | 作用 |
-|---|---|---|---|
-| GET | `/quality-reviews` | 教研员 | 返回已提交观察及其独立质量审核状态 |
-| POST | `/quality-reviews` | 教研员 | 按事实性、具体性、时序性、证据匹配四维保存审核 |
-
-质量审核不得改写教师原稿，也不得评价幼儿能力。状态为 `pending | passed | revision_requested`。
-
-### 8.2 导出审批
-
-| 方法 | 路径 | 权限 | 作用 |
-|---|---|---|---|
-| GET | `/export-requests` | 两角色 | 教师查看本人申请，教研员查看全园申请 |
-| POST | `/export-requests` | 两角色 | 从当前账号可访问的真实报告、课程案例或教研活动中选择对象并申请导出 |
-| PATCH | `/export-requests/:id/decision` | 教研员 | 批准或拒绝，并保存用途限制与匿名化条件 |
-
-后端会根据 `exportType + resourceId` 再次校验对象存在性、报告维度、访问权限和关联班级，并自行写入规范化的 `resourceType`，不接受前端手填对象类型或班级。当前支持个体报告、班级报告、课程案例和匿名教研数据。审批通过不自动打包文件，也不扩大使用范围；系统记录申请对象、用途、接收方、去标识要求和决定。
-
-### 8.3 教研活动模式
+## 8. 教研活动模式
 
 | 方法 | 路径 | 权限 | 作用 |
 |---|---|---|---|
@@ -243,6 +235,5 @@
 | `ANALYSIS_DECISION_FAILED` | AI结果已处理或事务失败 |
 | `MEDIA_TOO_LARGE` | 媒体超过限制 |
 | `RESEARCH_ACTIVITY_NOT_OPEN` | 教研活动尚未开始或已经结束 |
-| `EXPORT_REQUEST_DECISION_FAILED` | 导出申请无权处理或已经处理 |
 | `REPORT_EVIDENCE_INSUFFICIENT` | 指定周期没有教师已采用的正式证据 |
 | `FOLLOW_UP_EVIDENCE_REQUIRED` | 应答效果验证缺少幼儿后续反应 |
