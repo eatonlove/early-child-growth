@@ -7,6 +7,20 @@ const pool = new Pool({ connectionString: config.LOCAL_DATABASE_URL });
 const tenantId = "10000000-0000-4000-8000-000000000001";
 const researcherId = "20000000-0000-4000-8000-000000000001";
 const teacherId = "20000000-0000-4000-8000-000000000002";
+const curriculumTemplateStructure = {
+  metadata: ["主题名称", "实施班级", "实施周期", "核心探究线索"],
+  originAndCompetencies: {
+    coreEmergence: "一个核心生发点及来源描述",
+    dimensions: ["与自然同生", "与生活同生", "与自我同生"],
+    possibilities: ["预设方向", "思维导图", "留白与生成"],
+  },
+  implementation: {
+    zones: ["起始区", "聚焦区", "探究区", "解决区/新起始区"],
+    steps: ["发现真问题", "详细描述问题表现", "明确问题关键", "确定解决方向", "探索解决方法", "实施方案与过程", "解决当下问题并发现新问题"],
+    cycleFields: ["教师支持策略与关键提问", "幼儿活动与表现", "环境与材料支持", "经验生成及新问题走向"],
+  },
+  resources: ["环境创设", "材料投放", "家园共育策略", "过程活动板块", "成果共建"],
+};
 const classrooms = [
   ["30000000-0000-4000-8000-000000000001", "小一班", "small"],
   ["30000000-0000-4000-8000-000000000002", "中四班", "middle"],
@@ -35,6 +49,15 @@ try {
        ($2, $3, 'teacher.demo', '本地教师', 'teacher', 'active', $1)
      on conflict (user_id) do update set status = 'active', disabled_at = null, disabled_reason = null`,
     [researcherId, teacherId, tenantId],
+  );
+  await pool.query(
+    `insert into tongji_v3.curriculum_template_versions
+       (tenant_id, code, name, version, description, structure, is_default, status, created_by)
+     values ($1, 'TONGSHENG_1N', '“同生”课程·四区七步N循环', 1,
+       '基于真实游戏证据生成课程地图，并在四区七步中持续记录N次探究循环。', $2, true, 'active', $3)
+     on conflict (tenant_id, code, version) do update set
+       structure = excluded.structure, is_default = true, status = 'active'`,
+    [tenantId, curriculumTemplateStructure, researcherId],
   );
   for (const [id, name, grade] of classrooms) {
     await pool.query(

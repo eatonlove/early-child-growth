@@ -47,6 +47,8 @@ const children = await jsonRequest("/api/children", { headers: researcherHeaders
 if (!Array.isArray(children.body.items) || children.body.items.length < 6) throw new Error("幼儿种子数据不完整");
 const knowledge = await jsonRequest("/api/knowledge?grade=middle", { headers: researcherHeaders });
 if (!Array.isArray(knowledge.body.items) || knowledge.body.items.length === 0) throw new Error("年龄段知识库未初始化");
+const curriculumTemplates = await jsonRequest("/api/curriculum-templates", { headers: researcherHeaders });
+if (!Array.isArray(curriculumTemplates.body.items) || curriculumTemplates.body.items.length === 0) throw new Error("默认课程模板未初始化");
 
 const teacherLogin = await jsonRequest("/api/auth/login", {
   method: "POST",
@@ -57,4 +59,4 @@ const teacherCookie = sessionCookie(teacherLogin.response);
 const teacherClasses = await jsonRequest("/api/classrooms", { headers: { Cookie: teacherCookie } });
 if (!Array.isArray(teacherClasses.body.items) || teacherClasses.body.items.length !== 3) throw new Error("教师班级RLS访问结果错误");
 
-console.log(`local-lite smoke passed: ${health.body.ai.mode} AI, auth, RLS, classes, children, knowledge`);
+console.log(`local-lite smoke passed: ${health.body.ai.mode} AI, auth, RLS, classes, children, knowledge, curriculum template`);

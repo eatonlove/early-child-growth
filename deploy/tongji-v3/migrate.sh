@@ -102,5 +102,22 @@ else
   echo "多人观察、组合应答、课程循环与专业记忆结构已就绪，跳过3.2迁移。"
 fi
 
+word_document_mime_types_ready="$(docker exec "$DB_CONTAINER" psql -U postgres -d postgres -Atc \
+  "select exists(
+     select 1
+     from storage.buckets
+     where id = 'tongji-v3-evidence'
+       and 'application/vnd.openxmlformats-officedocument.wordprocessingml.document' = any(allowed_mime_types)
+       and 'application/msword' = any(allowed_mime_types)
+   );")"
+
+if [ "$word_document_mime_types_ready" != "t" ]; then
+  docker exec -i "$DB_CONTAINER" psql -U postgres -d postgres \
+    -v ON_ERROR_STOP=1 --single-transaction \
+    < "$ROOT_DIR/apps/v3-api/supabase/migrations/20260827150000_allow_tongji_word_documents.sql"
+else
+  echo "同迹私有桶已允许DOC和DOCX文件，跳过Word MIME修复迁移。"
+fi
+
 docker exec "$DB_CONTAINER" psql -U postgres -d postgres -Atc \
   "select table_schema || '.' || table_name from information_schema.tables where table_schema = 'tongji_v3' order by table_name;"

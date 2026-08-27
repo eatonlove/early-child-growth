@@ -24,6 +24,23 @@ const MIME_DOCX = "application/vnd.openxmlformats-officedocument.wordprocessingm
 const MIME_DOC = "application/msword";
 const MIME_PDF = "application/pdf";
 
+const observationDocumentFormats = new Map([
+  [MIME_DOCX, { extension: "docx", mimeType: MIME_DOCX }],
+  [MIME_DOC, { extension: "doc", mimeType: MIME_DOC }],
+  [MIME_PDF, { extension: "pdf", mimeType: MIME_PDF }],
+  ["image/jpeg", { extension: "jpg", mimeType: "image/jpeg" }],
+  ["image/png", { extension: "png", mimeType: "image/png" }],
+]);
+
+export function observationDocumentFormat(fileName: string, suppliedMimeType: string) {
+  const byMimeType = observationDocumentFormats.get(suppliedMimeType);
+  if (byMimeType) return byMimeType;
+  const extension = fileName.toLowerCase().split(".").pop();
+  if (extension === "docx") return { extension, mimeType: MIME_DOCX };
+  if (extension === "doc") return { extension, mimeType: MIME_DOC };
+  return null;
+}
+
 export async function extractDocumentText(buffer: Buffer, mimeType: string, fileName: string) {
   const extension = fileName.toLowerCase().split(".").pop();
   if (mimeType === MIME_DOCX || extension === "docx") {

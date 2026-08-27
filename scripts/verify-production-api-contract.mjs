@@ -11,6 +11,10 @@ const backendSource = (
   ])
 ).join("\n");
 const frontendSource = await readFile(path.join(root, "apps/v3-local/src/production/api.ts"), "utf8");
+const storageContractMigration = await readFile(
+  path.join(root, "apps/v3-api/supabase/migrations/20260827150000_allow_tongji_word_documents.sql"),
+  "utf8",
+);
 
 const contract = [
   ["GET", "/api/healthz", false],
@@ -94,6 +98,15 @@ const backendRoutes = new Set(
 );
 const expectedRoutes = new Set(contract.map(([method, route]) => `${method} ${route}`));
 const errors = [];
+
+for (const mimeType of [
+  "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+  "application/msword",
+]) {
+  if (!storageContractMigration.includes(mimeType)) {
+    errors.push(`同迹私有桶迁移缺少文档MIME类型: ${mimeType}`);
+  }
+}
 
 for (const endpoint of expectedRoutes) {
   if (!backendRoutes.has(endpoint)) errors.push(`后端缺少契约路由: ${endpoint}`);

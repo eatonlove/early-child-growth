@@ -1,8 +1,19 @@
 import mammoth from "mammoth";
 import { describe, expect, it } from "vitest";
-import { generateBlankObservationTemplate, generateCurriculumDocument, generateObservationDocument } from "./documents.js";
+import { generateBlankObservationTemplate, generateCurriculumDocument, generateObservationDocument, observationDocumentFormat } from "./documents.js";
 
 describe("Word document generation", () => {
+  it("normalizes Word imports when the browser sends a generic MIME type", () => {
+    expect(observationDocumentFormat("观察记录.docx", "application/octet-stream")).toEqual({
+      extension: "docx",
+      mimeType: "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+    });
+    expect(observationDocumentFormat("旧版观察表.doc", "application/octet-stream")).toEqual({
+      extension: "doc",
+      mimeType: "application/msword",
+    });
+  });
+
   it("generates a standard observation template that can be parsed as DOCX", async () => {
     const buffer = await generateBlankObservationTemplate();
     const text = (await mammoth.extractRawText({ buffer })).value;

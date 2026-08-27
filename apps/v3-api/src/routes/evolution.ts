@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import type { FastifyInstance } from "fastify";
+import type { FastifyBaseLogger, FastifyInstance } from "fastify";
 import { z } from "zod";
 import type { KnowledgeRow } from "../ai/contracts.js";
 import { normalizeAnalysisResult } from "../ai/analysis-compatibility.js";
@@ -12,6 +12,7 @@ import {
   generateBlankObservationTemplate,
   generateCurriculumDocument,
   generateObservationDocument,
+  observationDocumentFormat,
 } from "../documents.js";
 import { ApiError, audit, authenticate, requireResearcher } from "../http.js";
 import { mediaStorage } from "../runtime/media-storage.js";
@@ -27,14 +28,6 @@ const aiProvider = createAIProvider({
   timeoutMs: config.QWEN_TIMEOUT_MS,
   fallbackToSimulated: config.aiFallbackToSimulated,
 });
-
-const importMimeTypes = new Map([
-  [documentMimeTypes.docx, "docx"],
-  [documentMimeTypes.doc, "doc"],
-  [documentMimeTypes.pdf, "pdf"],
-  ["image/jpeg", "jpg"],
-  ["image/png", "png"],
-]);
 
 const sectionClaimTypes: Record<string, string[]> = {
   objective: ["objective_summary", "fact"],
@@ -60,7 +53,7 @@ async function createDirectDocumentExport(auth: Awaited<ReturnType<typeof authen
   resourceId: string;
   fileName: string;
   contentSnapshot: Record<string, unknown>;
-}) {
+}, logger: FastifyBaseLogger) {
   const schema = serviceClient.schema(config.SUPABASE_SCHEMA);
   const { data, error } = await schema.from("document_exports").insert({
     tenant_id: auth.tenantId,
@@ -76,10 +69,17 @@ async function createDirectDocumentExport(auth: Awaited<ReturnType<typeof authen
     created_by: auth.userId,
   }).select().single();
   if (error) throw new ApiError(500, "DOCUMENT_EXPORT_CREATE_FAILED", "Word导出任务创建失败");
-  return materializeDocumentExport(data);
+  try {
+    return await materializeDocumentExport(data, logger);
+  } catch (reason) {
+    await schema.from("document_exports").update({ status: "failed" }).eq("id", data.id);
+    if (reason instanceof ApiError) throw reason;
+    logger.error({ err: reason, documentExportId: data.id, documentType: data.document_type }, "document export generation failed");
+    throw new ApiError(500, "DOCUMENT_EXPORT_GENERATION_FAILED", "Word文件生成失败，请稍后重试");
+  }
 }
 
-async function materializeDocumentExport(item: any) {
+async function materializeDocumentExport(item: any, logger: FastifyBaseLogger) {
   const schema = serviceClient.schema(config.SUPABASE_SCHEMA);
   if (!item || item.status === "ready") return item;
   let buffer: Buffer;
@@ -96,10 +96,14 @@ async function materializeDocumentExport(item: any) {
   });
   if (uploadError) {
     await schema.from("document_exports").update({ status: "failed" }).eq("id", item.id);
-    throw new Error("Word文件写入存储失败");
+    logger.error({ err: uploadError, documentExportId: item.id, storagePath: path }, "document export storage upload failed");
+    throw new ApiError(503, "DOCUMENT_EXPORT_STORAGE_FAILED", "Word文件写入存储失败，请稍后重试");
   }
   const { data: updated, error: updateError } = await schema.from("document_exports").update({ storage_path: path, status: "ready" }).eq("id", item.id).select().single();
-  if (updateError) throw new Error("Word文件状态保存失败");
+  if (updateError) {
+    logger.error({ err: updateError, documentExportId: item.id, storagePath: path }, "document export status update failed");
+    throw new ApiError(500, "DOCUMENT_EXPORT_STATUS_FAILED", "Word文件已生成，但状态保存失败，请稍后重试");
+  }
   return updated;
 }
 
@@ -121,19 +125,19 @@ export async function evolutionRoutes(app: FastifyInstance) {
       mimeType: z.string().trim().min(1).max(160),
       sizeBytes: z.number().int().min(1).max(10 * 1024 * 1024),
     }).parse(request.body);
-    const extension = importMimeTypes.get(input.mimeType) ?? (input.fileName.toLowerCase().endsWith(".docx") ? "docx" : input.fileName.toLowerCase().endsWith(".doc") ? "doc" : undefined);
-    if (!extension) throw new ApiError(422, "UNSUPPORTED_OBSERVATION_DOCUMENT", "观察表支持DOCX、DOC、PDF、JPG和PNG");
+    const format = observationDocumentFormat(input.fileName, input.mimeType);
+    if (!format) throw new ApiError(422, "UNSUPPORTED_OBSERVATION_DOCUMENT", "观察表支持DOCX、DOC、PDF、JPG和PNG");
     const { data: classroom, error: classroomError } = await auth.data.from("classrooms").select("id").eq("id", input.classroomId).maybeSingle();
     if (classroomError) throw new ApiError(500, "CLASSROOM_LOOKUP_FAILED", "班级读取失败");
     if (!classroom) throw new ApiError(404, "CLASSROOM_NOT_FOUND", "班级不存在或无权访问");
     const id = randomUUID();
-    const path = `${auth.tenantId}/${input.classroomId}/imports/${id}.${extension}`;
+    const path = `${auth.tenantId}/${input.classroomId}/imports/${id}.${format.extension}`;
     const { data, error } = await auth.data.from("observation_imports").insert({
       id,
       tenant_id: auth.tenantId,
       classroom_id: input.classroomId,
       source_file_name: input.fileName,
-      source_mime_type: input.mimeType,
+      source_mime_type: format.mimeType,
       source_size_bytes: input.sizeBytes,
       storage_path: path,
       created_by: auth.userId,
@@ -156,7 +160,10 @@ export async function evolutionRoutes(app: FastifyInstance) {
       cacheControl: "3600",
       upsert: false,
     });
-    if (uploadError) throw new ApiError(500, "OBSERVATION_DOCUMENT_UPLOAD_FAILED", "观察表文件写入存储失败");
+    if (uploadError) {
+      request.log.error({ err: uploadError, observationImportId: id, storagePath: item.storage_path }, "observation document storage upload failed");
+      throw new ApiError(503, "OBSERVATION_DOCUMENT_UPLOAD_FAILED", "观察表文件写入存储失败，请稍后重试");
+    }
     const schema = serviceClient.schema(config.SUPABASE_SCHEMA);
     await schema.from("observation_imports").update({ status: "extracting" }).eq("id", id).eq("tenant_id", auth.tenantId);
     try {
@@ -589,7 +596,8 @@ export async function evolutionRoutes(app: FastifyInstance) {
       auth.data.from("observations").select("*").in("id", clue.evidence_observation_ids).eq("status", "adopted").order("occurred_at"),
       auth.data.from("classrooms").select("name, grade").eq("id", clue.classroom_id).single(),
     ]);
-    if (templateError || observationError || classroomError || !template || !classroom) throw new ApiError(500, "CURRICULUM_PLAN_CONTEXT_FAILED", "课程模板或证据读取失败");
+    if (templateError || observationError || classroomError || !classroom) throw new ApiError(500, "CURRICULUM_PLAN_CONTEXT_FAILED", "课程模板或证据读取失败");
+    if (!template) throw new ApiError(409, "CURRICULUM_TEMPLATE_REQUIRED", "请先由教研员设置默认课程模板");
     const { data: knowledge, error: knowledgeError } = await auth.data.from("knowledge_cards").select("*").eq("grade", classroom.grade).eq("status", "active").limit(200);
     if (knowledgeError) throw new ApiError(500, "CURRICULUM_KNOWLEDGE_READ_FAILED", "课程知识参照读取失败");
     const normalizedOptions = selectedOptions.map((item) => ({
@@ -720,7 +728,7 @@ export async function evolutionRoutes(app: FastifyInstance) {
       documentType: input.variant === "professional" ? "observation_professional" : "observation_teacher",
       resourceType: "observation", resourceId: id,
       fileName: `${observation.title}-${input.variant === "professional" ? "专业版" : "教师原稿版"}.docx`, contentSnapshot: snapshot,
-    });
+    }, request.log);
     await audit(auth, "document_export.created", "document_export", documentExport.id, { variant: input.variant });
     return reply.status(201).send({ documentExport });
   });
@@ -745,7 +753,7 @@ export async function evolutionRoutes(app: FastifyInstance) {
       classroomId: plan.classroom_id, documentType: "curriculum_plan",
       resourceType: "curriculum_plan", resourceId: id,
       fileName: `${plan.title}-${isIndividualSupport ? "个别支持计划" : "课程计划"}-V${plan.version}.docx`, contentSnapshot: snapshot,
-    });
+    }, request.log);
     await audit(auth, "document_export.created", "document_export", documentExport.id, { planId: id });
     return reply.status(201).send({ documentExport });
   });
