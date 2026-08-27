@@ -761,14 +761,21 @@ export async function evolutionRoutes(app: FastifyInstance) {
     return reply.status(201).send({ documentExport });
   });
 
-  app.get("/api/document-exports/:id/download", async (request) => {
+  app.get("/api/document-exports/:id/download", async (request, reply) => {
     const auth = await authenticate(request);
     const { id } = z.object({ id: uuid }).parse(request.params);
     const { data, error } = await auth.data.from("document_exports").select("storage_path, status, file_name").eq("id", id).maybeSingle();
     if (error) throw new ApiError(500, "DOCUMENT_EXPORT_READ_FAILED", "Word导出任务读取失败");
     if (!data?.storage_path || data.status !== "ready") throw new ApiError(409, "DOCUMENT_EXPORT_NOT_READY", "Word文件尚未生成完成");
-    const { data: signed, error: signedError } = await mediaStorage.createSignedUrl(data.storage_path, 300);
-    if (signedError || !signed) throw new ApiError(500, "DOCUMENT_EXPORT_URL_FAILED", "Word下载链接创建失败");
-    return { url: signed.signedUrl, expiresIn: 300, fileName: data.file_name };
+    const { data: body, error: downloadError } = await mediaStorage.download(data.storage_path);
+    if (downloadError || !body) {
+      request.log.error({ err: downloadError, documentExportId: id, storagePath: data.storage_path }, "document export storage download failed");
+      throw new ApiError(503, "DOCUMENT_EXPORT_DOWNLOAD_FAILED", "Word文件读取失败，请稍后重试");
+    }
+    return reply
+      .header("Cache-Control", "private, no-store")
+      .header("Content-Type", documentMimeTypes.docx)
+      .header("Content-Disposition", `attachment; filename*=UTF-8''${encodeURIComponent(data.file_name || "同迹文档.docx")}`)
+      .send(body);
   });
 }

@@ -18,6 +18,7 @@ interface MediaStorage {
   createSignedUploadUrl(path: string): Promise<{ data: { path: string; token: string } | null; error: StorageError | null }>;
   list(folder: string, options: { search?: string; limit?: number }): Promise<{ data: Array<{ name: string }> | null; error: StorageError | null }>;
   upload(path: string, body: Buffer, options: UploadOptions): Promise<{ error: StorageError | null }>;
+  download(path: string): Promise<{ data: Buffer | null; error: StorageError | null }>;
   createSignedUrl(path: string, expiresIn: number): Promise<{ data: { signedUrl: string } | null; error: StorageError | null }>;
   readSigned(path: string, expires: number, signature: string): Promise<Buffer | null>;
 }
@@ -40,6 +41,16 @@ class SupabaseMediaStorage implements MediaStorage {
   async upload(path: string, body: Buffer, options: UploadOptions) {
     const { error } = await this.bucket().upload(path, body, options);
     return { error };
+  }
+
+  async download(path: string) {
+    const { data, error } = await this.bucket().download(path);
+    if (error || !data) return { data: null, error };
+    try {
+      return { data: Buffer.from(await data.arrayBuffer()), error: null };
+    } catch (reason) {
+      return { data: null, error: { message: reason instanceof Error ? reason.message : "Storage download failed" } };
+    }
   }
 
   async createSignedUrl(path: string, expiresIn: number) {
@@ -93,6 +104,14 @@ class LocalMediaStorage implements MediaStorage {
       return { error: null };
     } catch (error) {
       return { error: { message: error instanceof Error ? error.message : "Local media upload failed" } };
+    }
+  }
+
+  async download(path: string) {
+    try {
+      return { data: await readFile(this.filePath(path)), error: null };
+    } catch (error) {
+      return { data: null, error: { message: error instanceof Error ? error.message : "Local media download failed" } };
     }
   }
 

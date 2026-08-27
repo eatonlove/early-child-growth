@@ -79,10 +79,12 @@ async function download(path: string, fileName: string) {
     const payload = await response.json().catch(() => ({}));
     throw new RemoteApiError(response.status, payload.code || "DOWNLOAD_FAILED", payload.message || "文件下载失败");
   }
+  const encodedName = response.headers.get("Content-Disposition")?.match(/filename\*=UTF-8''([^;]+)/i)?.[1];
+  const resolvedFileName = encodedName ? decodeURIComponent(encodedName) : fileName;
   const url = URL.createObjectURL(await response.blob());
   const anchor = document.createElement("a");
   anchor.href = url;
-  anchor.download = fileName;
+  anchor.download = resolvedFileName;
   anchor.click();
   setTimeout(() => URL.revokeObjectURL(url), 1000);
 }
@@ -214,11 +216,7 @@ export const remoteApi = {
   },
   createObservationDocument: (id: string, variant: "teacher" | "professional") =>
     request<{ documentExport: { id: string } }>(`/api/observations/${id}/document-exports`, { method: "POST", body: body({ variant }) }),
-  documentExportDownload: async (id: string) => {
-    const item = await request<{ url: string; fileName: string }>(`/api/document-exports/${id}/download`);
-    window.location.assign(item.url);
-    return item;
-  },
+  documentExportDownload: (id: string) => download(`/api/document-exports/${id}/download`, "同迹文档.docx"),
   evidenceTicket: (observationId: string, file: File) =>
     request<{
       evidenceId: string;
