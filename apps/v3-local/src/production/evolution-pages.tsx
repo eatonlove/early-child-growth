@@ -51,6 +51,26 @@ const analysisSections = [
   { key: "observation", title: "下次观察", hint: "观察切口和具体观察点" },
 ] as const;
 
+export function normalizeAnalysisResultForView(rawResult: RemoteAnalysis["structured_result"]) {
+  return {
+    isLegacyAnalysis: !rawResult.gameExperience || !rawResult.domainExperiences || !rawResult.learningDispositions,
+    result: {
+      ...rawResult,
+      objectiveSummary: rawResult.objectiveSummary || "历史分析未提供客观摘要",
+      evidenceSufficiency: rawResult.evidenceSufficiency || "历史版本",
+      warnings: rawResult.warnings ?? ["该分析由旧版结构生成，可重新运行AI以补充3.2专业板块。"],
+      facts: rawResult.facts ?? [],
+      gameExperience: rawResult.gameExperience ?? [],
+      domainExperiences: rawResult.domainExperiences ?? [],
+      learningDispositions: rawResult.learningDispositions ?? [],
+      learningPossibilities: rawResult.learningPossibilities ?? [],
+      gamePossibilities: rawResult.gamePossibilities ?? [],
+      observationCut: rawResult.observationCut ?? [],
+      observationFocus: rawResult.observationFocus ?? [],
+    },
+  };
+}
+
 function AnalysisBoard({
   analysis, childName, responsePlans, evidence, busy, onRefresh, onError,
 }: {
@@ -66,8 +86,9 @@ function AnalysisBoard({
   const [note, setNote] = useState("");
   const [mixTitle, setMixTitle] = useState("教师组合应答方案");
   const [mix, setMix] = useState({ activityPlanId: "", materialPlanId: "", experiencePlanId: "" });
-  const result = analysis.structured_result;
-  const sectionClaims = (section: string) => analysis.claim_reviews.filter((claim) => ({
+  const { result, isLegacyAnalysis } = normalizeAnalysisResultForView(analysis.structured_result);
+  const claimReviews = analysis.claim_reviews ?? [];
+  const sectionClaims = (section: string) => claimReviews.filter((claim) => ({
     objective: ["objective_summary", "fact"],
     game_experience: ["game_experience", "current_experience", "interpretation", "historical_change"],
     domains: ["domain_experience", "development_reference"],
@@ -88,23 +109,25 @@ function AnalysisBoard({
   };
   const reviewSection = (section: string, decision: Exclude<AnalysisClaimDecision, "pending" | "modified">) =>
     run(() => remoteApi.reviewAnalysisSection(analysis.id, section, { decision, note: note || "按专业板块快速审核", edits: {} }));
-  const allHandled = analysis.claim_reviews.length > 0 && analysis.claim_reviews.every((claim) => claim.decision !== "pending");
+  const allHandled = claimReviews.length > 0 && claimReviews.every((claim) => claim.decision !== "pending");
   return (
     <div className="evo-analysis-board">
       <Panel className="evo-ai-summary">
         <div className="evo-section-head"><div><Badge tone="purple">AI建议稿 · {childName}</Badge><h2>{result.objectiveSummary}</h2></div><Badge tone={tone(analysis.decision)}>{statusLabel[analysis.decision] ?? analysis.decision}</Badge></div>
         <p>{result.evidenceSufficiency}证据。{result.warnings.join("；")}</p>
+        {isLegacyAnalysis && <p className="warning-card">这是历史AI结构，已有事实继续保留；新增专业板块不作推测，可在下方重新生成新版本。</p>}
       </Panel>
       <div className="evo-analysis-sections">
         {analysisSections.map((section) => <Panel key={section.key} className="evo-analysis-section">
           <div className="evo-section-head"><div><h3>{section.title}</h3><small>{section.hint}</small></div><Badge tone={sectionState(section.key) === "待审核" ? "orange" : "green"}>{sectionState(section.key)}</Badge></div>
           {section.key === "objective" && <><p>{result.objectiveSummary}</p>{result.facts.map((item, index) => <p key={index}>• {item.content} <small>证据：{item.evidence}</small></p>)}</>}
           {section.key === "game_experience" && result.gameExperience.map((item) => <article key={item.dimension}><strong>{item.dimension}</strong><p>{item.possibleExperience}</p><small>{item.evidence}；边界：{item.limitation}</small></article>)}
-          {section.key === "domains" && result.domainExperiences.map((item) => <article key={item.domain}><strong>{item.domain}</strong><p>{item.noJudgment ? "本次证据不足，不作判断" : item.possibleExperience}</p><small>{item.noJudgment ? item.missingEvidence : `${item.evidence} · ${item.indicatorCodes.join("、") || "待补指标"}`}</small></article>)}
+          {section.key === "domains" && result.domainExperiences.map((item) => <article key={item.domain}><strong>{item.domain}</strong><p>{item.noJudgment ? "本次证据不足，不作判断" : item.possibleExperience}</p><small>{item.noJudgment ? item.missingEvidence : `${item.evidence} · ${(item.indicatorCodes ?? []).join("、") || "待补指标"}`}</small></article>)}
           {section.key === "dispositions" && result.learningDispositions.map((item) => <article key={item.dimension}><strong>{item.dimension}</strong><p>{item.possibleExperience}</p><small>{item.evidence} · 置信度{Math.round(item.confidence * 100)}%</small></article>)}
           {section.key === "possibilities" && <>{[...result.learningPossibilities, ...result.gamePossibilities].map((item) => <p key={item}>• {item}</p>)}</>}
           {section.key === "response" && <p>已生成3套完整候选方案，请在下方完成终审后选择其中一套。</p>}
           {section.key === "observation" && <><p><strong>观察切口：</strong>{result.observationCut.join("；")}</p>{result.observationFocus.map((item) => <p key={item}>• {item}</p>)}</>}
+          {isLegacyAnalysis && section.key !== "objective" && sectionClaims(section.key).length === 0 && <p className="empty-inline">历史版本未生成此板块。</p>}
           {analysis.decision === "pending" && <div className="evo-review-actions">
             <button className="btn btn-secondary" disabled={busy} onClick={() => void reviewSection(section.key, "adopted")}><Check />整组采用</button>
             <button className="btn btn-secondary" disabled={busy} onClick={() => void reviewSection(section.key, "to_verify")}>标记待验证</button>
