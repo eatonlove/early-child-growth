@@ -31,6 +31,7 @@ import {
 } from "./contracts.js";
 import { analysisJsonSchema, classroomReportJsonSchema, curriculumActivityOptionsJsonSchema, curriculumJsonSchema, curriculumPlanContentJsonSchema, interestClusterJsonSchema, observationDocumentExtractionJsonSchema, reportJsonSchema } from "./json-schemas.js";
 import { QwenClient, type QwenContentPart } from "./qianwen-client.js";
+import { normalizeAnalysisResult } from "./analysis-compatibility.js";
 import { rankKnowledgeCards } from "./scenario-provider.js";
 
 export interface QianwenProviderOptions {
@@ -321,11 +322,12 @@ export class QianwenAIProvider implements AIAnalysisProvider {
   }
 
   async reviseAnalysis(input: AnalysisRevisionInput): Promise<AIGeneration<AnalysisResult>> {
+    const compatibleInput = { ...input, original: normalizeAnalysisResult(input.original) };
     const result = await this.client.structuredCompletion<AnalysisResult>({
       model: this.options.textModel,
       messages: [
         { role: "system", content: analysisRevisionSystemPrompt },
-        { role: "user", content: JSON.stringify(input) },
+        { role: "user", content: JSON.stringify(compatibleInput) },
       ],
       schemaName: "tongji_observation_analysis_revision",
       jsonSchema: analysisJsonSchema,

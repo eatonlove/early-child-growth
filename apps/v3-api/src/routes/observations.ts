@@ -412,6 +412,11 @@ export async function observationRoutes(app: FastifyInstance) {
     const createdRunIds: string[] = [];
     const analyses: any[] = [];
     const notices = new Set<string>();
+    const cleanupCreatedAnalyses = async () => {
+      if (!createdRunIds.length) return;
+      await schema.from("response_plans").delete().in("analysis_run_id", createdRunIds).eq("tenant_id", auth.tenantId);
+      await schema.from("analysis_runs").delete().in("id", createdRunIds).eq("tenant_id", auth.tenantId);
+    };
     try {
       for (const subject of subjectRows) {
         const child = (children ?? []).find((item) => item.id === subject.child_id)!;
@@ -526,7 +531,7 @@ export async function observationRoutes(app: FastifyInstance) {
         analyses.push({ ...analysis, subject: { ...subject, display_name: child.display_name } });
       }
     } catch (reason) {
-      if (createdRunIds.length) await schema.from("analysis_runs").delete().in("id", createdRunIds).eq("tenant_id", auth.tenantId);
+      await cleanupCreatedAnalyses();
       if (reason instanceof ApiError) throw reason;
       request.log.error({ err: reason, observationId: id }, "multi-subject AI analysis failed");
       throw new ApiError(502, "AI_ANALYSIS_FAILED", "AI分析暂时不可用，请稍后重试");
@@ -538,7 +543,7 @@ export async function observationRoutes(app: FastifyInstance) {
       .eq("id", observation.id)
       .eq("tenant_id", auth.tenantId);
     if (statusError) {
-      if (createdRunIds.length) await schema.from("analysis_runs").delete().in("id", createdRunIds).eq("tenant_id", auth.tenantId);
+      await cleanupCreatedAnalyses();
       throw new ApiError(500, "AI_ANALYSIS_STATE_FAILED", "AI分析状态保存失败，结果已回滚");
     }
     await audit(auth, "analysis.generated", "observation", observation.id, {

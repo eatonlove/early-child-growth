@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { buildScenarioAnalysis, buildScenarioClassroomReport, buildScenarioInterestClusters, rankKnowledgeCards, type KnowledgeRow } from "./scenario-provider.js";
+import { buildScenarioAnalysis, buildScenarioClassroomReport, buildScenarioInterestClusters, buildScenarioRevision, rankKnowledgeCards, type KnowledgeRow } from "./scenario-provider.js";
 
 const cards: KnowledgeRow[] = [
   { id: "science", code: "SCI", domain: "科学", subdomain: "科学探究", title: "具有初步的探究能力", age_band: "4-5岁", official_expectations: [], observable_behaviors: ["观察积木倒塌并调整"], evidence_requirements: ["再次观察策略变化"], assessment_guidance: [], misunderstanding_warning: "不要把一次成功写成稳定能力。", response_strategies: { 材料支持: ["提供不同形状积木"] }, next_observation_prompts: ["幼儿是否主动比较材料？"], keywords: ["积木", "调整", "倒塌"] },
@@ -36,6 +36,31 @@ describe("scenario AI provider", () => {
     }]);
     expect(result.historicalComparison.evidenceCount).toBe(1);
     expect(result.historicalComparison.changes[0]?.previousEvidenceIds).toEqual(["observation:11111111-1111-4111-8111-111111111111"]);
+  });
+
+  it("修订扩展前生成的旧分析时补齐应答方案和拓展字段", () => {
+    const current = buildScenarioAnalysis(observation, cards);
+    const {
+      gameExperience: _gameExperience,
+      domainExperiences: _domainExperiences,
+      learningDispositions: _learningDispositions,
+      learningPossibilities: _learningPossibilities,
+      gamePossibilities: _gamePossibilities,
+      responsePlans: _responsePlans,
+      observationCut: _observationCut,
+      observationFocus: _observationFocus,
+      ...legacy
+    } = current;
+
+    const revised = buildScenarioRevision({
+      original: legacy as typeof current,
+      teacherFeedback: [{ section: "objective", decision: "modified", note: "保留客观动作", content: "教师确认后的客观摘要" }],
+    });
+
+    expect(revised.objectiveSummary).toBe("教师确认后的客观摘要");
+    expect(revised.responsePlans).toHaveLength(3);
+    expect(revised.domainExperiences.map((item) => item.domain)).toEqual(["健康", "语言", "社会", "科学", "艺术"]);
+    expect(revised.observationFocus.length).toBeGreaterThanOrEqual(2);
   });
 
   it("把不同表述但语义相近的兴趣主题聚为一组", () => {

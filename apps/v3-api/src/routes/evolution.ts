@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 import type { FastifyInstance } from "fastify";
 import { z } from "zod";
 import type { KnowledgeRow } from "../ai/contracts.js";
+import { normalizeAnalysisResult } from "../ai/analysis-compatibility.js";
 import { createAIProvider } from "../ai/provider.js";
 import { effectiveAnalysisResult, flattenAnalysisClaims } from "../analysis-claims.js";
 import { config } from "../config.js";
@@ -247,56 +248,71 @@ export async function evolutionRoutes(app: FastifyInstance) {
     const { data: analysis, error: analysisError } = await auth.data.from("analysis_runs").select("*").eq("id", id).maybeSingle();
     if (analysisError) throw new ApiError(500, "ANALYSIS_READ_FAILED", "AI分析读取失败");
     if (!analysis) throw new ApiError(404, "ANALYSIS_NOT_FOUND", "AI分析不存在或无权访问");
-    const generated = await aiProvider.reviseAnalysis({ original: analysis.structured_result, teacherFeedback: input.feedback });
+    const generated = await aiProvider.reviseAnalysis({ original: normalizeAnalysisResult(analysis.structured_result), teacherFeedback: input.feedback });
+    if (generated.fallbackReason) {
+      request.log.warn({ analysisId: id, observationId: analysis.observation_id, fallbackReason: generated.fallbackReason }, "AI analysis revision provider used safe fallback");
+    }
+    const revisedResult = normalizeAnalysisResult(generated.data);
     const schema = serviceClient.schema(config.SUPABASE_SCHEMA);
     const { count } = await schema.from("analysis_feedback_versions").select("id", { count: "exact", head: true }).eq("analysis_run_id", id);
     const version = (count ?? 0) + 1;
-    const { data: versionRow, error: versionError } = await schema.from("analysis_feedback_versions").insert({
-      tenant_id: auth.tenantId, classroom_id: analysis.classroom_id, child_id: analysis.child_id,
-      observation_id: analysis.observation_id, analysis_run_id: id, version,
-      teacher_feedback: input.feedback, revised_result: generated.data,
-      provider: generated.provider, model: generated.model, prompt_version: generated.promptVersion,
-      created_by: auth.userId,
-    }).select().single();
-    if (versionError) throw new ApiError(500, "ANALYSIS_REVISION_SAVE_FAILED", "AI修订版本保存失败");
-    const { data: newRun, error: runError } = await schema.from("analysis_runs").insert({
-      tenant_id: auth.tenantId, classroom_id: analysis.classroom_id, child_id: analysis.child_id,
-      observation_id: analysis.observation_id, provider: generated.provider, model: generated.model,
-      prompt_version: generated.promptVersion, knowledge_version: analysis.knowledge_version,
-      input_snapshot: { sourceAnalysisId: id, feedbackVersionId: versionRow.id, teacherFeedback: input.feedback },
-      knowledge_card_ids: analysis.knowledge_card_ids, structured_result: generated.data,
-      risk_flags: generated.data.warnings, generated_by: auth.userId,
-    }).select().single();
-    if (runError) throw new ApiError(500, "ANALYSIS_REVISION_RUN_FAILED", "AI修订稿创建失败");
-    const claims = flattenAnalysisClaims(generated.data).map((claim) => ({
-      tenant_id: auth.tenantId, classroom_id: newRun.classroom_id, child_id: newRun.child_id,
-      observation_id: newRun.observation_id, analysis_run_id: newRun.id,
-      claim_key: claim.claimKey, claim_type: claim.claimType, original_content: claim.originalContent,
-    }));
-    const responsePlans = generated.data.responsePlans.map((plan, index) => ({
-      tenant_id: auth.tenantId, classroom_id: newRun.classroom_id, child_id: newRun.child_id,
-      observation_id: newRun.observation_id, analysis_run_id: newRun.id, title: plan.title,
-      rationale: plan.rationale, target_experience: plan.targetExperience,
-      activity_support: plan.activitySupport, material_support: plan.materialSupport,
-      experience_support: plan.experienceSupport, observation_cut: plan.observationCut,
-      observation_focus: plan.observationFocus, adjustment_condition: plan.adjustmentCondition,
-      source_plan_keys: [`response-plan:${index}`], created_by: auth.userId,
-    }));
-    const [{ error: claimError }, { error: responseError }] = await Promise.all([
-      schema.from("analysis_claim_reviews").insert(claims),
-      schema.from("response_plans").insert(responsePlans),
-    ]);
-    if (claimError || responseError) {
-      await schema.from("analysis_runs").delete().eq("id", newRun.id).eq("tenant_id", auth.tenantId);
-      await schema.from("analysis_feedback_versions").delete().eq("id", versionRow.id).eq("tenant_id", auth.tenantId);
-      throw new ApiError(500, "ANALYSIS_REVISION_ITEMS_FAILED", "AI修订稿审核项或应答方案初始化失败，结果已回滚");
+    let versionRow: Record<string, any> | null = null;
+    let newRun: Record<string, any> | null = null;
+    try {
+      const versionResult = await schema.from("analysis_feedback_versions").insert({
+        tenant_id: auth.tenantId, classroom_id: analysis.classroom_id, child_id: analysis.child_id,
+        observation_id: analysis.observation_id, analysis_run_id: id, version,
+        teacher_feedback: input.feedback, revised_result: revisedResult,
+        provider: generated.provider, model: generated.model, prompt_version: generated.promptVersion,
+        created_by: auth.userId,
+      }).select().single();
+      if (versionResult.error) throw new ApiError(500, "ANALYSIS_REVISION_SAVE_FAILED", "AI修订版本保存失败");
+      versionRow = versionResult.data;
+
+      const runResult = await schema.from("analysis_runs").insert({
+        tenant_id: auth.tenantId, classroom_id: analysis.classroom_id, child_id: analysis.child_id,
+        observation_id: analysis.observation_id, provider: generated.provider, model: generated.model,
+        prompt_version: generated.promptVersion, knowledge_version: analysis.knowledge_version,
+        input_snapshot: { sourceAnalysisId: id, feedbackVersionId: versionRow!.id, teacherFeedback: input.feedback },
+        knowledge_card_ids: analysis.knowledge_card_ids, structured_result: revisedResult,
+        risk_flags: revisedResult.warnings, generated_by: auth.userId,
+      }).select().single();
+      if (runResult.error) throw new ApiError(500, "ANALYSIS_REVISION_RUN_FAILED", "AI修订稿创建失败");
+      newRun = runResult.data;
+
+      const claims = flattenAnalysisClaims(revisedResult).map((claim) => ({
+        tenant_id: auth.tenantId, classroom_id: newRun!.classroom_id, child_id: newRun!.child_id,
+        observation_id: newRun!.observation_id, analysis_run_id: newRun!.id,
+        claim_key: claim.claimKey, claim_type: claim.claimType, original_content: claim.originalContent,
+      }));
+      const responsePlans = revisedResult.responsePlans.map((plan, index) => ({
+        tenant_id: auth.tenantId, classroom_id: newRun!.classroom_id, child_id: newRun!.child_id,
+        observation_id: newRun!.observation_id, analysis_run_id: newRun!.id, title: plan.title,
+        rationale: plan.rationale, target_experience: plan.targetExperience,
+        activity_support: plan.activitySupport, material_support: plan.materialSupport,
+        experience_support: plan.experienceSupport, observation_cut: plan.observationCut,
+        observation_focus: plan.observationFocus, adjustment_condition: plan.adjustmentCondition,
+        source_plan_keys: [`response-plan:${index}`], created_by: auth.userId,
+      }));
+      const [{ error: claimError }, { error: responseError }] = await Promise.all([
+        schema.from("analysis_claim_reviews").insert(claims),
+        schema.from("response_plans").insert(responsePlans),
+      ]);
+      if (claimError || responseError) throw new ApiError(500, "ANALYSIS_REVISION_ITEMS_FAILED", "AI修订稿审核项或应答方案初始化失败");
+    } catch (error) {
+      if (newRun) {
+        await schema.from("response_plans").delete().eq("analysis_run_id", newRun.id).eq("tenant_id", auth.tenantId);
+        await schema.from("analysis_runs").delete().eq("id", newRun.id).eq("tenant_id", auth.tenantId);
+      }
+      if (versionRow) await schema.from("analysis_feedback_versions").delete().eq("id", versionRow.id).eq("tenant_id", auth.tenantId);
+      throw error;
     }
     await Promise.all([
-      schema.from("analysis_runs").update({ decision: "abandoned", decision_note: `已由AI修订版本 ${newRun.id} 替代`, decided_by: auth.userId, decided_at: new Date().toISOString() }).eq("id", id).eq("decision", "pending"),
+      schema.from("analysis_runs").update({ decision: "abandoned", decision_note: `已由AI修订版本 ${newRun!.id} 替代`, decided_by: auth.userId, decided_at: new Date().toISOString() }).eq("id", id).eq("decision", "pending"),
       schema.from("response_plans").update({ status: "rejected" }).eq("analysis_run_id", id).eq("status", "suggested"),
       schema.from("observations").update({ status: "ai_ready" }).eq("id", analysis.observation_id).eq("tenant_id", auth.tenantId),
     ]);
-    await audit(auth, "analysis.revised", "analysis", newRun.id, { sourceAnalysisId: id, feedbackVersionId: versionRow.id });
+    await audit(auth, "analysis.revised", "analysis", newRun!.id, { sourceAnalysisId: id, feedbackVersionId: versionRow!.id });
     return reply.status(201).send({ item: newRun, version: versionRow, aiNotice: generated.notice });
   });
 

@@ -19,6 +19,8 @@ import type {
   ReportContent,
   ReportGenerationInput,
 } from "./contracts.js";
+import { analysisResultSchema } from "./contracts.js";
+import { normalizeAnalysisResult } from "./analysis-compatibility.js";
 
 export type { KnowledgeRow, ObservationForAnalysis } from "./contracts.js";
 
@@ -257,12 +259,13 @@ export function buildScenarioObservationExtraction(input: ObservationDocumentExt
 }
 
 export function buildScenarioRevision(input: AnalysisRevisionInput): AnalysisResult {
+  const original = normalizeAnalysisResult(input.original);
   const notes = input.teacherFeedback.filter((item) => item.note || item.content);
-  return {
-    ...input.original,
-    objectiveSummary: input.teacherFeedback.find((item) => item.section === "objective" && item.content)?.content ?? input.original.objectiveSummary,
-    warnings: [...input.original.warnings.filter((item) => !item.startsWith("教师反馈")), `教师反馈修订：本版参考了${notes.length}条教师意见，仍需教师再次确认。`],
-  };
+  return analysisResultSchema.parse({
+    ...original,
+    objectiveSummary: (input.teacherFeedback.find((item) => item.section === "objective" && item.content)?.content ?? original.objectiveSummary).slice(0, 4000),
+    warnings: [...original.warnings.filter((item) => !item.startsWith("教师反馈")).slice(0, 7), `教师反馈修订：本版参考了${notes.length}条教师意见，仍需教师再次确认。`],
+  });
 }
 
 export function buildScenarioActivityOptions(input: CurriculumActivityOptionsInput): CurriculumActivityOptions {
