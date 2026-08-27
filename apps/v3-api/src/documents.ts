@@ -32,6 +32,10 @@ const observationDocumentFormats = new Map([
   ["image/png", { extension: "png", mimeType: "image/png" }],
 ]);
 
+export function documentStorageObjectPath(tenantId: string, classroomId: string, exportId: string) {
+  return `${tenantId}/${classroomId}/exports/${exportId}/document.docx`;
+}
+
 export function observationDocumentFormat(fileName: string, suppliedMimeType: string) {
   const byMimeType = observationDocumentFormats.get(suppliedMimeType);
   if (byMimeType) return byMimeType;

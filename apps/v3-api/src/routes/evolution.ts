@@ -8,6 +8,7 @@ import { effectiveAnalysisResult, flattenAnalysisClaims } from "../analysis-clai
 import { config } from "../config.js";
 import {
   documentMimeTypes,
+  documentStorageObjectPath,
   extractDocumentText,
   generateBlankObservationTemplate,
   generateCurriculumDocument,
@@ -88,7 +89,9 @@ async function materializeDocumentExport(item: any, logger: FastifyBaseLogger) {
   } else {
     buffer = await generateObservationDocument(item.content_snapshot as any);
   }
-  const path = `${item.tenant_id}/${item.classroom_id}/exports/${item.id}/${safeFileName(item.file_name || "同迹文档.docx")}`;
+  // Keep the Chinese download name in document_exports.file_name; storage
+  // object keys use stable ASCII IDs accepted by the production storage API.
+  const path = documentStorageObjectPath(item.tenant_id, item.classroom_id, item.id);
   const { error: uploadError } = await mediaStorage.upload(path, buffer, {
     contentType: documentMimeTypes.docx,
     cacheControl: "3600",

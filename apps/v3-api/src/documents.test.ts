@@ -1,8 +1,19 @@
 import mammoth from "mammoth";
 import { describe, expect, it } from "vitest";
-import { generateBlankObservationTemplate, generateCurriculumDocument, generateObservationDocument, observationDocumentFormat } from "./documents.js";
+import { documentStorageObjectPath, generateBlankObservationTemplate, generateCurriculumDocument, generateObservationDocument, observationDocumentFormat } from "./documents.js";
 
 describe("Word document generation", () => {
+  it("uses an ASCII-only storage key independent of the download filename", () => {
+    const path = documentStorageObjectPath(
+      "00096e73-b32c-4468-acac-b6213cef1cae",
+      "cf43c3a1-33eb-4fb7-a6ef-bc9d35974abe",
+      "abc5aa23-d86b-4bf9-87cb-422b0245f5ba",
+    );
+
+    expect(path).toBe("00096e73-b32c-4468-acac-b6213cef1cae/cf43c3a1-33eb-4fb7-a6ef-bc9d35974abe/exports/abc5aa23-d86b-4bf9-87cb-422b0245f5ba/document.docx");
+    expect(path).toMatch(/^[\x20-\x7e]+$/);
+  });
+
   it("normalizes Word imports when the browser sends a generic MIME type", () => {
     expect(observationDocumentFormat("观察记录.docx", "application/octet-stream")).toEqual({
       extension: "docx",
