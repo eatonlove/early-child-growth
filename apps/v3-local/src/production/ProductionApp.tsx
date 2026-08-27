@@ -37,12 +37,11 @@ import {
   RemoteExportsPage,
   RemoteGrowthPage,
   RemoteKnowledgePage,
-  RemoteObservationPage,
   RemoteReportsPage,
-  RemoteCurriculumPage,
   RemoteQualityPage,
   RemoteResearchPage,
 } from "./pages";
+import { RemoteCurriculumV32Page, RemoteObservationV32Page, RemoteProfessionalMemoryPage } from "./evolution-pages";
 import "./production-design.css";
 
 const navigation: Array<[string, string, LucideIcon]> = [
@@ -53,6 +52,7 @@ const navigation: Array<[string, string, LucideIcon]> = [
   ["/reports", "周期报告", FileText],
   ["/curriculum", "课程生成", BookOpen],
   ["/knowledge", "知识库", Library],
+  ["/memories", "园所经验库", Database],
 ];
 
 function LoginPage() {
@@ -303,11 +303,12 @@ function RemoteShell() {
               path="/classrooms"
               element={<RemoteClassroomPage user={user} />}
             />
-            <Route path="/observations" element={<RemoteObservationPage />} />
+            <Route path="/observations" element={<RemoteObservationV32Page user={user} />} />
             <Route path="/growth" element={<RemoteGrowthPage />} />
             <Route path="/reports" element={<RemoteReportsPage />} />
-            <Route path="/curriculum" element={<RemoteCurriculumPage />} />
+            <Route path="/curriculum" element={<RemoteCurriculumV32Page user={user} />} />
             <Route path="/knowledge" element={<RemoteKnowledgePage />} />
+            <Route path="/memories" element={<RemoteProfessionalMemoryPage user={user} />} />
             <Route path="/exports" element={<RemoteExportsPage user={user} />} />
             <Route path="/research" element={<RemoteResearchPage user={user} />} />
             <Route

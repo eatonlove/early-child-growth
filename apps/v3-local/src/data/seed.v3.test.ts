@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { seedSnapshot } from "./seed";
 
-describe("童迹3.0演示数据", () => {
+describe("同迹3.0演示数据", () => {
   it("覆盖完整业务闭环及四项治理能力", () => {
     expect(seedSnapshot.children.length).toBeGreaterThanOrEqual(12);
     expect(seedSnapshot.evidencePackages.length).toBeGreaterThanOrEqual(8);

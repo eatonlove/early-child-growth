@@ -86,5 +86,21 @@ else
   echo "逐条AI审核与终审数据结构已就绪，跳过升级迁移。"
 fi
 
+evolution_v32_ready="$(docker exec "$DB_CONTAINER" psql -U postgres -d postgres -Atc \
+  "select to_regclass('tongji_v3.observation_subjects') is not null
+      and to_regclass('tongji_v3.response_plans') is not null
+      and to_regclass('tongji_v3.curriculum_plans') is not null
+      and to_regclass('tongji_v3.professional_memories') is not null
+      and to_regclass('tongji_v3.document_exports') is not null
+      and to_regprocedure('tongji_v3.select_response_plan(uuid)') is not null;")"
+
+if [ "$evolution_v32_ready" != "t" ]; then
+  docker exec -i "$DB_CONTAINER" psql -U postgres -d postgres \
+    -v ON_ERROR_STOP=1 --single-transaction \
+    < "$ROOT_DIR/apps/v3-api/supabase/migrations/20260827055219_expand_observation_analysis_curriculum.sql"
+else
+  echo "多人观察、组合应答、课程循环与专业记忆结构已就绪，跳过3.2迁移。"
+fi
+
 docker exec "$DB_CONTAINER" psql -U postgres -d postgres -Atc \
   "select table_schema || '.' || table_name from information_schema.tables where table_schema = 'tongji_v3' order by table_name;"

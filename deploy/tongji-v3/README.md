@@ -1,4 +1,4 @@
-# 童迹 3.0 腾讯云轻量服务器部署
+# 同迹 3.0 腾讯云轻量服务器部署
 
 ## 1. 部署拓扑
 
@@ -46,6 +46,7 @@ apps/v3-api/supabase/migrations/20260821121751_fix_classroom_returning_rls.sql
 apps/v3-api/supabase/migrations/20260821122655_fix_research_activity_returning_rls.sql
 apps/v3-api/supabase/migrations/20260824064422_preserve_archived_classroom_history.sql
 apps/v3-api/supabase/migrations/20260824072542_add_claim_reviews_and_semantic_evidence.sql
+apps/v3-api/supabase/migrations/20260827055219_expand_observation_analysis_curriculum.sql
 ```
 
 托管 Supabase：
@@ -65,7 +66,7 @@ chmod +x ./*.sh
 ./migrate.sh
 ```
 
-脚本逐个事务执行迁移，并检查基础表、治理表、共享 Auth 触发器兼容状态，以及班级和教研活动创建回读 RLS 修复。兼容迁移只在服务器存在租房应用的 `private.handle_new_auth_user()` 触发器时生效：租房用户保持原逻辑，带有 `application=tongji_v3` 标记或使用 `@tongji-v3.local` 内部邮箱域名的童迹用户不写入租房资料表。迁移后将 `tongji_v3` 追加到 `PGRST_DB_SCHEMAS`，再只重建 `supabase-rest`；不要移除其他应用正在使用的 schema。
+脚本逐个事务执行迁移，并检查基础表、治理表、共享 Auth 触发器兼容状态、创建回读 RLS 修复，以及多人观察、组合应答、课程循环和专业记忆结构。兼容迁移只在服务器存在租房应用的 `private.handle_new_auth_user()` 触发器时生效：租房用户保持原逻辑，带有 `application=tongji_v3` 标记或使用 `@tongji-v3.local` 内部邮箱域名的同迹用户不写入租房资料表。迁移后将 `tongji_v3` 追加到 `PGRST_DB_SCHEMAS`，再只重建 `supabase-rest`；不要移除其他应用正在使用的 schema。
 
 ## 4. 配置与初始化
 

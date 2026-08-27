@@ -18,4 +18,4 @@ COMPOSE_PARALLEL_LIMIT=1 docker compose --env-file .env build --pull
 docker compose --env-file .env up -d --remove-orphans
 docker compose --env-file .env ps
 
-echo "童迹3.0已更新到 127.0.0.1:${TONGJI_V3_PORT:-8300}，未操作其他Compose项目。"
+echo "同迹3.0已更新到 127.0.0.1:${TONGJI_V3_PORT:-8300}，未操作其他Compose项目。"

@@ -23,6 +23,26 @@ const childInput = z.object({
 });
 
 export async function managementRoutes(app: FastifyInstance) {
+  app.get("/api/observers", async (request) => {
+    const auth = await authenticate(request);
+    const { classroomId } = z.object({ classroomId: uuid }).parse(request.query);
+    const schema = serviceClient.schema(config.SUPABASE_SCHEMA);
+    const { data: classroom, error: classroomError } = await auth.data.from("classrooms").select("id").eq("id", classroomId).maybeSingle();
+    if (classroomError) throw new ApiError(500, "OBSERVER_CLASSROOM_READ_FAILED", "协同观察班级读取失败");
+    if (!classroom) throw new ApiError(404, "OBSERVER_CLASSROOM_NOT_FOUND", "班级不存在或无权访问");
+    const [{ data: profiles, error: profileError }, { data: assignments, error: assignmentError }] = await Promise.all([
+      schema.from("profiles").select("user_id, display_name, role").eq("tenant_id", auth.tenantId).eq("status", "active").order("display_name"),
+      schema.from("classroom_teachers").select("user_id").eq("tenant_id", auth.tenantId).eq("classroom_id", classroomId),
+    ]);
+    if (profileError || assignmentError) throw new ApiError(500, "OBSERVER_LIST_FAILED", "协同观察教师读取失败");
+    const assigned = new Set((assignments ?? []).map((item) => item.user_id));
+    return {
+      items: (profiles ?? [])
+        .filter((profile) => profile.user_id === auth.userId || profile.role === "researcher" || assigned.has(profile.user_id))
+        .map((profile) => ({ userId: profile.user_id, displayName: profile.display_name, role: profile.role })),
+    };
+  });
+
   app.get("/api/classrooms", async (request) => {
     const auth = await authenticate(request);
     const { data, error } = await auth.data.from("classrooms").select("*").order("name");

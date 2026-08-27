@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import type { KnowledgeRow } from "./contracts.js";
 import { QianwenAIProvider } from "./qianwen-provider.js";
+import { buildScenarioAnalysis } from "./scenario-provider.js";
 
 const card: KnowledgeRow = {
   id: "card-1",
@@ -19,7 +20,18 @@ const card: KnowledgeRow = {
   keywords: ["积木", "调整", "倒塌"],
 };
 
+const expandedResponse = buildScenarioAnalysis({
+  teacher_observation: "幼儿将较长积木换到下层并继续搭建。",
+  child_quote: "这样更稳。",
+  teacher_identification: "幼儿开始比较材料与稳定性的关系。",
+  teacher_response: { category: "material", strategy: "增加不同长度积木", nextObservationFocus: "观察主动比较" },
+  scene: "建构区",
+  theme: "桥梁建构",
+  organization_stage: "process",
+}, [card]);
+
 const response = {
+  ...expandedResponse,
   objectiveSummary: "幼儿调整积木后继续搭建。",
   facts: [{ content: "幼儿将较长积木换到下层。", evidence: "视频画面", evidenceIds: ["evidence-1"], confidence: 0.9 }],
   interpretations: [{ content: "这一调整可能体现了对稳定性的初步比较。", indicatorCode: "SCI-M-01", evidenceIds: ["evidence-1"], limitation: "只有一个时间点。", confidence: 0.72 }],

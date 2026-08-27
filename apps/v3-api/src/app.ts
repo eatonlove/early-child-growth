@@ -6,6 +6,7 @@ import { config } from "./config.js";
 import { ApiError, registerErrorHandler } from "./http.js";
 import { authRoutes } from "./routes/auth.js";
 import { governanceRoutes } from "./routes/governance.js";
+import { evolutionRoutes } from "./routes/evolution.js";
 import { knowledgeRoutes } from "./routes/knowledge.js";
 import { managementRoutes } from "./routes/management.js";
 import { observationRoutes } from "./routes/observations.js";
@@ -51,6 +52,7 @@ export async function buildApp() {
   await authRoutes(app);
   await managementRoutes(app);
   await observationRoutes(app);
+  await evolutionRoutes(app);
   await knowledgeRoutes(app);
   await governanceRoutes(app);
   await outcomeRoutes(app);

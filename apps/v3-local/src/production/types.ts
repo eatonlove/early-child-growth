@@ -10,6 +10,12 @@ export interface RemoteUser {
   tenantName: string;
 }
 
+export interface RemoteObserver {
+  userId: string;
+  displayName: string;
+  role: RemoteRole;
+}
+
 export interface RemoteClassroom {
   id: string;
   name: string;
@@ -41,6 +47,11 @@ export interface RemoteObservation {
   id: string;
   classroom_id: string;
   child_id: string;
+  source_type?: "web" | "document_import";
+  source_import_id?: string | null;
+  observer_ids?: string[];
+  group_context?: string | null;
+  unlisted_participant_count?: number;
   title: string;
   occurred_at: string;
   duration_minutes?: number | null;
@@ -92,6 +103,34 @@ export interface AnalysisResult {
     activity: string[];
   };
   nextObservation: string[];
+  gameExperience: Array<{
+    dimension: "计划与意图" | "材料使用" | "角色与情节" | "问题解决" | "合作协商" | "规则与自我调节" | "表达与回顾";
+    evidence: string;
+    evidenceIds: string[];
+    possibleExperience: string;
+    limitation: string;
+  }>;
+  domainExperiences: Array<{
+    domain: "健康" | "语言" | "社会" | "科学" | "艺术";
+    evidence: string;
+    evidenceIds: string[];
+    possibleExperience: string;
+    indicatorCodes: string[];
+    missingEvidence: string;
+    noJudgment: boolean;
+  }>;
+  learningDispositions: Array<{
+    dimension: "好奇与探究" | "主动性" | "专注与坚持" | "想象与创造" | "合作" | "反思与调整";
+    evidence: string;
+    evidenceIds: string[];
+    possibleExperience: string;
+    confidence: number;
+  }>;
+  learningPossibilities: string[];
+  gamePossibilities: string[];
+  responsePlans: ResponsePlanContent[];
+  observationCut: string[];
+  observationFocus: string[];
   historicalComparison: {
     evidenceCount: number;
     timePointCount: number;
@@ -119,6 +158,7 @@ export interface RemoteAnalysis {
   decision: "pending" | "adopted" | "abandoned";
   decision_note?: string | null;
   generated_at: string;
+  child_id: string;
   claim_reviews: RemoteAnalysisClaimReview[];
 }
 
@@ -132,7 +172,9 @@ export interface RemoteAnalysisClaimReview {
     | "objective_summary" | "fact" | "interpretation" | "hypothesis"
     | "current_experience" | "interest_strength" | "evidence_gap"
     | "development_reference" | "response_suggestion" | "next_observation"
-    | "historical_change";
+    | "historical_change" | "game_experience" | "domain_experience"
+    | "learning_disposition" | "learning_possibility" | "game_possibility"
+    | "response_plan" | "observation_cut" | "observation_focus";
   original_content: Record<string, unknown>;
   reviewed_content?: Record<string, unknown> | null;
   decision: AnalysisClaimDecision;
@@ -148,6 +190,73 @@ export interface RemoteEvidence {
   mime_type?: string | null;
   size_bytes?: number | null;
   upload_status: "pending" | "ready" | "failed";
+}
+
+export interface RemoteObservationSubject {
+  id: string;
+  observation_id: string;
+  child_id: string;
+  display_name: string;
+  role: "primary" | "participant" | "incidental";
+  contextual_feature?: string | null;
+  evidence_anchors: string[];
+}
+
+export interface ResponsePlanContent {
+  title: string;
+  rationale: string;
+  targetExperience: string[];
+  activitySupport: { activityName: string; timing: string; objective: string; steps: string[]; teacherRole: string; suggestedDuration: string };
+  materialSupport: { materials: Array<{ name: string; quantity: string; variable: string }>; placement: string; purpose: string; safetyNotes: string[] };
+  experienceSupport: { suggestedQuestions: string[]; participationMode: string; demonstration: string; withdrawalCondition: string };
+  observationCut: string;
+  observationFocus: string[];
+  adjustmentCondition: string;
+  evidenceIds: string[];
+}
+
+export interface RemoteResponsePlan {
+  id: string;
+  child_id: string;
+  observation_id: string;
+  analysis_run_id: string;
+  title: string;
+  rationale: string;
+  target_experience: string[];
+  activity_support: ResponsePlanContent["activitySupport"];
+  material_support: ResponsePlanContent["materialSupport"];
+  experience_support: ResponsePlanContent["experienceSupport"];
+  observation_cut: string;
+  observation_focus: string[];
+  adjustment_condition: string;
+  status: "suggested" | "selected" | "planned" | "implemented" | "follow_up" | "verified" | "closed" | "rejected";
+}
+
+export interface RemoteObservationImport {
+  id: string;
+  classroom_id: string;
+  source_file_name: string;
+  source_mime_type: string;
+  status: "pending_upload" | "extracting" | "needs_review" | "confirmed" | "failed";
+  extracted_fields: {
+    observerName?: string;
+    occurredAtText?: string;
+    scene?: string;
+    theme?: string;
+    organizationStage?: RemoteObservation["organization_stage"];
+    subjects?: Array<{ displayName: string; contextualFeature: string; role: RemoteObservationSubject["role"] }>;
+    unlistedParticipantCount?: number;
+    groupContext?: string;
+    objectiveObservation?: string;
+    teacherIdentification?: string;
+    teacherResponseDraft?: string;
+    nextObservationFocus?: string;
+    fieldConfidence?: Record<string, number>;
+    warnings?: string[];
+  };
+  field_confidence: Record<string, number>;
+  matched_child_ids: string[];
+  failure_reason?: string | null;
 }
 
 export interface RemoteAccount {
@@ -219,7 +328,9 @@ export interface RemoteExportRequest {
     | "individual_report"
     | "classroom_report"
     | "curriculum_case"
-    | "anonymized_research";
+    | "anonymized_research"
+    | "observation_record"
+    | "curriculum_plan";
   resource_type: string;
   resource_id: string;
   purpose: string;
@@ -228,6 +339,15 @@ export interface RemoteExportRequest {
   status: "pending" | "approved" | "rejected" | "cancelled";
   decision_note?: string | null;
   created_at: string;
+  document_export?: RemoteDocumentExport | null;
+}
+
+export interface RemoteDocumentExport {
+  id: string;
+  export_request_id: string;
+  document_type: "observation_teacher" | "observation_professional" | "curriculum_plan";
+  file_name?: string | null;
+  status: "preview" | "pending_approval" | "ready" | "expired" | "failed";
 }
 
 export interface RemoteResearchEntry {
@@ -360,6 +480,7 @@ export interface RemoteCurriculumClue {
   inquiry_questions: string[];
   plan: Record<string, unknown> & {
     version?: number;
+    scope?: "classroom_curriculum" | "individual_support";
     existingExperience?: string[];
     aiMeta?: {
       provider?: string;
@@ -383,4 +504,95 @@ export interface RemoteCurriculumClue {
   threshold_met: boolean;
   status: "clue" | "draft" | "reviewed" | "active" | "reflected" | "archived";
   updated_at: string;
+}
+
+export interface RemoteCurriculumTemplate {
+  id: string;
+  code: string;
+  name: string;
+  version: number;
+  description: string;
+  structure: Record<string, unknown>;
+  is_default: boolean;
+  status?: "active" | "archived";
+  created_at?: string;
+}
+
+export interface RemoteProfessionalMemory {
+  id: string;
+  memory_type:
+    | "teacher_feedback"
+    | "response_effect"
+    | "approved_case"
+    | "curriculum_reflection"
+    | "school_knowledge";
+  source_resource_type: string;
+  source_resource_id: string;
+  title: string;
+  summary: string;
+  retrieval_text: string;
+  applicability: Record<string, unknown>;
+  evidence_refs: Array<Record<string, unknown>>;
+  quality_score: number;
+  status: "pending" | "active" | "disabled";
+  created_at: string;
+  approved_at?: string | null;
+}
+
+export interface RemoteAnalysisFramework {
+  id: string;
+  framework_type: "game_experience" | "learning_disposition";
+  code: string;
+  name: string;
+  version: number;
+  description: string;
+  dimensions: Array<{ label: string; evidenceReminder: string }>;
+  is_default: boolean;
+  status: "draft" | "active" | "archived";
+  created_at: string;
+}
+
+export interface RemoteCurriculumOption {
+  id: string;
+  title: string;
+  value_point: string;
+  core_question: string;
+  social_nature_self: Record<"社会" | "自然" | "自我", string[]>;
+  development_links: string[];
+  main_activities: string[];
+  materials: string[];
+  teacher_support: string[];
+  observation_focus: string[];
+  risk_note: string;
+  status: "suggested" | "selected" | "rejected";
+}
+
+export interface RemoteCurriculumPlan {
+  id: string;
+  curriculum_clue_id: string;
+  title: string;
+  implementation_period: string;
+  core_inquiry_clue: string;
+  content: Record<string, unknown>;
+  version: number;
+  status: "draft" | "reviewed" | "active" | "reflected" | "archived";
+}
+
+export interface RemoteCurriculumCycle {
+  id: string;
+  curriculum_plan_id: string;
+  cycle_number: number;
+  zone: "starting" | "focusing" | "inquiring" | "resolving";
+  seven_steps: Record<string, string>;
+  generated_experience: string[];
+  new_questions: string[];
+  reflection?: string | null;
+  status: "active" | "completed";
+}
+
+export interface RemoteCurriculumWorkspace {
+  item: RemoteCurriculumClue;
+  options: RemoteCurriculumOption[];
+  plans: RemoteCurriculumPlan[];
+  cycles: RemoteCurriculumCycle[];
 }

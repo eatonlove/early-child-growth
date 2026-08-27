@@ -1,5 +1,6 @@
 import type {
   RemoteAccount,
+  RemoteAnalysisFramework,
   AnalysisClaimDecision,
   RemoteAnalysis,
   RemoteAnalysisClaimReview,
@@ -8,7 +9,10 @@ import type {
   RemoteEvidence,
   RemoteKnowledgeCard,
   RemoteObservation,
+  RemoteObservationImport,
+  RemoteObservationSubject,
   RemoteObservationTemplate,
+  RemoteObserver,
   RemoteQualityQueueItem,
   RemoteQualityReview,
   RemoteExportRequest,
@@ -18,6 +22,10 @@ import type {
   RemoteGrowthResult,
   RemotePeriodReport,
   RemoteCurriculumClue,
+  RemoteCurriculumTemplate,
+  RemoteCurriculumWorkspace,
+  RemoteProfessionalMemory,
+  RemoteResponsePlan,
   RemoteUser,
 } from "./types";
 
@@ -68,6 +76,20 @@ async function request<T>(
   return payload as T;
 }
 
+async function download(path: string, fileName: string) {
+  const response = await fetch(`${baseUrl}${path}`, { credentials: "include" });
+  if (!response.ok) {
+    const payload = await response.json().catch(() => ({}));
+    throw new RemoteApiError(response.status, payload.code || "DOWNLOAD_FAILED", payload.message || "文件下载失败");
+  }
+  const url = URL.createObjectURL(await response.blob());
+  const anchor = document.createElement("a");
+  anchor.href = url;
+  anchor.download = fileName;
+  anchor.click();
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
+}
+
 const body = (value: unknown) => JSON.stringify(value);
 
 export const remoteApi = {
@@ -91,6 +113,8 @@ export const remoteApi = {
       role: string;
     }>("/api/dashboard"),
   classrooms: () => request<{ items: RemoteClassroom[] }>("/api/classrooms"),
+  observers: (classroomId: string) =>
+    request<{ items: RemoteObserver[] }>(`/api/observers?classroomId=${encodeURIComponent(classroomId)}`),
   createClassroom: (value: {
     name: string;
     grade: string;
@@ -127,6 +151,9 @@ export const remoteApi = {
       item: RemoteObservation;
       evidence: RemoteEvidence[];
       analyses: RemoteAnalysis[];
+      subjects: RemoteObservationSubject[];
+      responsePlans: RemoteResponsePlan[];
+      observers: RemoteObserver[];
     }>(`/api/observations/${id}`),
   createObservation: (value: Record<string, unknown>) =>
     request<{ item: RemoteObservation }>("/api/observations", {
@@ -134,7 +161,7 @@ export const remoteApi = {
       body: body(value),
     }),
   analyze: (id: string) =>
-    request<{ item: RemoteAnalysis; aiNotice: string; simulationNotice: string }>(
+    request<{ item: RemoteAnalysis; items: RemoteAnalysis[]; aiNotice: string; simulationNotice: string }>(
       `/api/observations/${id}/analyze`,
       { method: "POST" },
     ),
@@ -160,6 +187,35 @@ export const remoteApi = {
       method: "POST",
       body: body({ note }),
     }),
+  reviewAnalysisSection: (analysisId: string, section: string, value: Record<string, unknown>) =>
+    request<{ items: RemoteAnalysisClaimReview[] }>(`/api/analyses/${analysisId}/sections/${section}`, { method: "PATCH", body: body(value) }),
+  reviseAnalysis: (analysisId: string, feedback: Array<Record<string, unknown>>) =>
+    request<{ item: RemoteAnalysis; aiNotice: string }>(`/api/analyses/${analysisId}/revise`, { method: "POST", body: body({ feedback }) }),
+  responsePlans: (observationId: string, childId?: string) => {
+    const params = new URLSearchParams({ observationId });
+    if (childId) params.set("childId", childId);
+    return request<{ items: RemoteResponsePlan[] }>(`/api/response-plans?${params}`);
+  },
+  selectResponsePlan: (id: string) => request<{ item: RemoteResponsePlan }>(`/api/response-plans/${id}/select`, { method: "POST" }),
+  combineResponsePlans: (value: { title: string; activityPlanId: string; materialPlanId: string; experiencePlanId: string }) =>
+    request<{ item: RemoteResponsePlan }>("/api/response-plans/combine", { method: "POST", body: body(value) }),
+  downloadObservationTemplate: () => download("/api/observation-template/document", "同迹游戏观察记录表模板.docx"),
+  async importObservationDocument(classroomId: string, file: File) {
+    const created = await request<{ item: RemoteObservationImport }>("/api/observation-imports", {
+      method: "POST",
+      body: body({ classroomId, fileName: file.name, mimeType: file.type || (file.name.toLowerCase().endsWith(".doc") ? "application/msword" : "application/octet-stream"), sizeBytes: file.size }),
+    });
+    return request<{ item: RemoteObservationImport; aiNotice: string }>(`/api/observation-imports/${created.item.id}/upload`, {
+      method: "POST", headers: { "Content-Type": "application/octet-stream" }, body: file,
+    });
+  },
+  requestObservationDocument: (id: string, value: { variant: "teacher" | "professional"; purpose: string; recipient: string }) =>
+    request<{ request: RemoteExportRequest; documentExport: { id: string } }>(`/api/observations/${id}/document-exports`, { method: "POST", body: body(value) }),
+  documentExportDownload: async (id: string) => {
+    const item = await request<{ url: string; fileName: string }>(`/api/document-exports/${id}/download`);
+    window.location.assign(item.url);
+    return item;
+  },
   evidenceTicket: (observationId: string, file: File) =>
     request<{
       evidenceId: string;
@@ -300,4 +356,22 @@ export const remoteApi = {
       method: "PATCH",
       body: body(value),
     }),
+  curriculumTemplates: () => request<{ items: RemoteCurriculumTemplate[] }>("/api/curriculum-templates"),
+  createCurriculumTemplate: (value: { code: string; name: string; description: string; structure: Record<string, unknown>; isDefault: boolean }) =>
+    request<{ item: RemoteCurriculumTemplate }>("/api/curriculum-templates", { method: "POST", body: body(value) }),
+  professionalMemories: (status?: "pending" | "active" | "disabled") =>
+    request<{ items: RemoteProfessionalMemory[] }>(`/api/professional-memories${status ? `?status=${status}` : ""}`),
+  updateProfessionalMemory: (id: string, value: { status: "active" | "disabled"; qualityScore?: number }) =>
+    request<{ item: RemoteProfessionalMemory }>(`/api/professional-memories/${id}`, { method: "PATCH", body: body(value) }),
+  analysisFrameworks: () => request<{ items: RemoteAnalysisFramework[] }>("/api/analysis-frameworks"),
+  createAnalysisFramework: (value: { frameworkType: RemoteAnalysisFramework["framework_type"]; code: string; name: string; description: string; dimensions: RemoteAnalysisFramework["dimensions"]; isDefault: boolean }) =>
+    request<{ item: RemoteAnalysisFramework }>("/api/analysis-frameworks", { method: "POST", body: body(value) }),
+  createCurriculumFromEvidence: (value: { classroomId: string; observationIds: string[]; theme?: string }) =>
+    request<{ item: RemoteCurriculumClue }>("/api/curriculum-clues/from-evidence", { method: "POST", body: body(value) }),
+  curriculumWorkspace: (id: string) => request<RemoteCurriculumWorkspace>(`/api/curriculum-clues/${id}/workspace`),
+  generateCurriculumOptions: (id: string) => request<{ items: RemoteCurriculumWorkspace["options"]; aiNotice: string }>(`/api/curriculum-clues/${id}/activity-options`, { method: "POST" }),
+  selectCurriculumOptions: (id: string, selectedOptionIds: string[]) => request<{ items: RemoteCurriculumWorkspace["options"] }>(`/api/curriculum-clues/${id}/activity-options`, { method: "PATCH", body: body({ selectedOptionIds }) }),
+  generateCurriculumPlan: (id: string, value: { implementationPeriod: string; templateVersionId?: string }) => request<{ item: RemoteCurriculumWorkspace["plans"][number]; aiNotice: string }>(`/api/curriculum-clues/${id}/plan`, { method: "POST", body: body(value) }),
+  createCurriculumCycle: (planId: string, value: Record<string, unknown>) => request<{ item: RemoteCurriculumWorkspace["cycles"][number] }>(`/api/curriculum-plans/${planId}/cycles`, { method: "POST", body: body(value) }),
+  requestCurriculumDocument: (planId: string, value: { purpose: string; recipient: string }) => request<{ request: RemoteExportRequest; documentExport: { id: string } }>(`/api/curriculum-plans/${planId}/document-exports`, { method: "POST", body: body(value) }),
 };

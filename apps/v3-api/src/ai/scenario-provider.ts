@@ -1,14 +1,21 @@
 import type {
   AnalysisResult,
+  AnalysisRevisionInput,
   ClassroomReportContent,
   ClassroomReportGenerationInput,
   CurriculumDraft,
+  CurriculumActivityOptions,
+  CurriculumActivityOptionsInput,
+  CurriculumPlanContent,
+  CurriculumPlanGenerationInput,
   CurriculumGenerationInput,
   HistoricalObservationEvidence,
   InterestClusteringInput,
   InterestClusterResult,
   KnowledgeRow,
   ObservationForAnalysis,
+  ObservationDocumentExtraction,
+  ObservationDocumentExtractionInput,
   ReportContent,
   ReportGenerationInput,
 } from "./contracts.js";
@@ -59,6 +66,48 @@ export function buildScenarioAnalysis(
     }
     return result;
   }, {});
+  const primaryEvidence = facts[0] ?? "本次客观白描仍需补充可见行为细节";
+  const generalEvidenceIds = ["teacher-observation"];
+  const activitySeed = response["活动支持"]?.[0] ?? `围绕“${observation.theme}”安排一次可比较的延续游戏`;
+  const materialSeed = response["材料支持"]?.[0] ?? "投放两组具有明显差异、可比较和可组合的开放材料";
+  const experienceSeed = response["经验支持"]?.[0] ?? "邀请幼儿说明自己的计划、变化和理由，教师不急于给出答案";
+  const responsePlans = [
+    { title: "延续原有兴趣并增加一个可比较变量", timing: "幼儿再次主动进入相近游戏时", variable: "材料形状或连接方式" },
+    { title: "通过同伴协作扩展问题解决经验", timing: "幼儿出现需要协商、分工或共同验证的问题时", variable: "同伴角色与任务分工" },
+    { title: "通过回顾和表征推动经验迁移", timing: "游戏告一段落、幼儿愿意分享做法时", variable: "照片、图示或作品记录" },
+  ].map((plan, index) => ({
+    title: plan.title,
+    rationale: `依据“${primaryEvidence}”形成候选应答；该方案只支持下一步行动，不替代教师现场判断。`,
+    targetExperience: [observation.teacher_identification || `围绕“${observation.theme}”形成更清晰的计划与调整经验`],
+    activitySupport: {
+      activityName: `${observation.theme}·${index === 0 ? "变量比较" : index === 1 ? "合作探究" : "回顾表征"}`,
+      timing: plan.timing,
+      objective: activitySeed,
+      steps: ["保持幼儿原有游戏意图，先观察其自主计划", `只增加一个变量：${plan.variable}`, "邀请幼儿比较前后变化并决定是否调整", "记录支持前后的行动、语言或作品"],
+      teacherRole: index === 1 ? "以共同参与者或资源提供者身份进入，协助明确分工后逐步退出" : "作为观察者和思维挑战者，用提问代替直接示范答案",
+      suggestedDuration: "15-30分钟，服从幼儿游戏节奏",
+    },
+    materialSupport: {
+      materials: [
+        { name: materialSeed, quantity: "每类2-4件", variable: plan.variable },
+        { name: "照片、画纸或记录卡", quantity: "按小组准备", variable: "用于记录前后变化" },
+      ],
+      placement: "放在幼儿可自主取放的位置，不预先规定唯一用法",
+      purpose: "让幼儿能够比较、选择、组合和验证，而不是完成教师预设成品",
+      safetyNotes: ["根据材料尺寸、重量和场地检查安全性", "避免一次投放过多导致游戏意图被材料替代"],
+    },
+    experienceSupport: {
+      suggestedQuestions: ["你现在想解决的是什么？", "刚才哪一点发生了变化？", "你还想试哪一种办法？为什么？"],
+      participationMode: experienceSeed,
+      demonstration: "幼儿持续受阻且主动求助时，只示范一个可迁移的方法，再把决定权交还幼儿",
+      withdrawalCondition: "当幼儿能够继续计划、协商或验证时，教师退回观察位置",
+    },
+    observationCut: `当${plan.variable}变化时，幼儿如何计划、比较并调整？`,
+    observationFocus: ["支持前幼儿原有计划和做法", "材料或同伴变化后的第一反应", "是否提出比较、解释或新的问题", "教师退出后能否继续推进"],
+    adjustmentCondition: "若连续两次支持都没有促进新的行动或表达，应撤回该变量并重新确认幼儿真实兴趣。",
+    evidenceIds: generalEvidenceIds,
+  }));
+  const domains = ["健康", "语言", "社会", "科学", "艺术"] as const;
 
   return {
     objectiveSummary: facts.length ? facts.join("；") : "当前只有结构化情境信息，仍需补充客观行为白描。",
@@ -103,6 +152,37 @@ export function buildScenarioAnalysis(
       activity: response["活动支持"] ?? ["安排下一次相近情境复察，并记录支持前后的策略变化。"],
     },
     nextObservation: matched.flatMap((card) => card.next_observation_prompts).slice(0, 4),
+    gameExperience: [{
+      dimension: /搭|比较|调整|尝试|解决/.test(observation.teacher_observation) ? "问题解决" : "计划与意图",
+      evidence: primaryEvidence,
+      evidenceIds: generalEvidenceIds,
+      possibleExperience: observation.teacher_identification || `幼儿可能正在围绕“${observation.theme}”形成计划、尝试或表达经验。`,
+      limitation: "本次仅记录一个情境，尚不能说明该经验已经稳定或能够跨情境迁移。",
+    }],
+    domainExperiences: domains.map((domain) => {
+      const cardsForDomain = matched.filter((card) => card.domain === domain);
+      return {
+        domain,
+        evidence: cardsForDomain.length ? primaryEvidence : "",
+        evidenceIds: cardsForDomain.length ? generalEvidenceIds : [],
+        possibleExperience: cardsForDomain.length ? `本次行为可与${domain}领域的“${cardsForDomain.map((card) => card.title).join("、")}”联系理解。` : "本次没有足够直接证据，不作领域判断。",
+        indicatorCodes: cardsForDomain.map((card) => card.code),
+        missingEvidence: cardsForDomain[0]?.evidence_requirements[0] ?? `需要补充与${domain}领域直接相关的可见行为证据。`,
+        noJudgment: cardsForDomain.length === 0,
+      };
+    }),
+    learningDispositions: [{
+      dimension: /问|试|观察|探索|发现/.test(observation.teacher_observation) ? "好奇与探究" : "主动性",
+      evidence: primaryEvidence,
+      evidenceIds: generalEvidenceIds,
+      possibleExperience: "本次出现了可继续观察的学习品质线索，需要比较支持变化前后的主动行动。",
+      confidence: 0.68,
+    }],
+    learningPossibilities: ["支持幼儿把当前行动转化为更清晰的计划、比较或表达", "在相近和不同情境中验证经验是否能够再次使用"],
+    gamePossibilities: ["延长当前游戏，使幼儿有时间重复、调整和验证", "增加一个可控变量，观察幼儿是否生成新的问题和玩法"],
+    responsePlans,
+    observationCut: responsePlans.slice(0, 2).map((plan) => plan.observationCut),
+    observationFocus: responsePlans[0]!.observationFocus,
     historicalComparison: {
       evidenceCount: history.length,
       timePointCount: new Set(history.map((item) => item.occurred_at.slice(0, 10))).size,
@@ -128,6 +208,122 @@ export function buildScenarioAnalysis(
       "单次观察不能形成稳定发展结论，不输出达标/不达标、排名或诊断。",
       ...matched.map((card) => card.misunderstanding_warning).filter(Boolean).slice(0, 2),
     ],
+  };
+}
+
+const labelValue = (text: string, labels: string[]) => {
+  const escaped = labels.map((label) => label.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")).join("|");
+  return text.match(new RegExp(`(?:${escaped})[：:]?\\s*([^\\n]{1,300})`, "i"))?.[1]?.trim() ?? "";
+};
+
+export function buildScenarioObservationExtraction(input: ObservationDocumentExtractionInput): ObservationDocumentExtraction {
+  const text = input.rawText.replace(/\r/g, "").replace(/\n{3,}/g, "\n\n").trim();
+  const namedChildren = input.classroomChildren.filter((child) => text.includes(child.displayName));
+  const objective = labelValue(text, ["客观白描", "观察记录", "观察实录", "游戏过程", "幼儿表现"]);
+  const identification = labelValue(text, ["识别", "分析", "教师分析", "经验分析"]);
+  const response = labelValue(text, ["应答", "支持策略", "教师支持", "调整策略"]);
+  const nextFocus = labelValue(text, ["下一次观察", "观察重点", "后续观察"]);
+  const confidenceFor = (value: string, high = 0.82) => value ? high : 0.25;
+  return {
+    observerName: labelValue(text, ["观察教师", "观察者", "教师"]),
+    occurredAtText: labelValue(text, ["观察时间", "时间", "日期"]),
+    scene: labelValue(text, ["游戏场地", "观察地点", "游戏区域", "区域"]),
+    theme: labelValue(text, ["游戏主题", "主题名称", "主题"]),
+    organizationStage: "process",
+    subjects: namedChildren.map((child, index) => ({ displayName: child.displayName, contextualFeature: "", role: index === 0 ? "primary" : "participant" })),
+    unlistedParticipantCount: 0,
+    groupContext: labelValue(text, ["游戏背景", "情境", "活动背景"]),
+    objectiveObservation: objective || text.slice(0, 10000),
+    teacherIdentification: identification,
+    teacherResponseDraft: response,
+    nextObservationFocus: nextFocus,
+    fieldConfidence: {
+      observerName: confidenceFor(labelValue(text, ["观察教师", "观察者", "教师"])),
+      occurredAtText: confidenceFor(labelValue(text, ["观察时间", "时间", "日期"])),
+      scene: confidenceFor(labelValue(text, ["游戏场地", "观察地点", "游戏区域", "区域"])),
+      theme: confidenceFor(labelValue(text, ["游戏主题", "主题名称", "主题"])),
+      subjects: namedChildren.length ? 0.9 : 0.2,
+      objectiveObservation: confidenceFor(objective, objective ? 0.86 : 0.45),
+      teacherIdentification: confidenceFor(identification),
+      teacherResponseDraft: confidenceFor(response),
+      nextObservationFocus: confidenceFor(nextFocus),
+    },
+    warnings: [
+      "这是字段提取草稿，不是幼儿发展分析。",
+      ...(!namedChildren.length ? ["未能与当前班级幼儿姓名自动匹配，请教师手动选择。"] : []),
+      ...(!identification ? ["未识别到教师原始识别，请核对文档栏目。"] : []),
+    ],
+  };
+}
+
+export function buildScenarioRevision(input: AnalysisRevisionInput): AnalysisResult {
+  const notes = input.teacherFeedback.filter((item) => item.note || item.content);
+  return {
+    ...input.original,
+    objectiveSummary: input.teacherFeedback.find((item) => item.section === "objective" && item.content)?.content ?? input.original.objectiveSummary,
+    warnings: [...input.original.warnings.filter((item) => !item.startsWith("教师反馈")), `教师反馈修订：本版参考了${notes.length}条教师意见，仍需教师再次确认。`],
+  };
+}
+
+export function buildScenarioActivityOptions(input: CurriculumActivityOptionsInput): CurriculumActivityOptions {
+  const baseQuestion = input.observations.map((item) => item.teacher_response?.nextObservationFocus).find(Boolean) ?? `幼儿还想怎样继续探究“${input.theme}”？`;
+  const directions: Array<[string, string, string]> = [
+    ["材料变量实验室", "通过改变一种材料变量继续比较和验证", "自然"],
+    ["同伴协作任务", "通过协商、分工和共同记录扩展社会性探究", "社会"],
+    ["生活情境迁移", "把游戏中的问题带到真实生活情境中验证", "生活"],
+    ["表达与展览", "通过图示、作品、讲述或表演回顾和生成新问题", "自我"],
+  ];
+  return { options: directions.map(([title, valuePoint, dimension], index) => ({
+    title: `${input.theme}·${title}`,
+    valuePoint,
+    coreQuestion: index === 0 ? baseQuestion : `怎样从“${input.theme}”中继续发现与${dimension}有关的新问题？`,
+    socialNatureSelf: {
+      社会: index === 1 ? ["协商分工", "共同记录与分享"] : [],
+      自然: index === 0 ? ["比较材料特性", "观察变化并验证"] : [],
+      自我: index >= 2 ? ["表达选择和理由", "回顾并调整计划"] : [],
+    },
+    developmentLinks: ["依据连续观察选择相关《指南》知识卡，不为幼儿生成综合评分"],
+    mainActivities: ["回顾来源观察并由幼儿确认真实问题", `围绕“${title}”开展一次开放游戏`, "分享新发现并决定下一次走向"],
+    materials: index === 0 ? ["同类不同形态材料", "比较记录卡", "照片或图示工具"] : ["开放材料", "角色或任务标识", "记录与展示材料"],
+    teacherSupport: ["以提问和资源提供支持，不预设唯一答案", "记录幼儿问题、策略和支持前后变化"],
+    observationFocus: ["幼儿是否持续提出相关问题", "是否出现新的材料使用、协作或表达方式"],
+    riskNote: "该方向是可修改的课程地图，不应替代幼儿真实兴趣或变成统一活动清单。",
+  })) };
+}
+
+export function buildScenarioCurriculumPlan(input: CurriculumPlanGenerationInput): CurriculumPlanContent {
+  const optionTitles = input.selectedOptions.map((item) => item.title);
+  return {
+    themeOrigin: {
+      coreEmergencePoint: `幼儿围绕“${input.theme}”在多个时间点持续提出问题、尝试方法或形成共同兴趣。`,
+      sourceDescription: `本计划来源于${input.observationCount}条教师已终审观察，涉及${input.childCount}名幼儿和${input.timePointCount}个时间点；教师选择了“${optionTitles.join("、")}”作为可继续探究的方向。`,
+      evidenceReferences: input.evidenceObservationIds,
+    },
+    coreCompetencies: {
+      与自然同生: input.selectedOptions.flatMap((item) => item.socialNatureSelf.自然).slice(0, 8),
+      与生活同生: input.selectedOptions.flatMap((item) => item.socialNatureSelf.社会).slice(0, 8),
+      与自我同生: input.selectedOptions.flatMap((item) => item.socialNatureSelf.自我).slice(0, 8),
+      qualities: { 慧创生: ["探究", "细致"], 懂生活: ["独立", "自律"], 悦生长: ["愉悦", "自豪"] },
+    },
+    generatedPossibilities: {
+      presetDirections: input.selectedOptions.map((item) => `${item.title}：${item.valuePoint}`),
+      mindMap: input.selectedOptions.map((item) => ({ branch: item.title, activities: item.mainActivities })),
+      opennessNote: "本计划是地图而非铁轨。教师根据幼儿新问题调整方向，未发生的预设活动不作为实施要求。",
+    },
+    implementationFramework: {
+      teacherSupportAndQuestions: input.selectedOptions.flatMap((item) => item.teacherSupport).slice(0, 12),
+      anticipatedChildActivities: input.selectedOptions.flatMap((item) => item.mainActivities).slice(0, 12),
+      environmentAndMaterials: input.selectedOptions.flatMap((item) => item.materials).slice(0, 12),
+      experienceAndNewDirections: input.selectedOptions.map((item) => item.coreQuestion),
+    },
+    resources: {
+      environment: ["保留可持续探究的班级区域，并随幼儿问题动态调整"],
+      materials: input.selectedOptions.flatMap((item) => item.materials).slice(0, 12),
+      familyPartnership: ["邀请家庭提供与幼儿当前问题直接相关的生活经验或安全材料", "家庭反馈只作为补充观察，不替代园内证据"],
+      processActivities: optionTitles,
+      sharedOutcomes: ["幼儿问题与探究路径图", "过程照片、作品、原话与教师反思"],
+    },
+    adjustmentBasis: ["幼儿是否持续主动参与并生成新问题", "材料、同伴或教师支持变化后是否出现新的行动证据", "每轮循环结束后由教师决定继续、调整或停止"],
   };
 }
 
@@ -245,7 +441,7 @@ export function buildScenarioCurriculum(input: CurriculumGenerationInput): Curri
   const identifications = input.observations.map((item) => String(item.teacher_identification ?? "")).filter(Boolean).slice(0, 8);
   const nextFocuses = input.observations.map((item) => String(item.teacher_response?.nextObservationFocus ?? "")).filter(Boolean).slice(0, 8);
   return {
-    title: `${input.theme}：持续探究课程线索`,
+    title: input.scope === "individual_support" ? `${input.theme}：个别支持线索` : `${input.theme}：持续探究课程线索`,
     origin: `${input.observationCount}条已采用观察，涉及${input.childCount}名幼儿、${input.timePointCount}个时间点，显示该主题具有持续探究价值。`,
     inquiryQuestions: nextFocuses.length ? nextFocuses : [`幼儿围绕“${input.theme}”还想解决什么问题？`],
     existingExperience: identifications.length ? identifications : ["已有多次围绕相同主题的游戏行动和表达证据。"],

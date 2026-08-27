@@ -16,7 +16,15 @@ export interface AnalysisClaimDefinition {
     | "development_reference"
     | "response_suggestion"
     | "next_observation"
-    | "historical_change";
+    | "historical_change"
+    | "game_experience"
+    | "domain_experience"
+    | "learning_disposition"
+    | "learning_possibility"
+    | "game_possibility"
+    | "response_plan"
+    | "observation_cut"
+    | "observation_focus";
   originalContent: Record<string, unknown>;
 }
 
@@ -62,6 +70,14 @@ export function flattenAnalysisClaims(result: AnalysisResult): AnalysisClaimDefi
     }));
   }
   result.nextObservation.forEach((content, index) => claims.push({ claimKey: `next-observation:${index}`, claimType: "next_observation", originalContent: textClaim(content, { evidenceIds: generalEvidenceIds }) }));
+  result.gameExperience?.forEach((item, index) => claims.push({ claimKey: `game-experience:${index}`, claimType: "game_experience", originalContent: { ...item, content: item.possibleExperience } }));
+  result.domainExperiences?.forEach((item, index) => claims.push({ claimKey: `domain-experience:${index}`, claimType: "domain_experience", originalContent: { ...item, content: item.possibleExperience } }));
+  result.learningDispositions?.forEach((item, index) => claims.push({ claimKey: `learning-disposition:${index}`, claimType: "learning_disposition", originalContent: { ...item, content: item.possibleExperience } }));
+  result.learningPossibilities?.forEach((content, index) => claims.push({ claimKey: `learning-possibility:${index}`, claimType: "learning_possibility", originalContent: textClaim(content, { evidenceIds: generalEvidenceIds }) }));
+  result.gamePossibilities?.forEach((content, index) => claims.push({ claimKey: `game-possibility:${index}`, claimType: "game_possibility", originalContent: textClaim(content, { evidenceIds: generalEvidenceIds }) }));
+  result.responsePlans?.forEach((item, index) => claims.push({ claimKey: `response-plan:${index}`, claimType: "response_plan", originalContent: { ...item, content: item.title } }));
+  result.observationCut?.forEach((content, index) => claims.push({ claimKey: `observation-cut:${index}`, claimType: "observation_cut", originalContent: textClaim(content, { evidenceIds: generalEvidenceIds }) }));
+  result.observationFocus?.forEach((content, index) => claims.push({ claimKey: `observation-focus:${index}`, claimType: "observation_focus", originalContent: textClaim(content, { evidenceIds: generalEvidenceIds }) }));
   historical.changes.forEach((item, index) => claims.push({ claimKey: `historical-change:${index}`, claimType: "historical_change", originalContent: item }));
   historical.stablePatterns.forEach((item, index) => claims.push({ claimKey: `historical-pattern:${index}`, claimType: "historical_change", originalContent: { ...item, pattern: true } }));
   return claims;
@@ -85,6 +101,7 @@ export function effectiveAnalysisResult(result: AnalysisResult, reviews: Analysi
     if (category === "experience" || category === "material" || category === "activity") responses[category].push(text(item));
   });
   const history = byType("historical_change");
+  const responsePlans = byType("response_plan");
   return {
     ...result,
     objectiveSummary: text(byType("objective_summary")[0] ?? {}) || "教师未将AI摘要纳入正式结论。",
@@ -97,6 +114,14 @@ export function effectiveAnalysisResult(result: AnalysisResult, reviews: Analysi
     developmentReferences: byType("development_reference").map((item) => ({ ...item, evidenceStatement: text(item) })),
     responseSuggestions: responses,
     nextObservation: byType("next_observation").map(text).filter(Boolean),
+    gameExperience: byType("game_experience"),
+    domainExperiences: byType("domain_experience"),
+    learningDispositions: byType("learning_disposition"),
+    learningPossibilities: byType("learning_possibility").map(text).filter(Boolean),
+    gamePossibilities: byType("game_possibility").map(text).filter(Boolean),
+    responsePlans,
+    observationCut: byType("observation_cut").map(text).filter(Boolean),
+    observationFocus: byType("observation_focus").map(text).filter(Boolean),
     historicalComparison: {
       ...(result.historicalComparison ?? { evidenceCount: 0, timePointCount: 0, caution: "旧版分析未生成跨时间比较。" }),
       changes: history.filter((item) => !item.pattern),

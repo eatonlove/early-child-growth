@@ -53,14 +53,14 @@ export function App() {
     navigate(next === "teacher" ? "/today" : next === "research_admin" ? "/quality" : "/today");
   };
 
-  if (loading) return <div className="loading-screen"><span className="brand-glyph">童</span><h1>正在准备童迹 3.0</h1><p>载入证据包、教师原始判断与本地治理数据…</p><span className="loading-line" /></div>;
+  if (loading) return <div className="loading-screen"><span className="brand-glyph">童</span><h1>正在准备同迹 3.0</h1><p>载入证据包、教师原始判断与本地治理数据…</p><span className="loading-line" /></div>;
 
   return (
     <div className="app-shell v3-shell">
       <aside className={`sidebar ${menuOpen ? "sidebar-open" : ""}`}>
         <div className="brand">
           <span className="brand-glyph">童</span>
-          <div><strong>童迹 3.0</strong><small>循证游戏观察 · 本地完整演示</small></div>
+          <div><strong>同迹 3.0</strong><small>循证游戏观察 · 本地完整演示</small></div>
           <button className="icon-btn mobile-close" onClick={() => setMenuOpen(false)} aria-label="关闭菜单"><X /></button>
         </div>
         <div className="version-ribbon"><span>3.0</span> 教师判断先行 · AI 对照增强</div>

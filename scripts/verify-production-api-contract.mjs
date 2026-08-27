@@ -3,7 +3,7 @@ import path from "node:path";
 import process from "node:process";
 
 const root = process.cwd();
-const routeFiles = ["auth.ts", "management.ts", "observations.ts", "knowledge.ts", "governance.ts", "outcomes.ts"];
+const routeFiles = ["auth.ts", "management.ts", "observations.ts", "knowledge.ts", "governance.ts", "outcomes.ts", "evolution.ts"];
 const backendSource = (
   await Promise.all([
     ...routeFiles.map((file) => readFile(path.join(root, "apps/v3-api/src/routes", file), "utf8")),
@@ -20,6 +20,7 @@ const contract = [
   ["GET", "/api/me", true],
   ["GET", "/api/dashboard", true],
   ["GET", "/api/classrooms", true],
+  ["GET", "/api/observers", true],
   ["POST", "/api/classrooms", true],
   ["PATCH", "/api/classrooms/:id", true],
   ["GET", "/api/children", true],
@@ -36,6 +37,15 @@ const contract = [
   ["PATCH", "/api/analyses/:id/claims/:claimKey", true],
   ["POST", "/api/analyses/:id/finalize", true],
   ["POST", "/api/analyses/:id/decision", true],
+  ["PATCH", "/api/analyses/:id/sections/:section", true],
+  ["POST", "/api/analyses/:id/revise", true],
+  ["GET", "/api/observation-template/document", true],
+  ["POST", "/api/observation-imports", true],
+  ["POST", "/api/observation-imports/:id/upload", true],
+  ["GET", "/api/observation-imports/:id", true],
+  ["GET", "/api/response-plans", true],
+  ["POST", "/api/response-plans/:id/select", true],
+  ["POST", "/api/response-plans/combine", true],
   ["GET", "/api/observation-templates", true],
   ["GET", "/api/knowledge", true],
   ["GET", "/api/accounts", true],
@@ -60,6 +70,21 @@ const contract = [
   ["GET", "/api/curriculum-clues", true],
   ["POST", "/api/curriculum-clues/scan", true],
   ["PATCH", "/api/curriculum-clues/:id", true],
+  ["POST", "/api/curriculum-clues/from-evidence", true],
+  ["POST", "/api/curriculum-clues/:id/activity-options", true],
+  ["PATCH", "/api/curriculum-clues/:id/activity-options", true],
+  ["POST", "/api/curriculum-clues/:id/plan", true],
+  ["GET", "/api/curriculum-clues/:id/workspace", true],
+  ["GET", "/api/curriculum-templates", true],
+  ["POST", "/api/curriculum-templates", true],
+  ["POST", "/api/curriculum-plans/:id/cycles", true],
+  ["GET", "/api/analysis-frameworks", true],
+  ["POST", "/api/analysis-frameworks", true],
+  ["GET", "/api/professional-memories", true],
+  ["PATCH", "/api/professional-memories/:id", true],
+  ["POST", "/api/observations/:id/document-exports", true],
+  ["POST", "/api/curriculum-plans/:id/document-exports", true],
+  ["GET", "/api/document-exports/:id/download", true],
 ];
 
 const backendRoutes = new Set(

@@ -39,7 +39,7 @@ export async function authRoutes(app: FastifyInstance) {
       .select("user_id, tenant_id, username, display_name, role, status")
       .eq("user_id", data.user.id)
       .maybeSingle();
-    if (profileError || !profile) throw new ApiError(403, "APP_ACCOUNT_NOT_FOUND", "该账号不属于童迹3.0");
+    if (profileError || !profile) throw new ApiError(403, "APP_ACCOUNT_NOT_FOUND", "该账号不属于同迹3.0");
     if (profile.status !== "active") throw new ApiError(403, "ACCOUNT_DISABLED", "账号已停用，请联系教研员");
 
     const { data: tenant, error: tenantError } = await serviceClient.schema(config.SUPABASE_SCHEMA).from("tenants").select("id, name").eq("id", profile.tenant_id).maybeSingle();

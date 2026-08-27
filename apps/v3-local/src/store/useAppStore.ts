@@ -219,6 +219,6 @@ export const useAppStore = create<AppState>((set, get) => ({
     set({ busy: true });
     await localRepository.reset();
     await get().refresh();
-    set({ busy: false, selectedChildId: "child-1", selectedPackageId: "pkg-1", notice: { type: "success", message: "已恢复童迹3.0标准演示数据。" } });
+    set({ busy: false, selectedChildId: "child-1", selectedPackageId: "pkg-1", notice: { type: "success", message: "已恢复同迹3.0标准演示数据。" } });
   },
 }));

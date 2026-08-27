@@ -6,6 +6,7 @@ export type ClassroomReportDomain = (typeof classroomReportDomains)[number];
 interface ClassroomObservation {
   id: string;
   child_id: string;
+  participant_child_ids?: string[];
   occurred_at: string;
   scene: string;
 }
@@ -30,7 +31,7 @@ interface CurriculumClueSummary {
 
 export function classroomReportEvidenceCoverage(observations: ClassroomObservation[]) {
   const periodCoverage = reportEvidenceCoverage(observations);
-  const childCount = new Set(observations.map((item) => item.child_id)).size;
+  const childCount = new Set(observations.flatMap((item) => item.participant_child_ids?.length ? item.participant_child_ids : [item.child_id])).size;
   return {
     ...periodCoverage,
     childCount,

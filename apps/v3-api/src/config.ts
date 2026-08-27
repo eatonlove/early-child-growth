@@ -39,7 +39,7 @@ const envSchema = z.object({
 const parsed = envSchema.safeParse(process.env);
 if (!parsed.success) {
   const fields = parsed.error.issues.map((issue) => issue.path.join(".")).join(", ");
-  throw new Error(`童迹API环境变量缺失或无效: ${fields}`);
+  throw new Error(`同迹API环境变量缺失或无效: ${fields}`);
 }
 
 export const config = {

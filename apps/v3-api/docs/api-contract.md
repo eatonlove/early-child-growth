@@ -1,4 +1,4 @@
-# 童迹 3.0 生产 API 契约
+# 同迹 3.0 生产 API 契约
 
 ## 1. 通用约定
 
@@ -99,7 +99,7 @@
 ### 4.2 媒体证据
 
 1. `POST /observations/:id/evidence-ticket` 校验观察、授权、媒体类型和大小并创建待上传证据。
-2. `POST /evidence/:id/upload` 通过童迹API受控上传到私有 bucket，避免向浏览器暴露内部Supabase地址。
+2. `POST /evidence/:id/upload` 通过同迹API受控上传到私有 bucket，避免向浏览器暴露内部Supabase地址。
 3. 服务端核对文件大小、媒体类型、租户和授权后将证据标记为 `ready`。
 4. `GET /evidence/:id/download` 返回5分钟有效、使用公网HTTPS域名的私有查看链接。
 

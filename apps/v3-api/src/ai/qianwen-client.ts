@@ -86,7 +86,7 @@ export class QwenClient {
 
   constructor(private readonly options: QwenClientOptions) {
     if (!isStandardQwenApiKey(options.apiKey)) {
-      throw new Error("童迹后端必须使用标准DASHSCOPE_API_KEY，不能使用Token Plan密钥");
+      throw new Error("同迹后端必须使用标准DASHSCOPE_API_KEY，不能使用Token Plan密钥");
     }
     this.fetcher = options.fetcher ?? fetch;
     this.retries = options.retries ?? 2;

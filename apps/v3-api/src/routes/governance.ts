@@ -4,6 +4,7 @@ import { config } from "../config.js";
 import { canTransitionResearchActivity } from "../domain/workflow-contracts.js";
 import { ApiError, audit, authenticate, requireResearcher } from "../http.js";
 import { serviceClient } from "../supabase.js";
+import { materializeApprovedDocumentExport } from "./evolution.js";
 
 const uuid = z.string().uuid();
 const score = z.number().int().min(1).max(5);
@@ -115,7 +116,13 @@ export async function governanceRoutes(app: FastifyInstance) {
     const auth = await authenticate(request);
     const { data, error } = await auth.data.from("export_requests").select("*").order("created_at", { ascending: false });
     if (error) throw new ApiError(500, "EXPORT_REQUEST_LIST_FAILED", "导出申请读取失败");
-    return { items: data ?? [] };
+    const requestIds = (data ?? []).map((item) => item.id);
+    const { data: documents, error: documentError } = requestIds.length
+      ? await auth.data.from("document_exports").select("*").in("export_request_id", requestIds)
+      : { data: [], error: null };
+    if (documentError) throw new ApiError(500, "DOCUMENT_EXPORT_LIST_FAILED", "Word导出任务读取失败");
+    const documentMap = new Map((documents ?? []).map((item) => [item.export_request_id, item]));
+    return { items: (data ?? []).map((item) => ({ ...item, document_export: documentMap.get(item.id) ?? null })) };
   });
 
   app.post("/api/export-requests", async (request, reply) => {
@@ -163,6 +170,14 @@ export async function governanceRoutes(app: FastifyInstance) {
       .select()
       .maybeSingle();
     if (error || !data) throw new ApiError(409, "EXPORT_REQUEST_DECISION_FAILED", "申请不存在、无权审批或已经处理");
+    if (input.decision === "approved") {
+      try {
+        await materializeApprovedDocumentExport(id);
+      } catch (reason) {
+        request.log.error({ err: reason, exportRequestId: id }, "approved document export materialization failed");
+        throw new ApiError(500, "DOCUMENT_EXPORT_GENERATE_FAILED", "申请已批准，但Word文件生成失败，请联系管理员重试");
+      }
+    }
     await audit(auth, `export.${input.decision}`, "export_request", id, { note: input.note });
     return { item: data };
   });
