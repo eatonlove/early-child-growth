@@ -28,6 +28,7 @@ const aiProvider = createAIProvider({
   textModel: config.QWEN_TEXT_MODEL,
   visionModel: config.QWEN_VISION_MODEL,
   timeoutMs: config.QWEN_TIMEOUT_MS,
+  webSearchEnabled: config.qwenWebSearchEnabled,
   fallbackToSimulated: config.aiFallbackToSimulated,
 });
 
@@ -214,6 +215,16 @@ export async function evolutionRoutes(app: FastifyInstance) {
     if (error) throw new ApiError(500, "OBSERVATION_IMPORT_READ_FAILED", "观察表提取结果读取失败");
     if (!data) throw new ApiError(404, "OBSERVATION_IMPORT_NOT_FOUND", "观察表提取结果不存在或无权访问");
     return { item: data };
+  });
+
+  app.get("/api/observation-imports", async (request) => {
+    const auth = await authenticate(request);
+    const query = z.object({ classroomId: uuid.optional() }).parse(request.query);
+    let builder = auth.data.from("observation_imports").select("*").order("created_at", { ascending: false }).limit(50);
+    if (query.classroomId) builder = builder.eq("classroom_id", query.classroomId);
+    const { data, error } = await builder;
+    if (error) throw new ApiError(500, "OBSERVATION_IMPORT_LIST_FAILED", "观察表导入记录读取失败");
+    return { items: data ?? [] };
   });
 
   app.patch("/api/analyses/:id/sections/:section", async (request) => {
@@ -560,11 +571,10 @@ export async function evolutionRoutes(app: FastifyInstance) {
     await schema.from("curriculum_activity_options").delete().eq("curriculum_clue_id", id).eq("status", "suggested");
     const rows = generated.data.options.map((option) => ({
       tenant_id: auth.tenantId, classroom_id: clue.classroom_id, curriculum_clue_id: id,
-      title: option.title, value_point: option.valuePoint, evidence_observation_ids: clue.evidence_observation_ids,
-      core_question: option.coreQuestion, social_nature_self: option.socialNatureSelf,
-      development_links: option.developmentLinks, main_activities: option.mainActivities,
-      materials: option.materials, teacher_support: option.teacherSupport,
-      observation_focus: option.observationFocus, risk_note: option.riskNote, created_by: auth.userId,
+      title: option.title, value_point: option.recommendationReason, evidence_observation_ids: clue.evidence_observation_ids,
+      core_question: "待教师选择方向后在深度计划中生成", social_nature_self: { 社会: [], 自然: [], 自我: [] },
+      development_links: [], main_activities: [], materials: [], teacher_support: [], observation_focus: [],
+      risk_note: "课程方向只包含题目与建议理由，活动路径由教师选择后另行生成。", created_by: auth.userId,
     }));
     const { data, error } = await schema.from("curriculum_activity_options").insert(rows).select();
     if (error) throw new ApiError(500, "CURRICULUM_OPTIONS_SAVE_FAILED", "课程活动方向保存失败");
@@ -611,10 +621,7 @@ export async function evolutionRoutes(app: FastifyInstance) {
     const { data: knowledge, error: knowledgeError } = await auth.data.from("knowledge_cards").select("*").eq("grade", classroom.grade).eq("status", "active").limit(200);
     if (knowledgeError) throw new ApiError(500, "CURRICULUM_KNOWLEDGE_READ_FAILED", "课程知识参照读取失败");
     const normalizedOptions = selectedOptions.map((item) => ({
-      title: item.title, valuePoint: item.value_point, coreQuestion: item.core_question,
-      socialNatureSelf: item.social_nature_self, developmentLinks: item.development_links,
-      mainActivities: item.main_activities, materials: item.materials, teacherSupport: item.teacher_support,
-      observationFocus: item.observation_focus, riskNote: item.risk_note,
+      title: item.title, recommendationReason: item.value_point,
     }));
     const generated = await aiProvider.generateCurriculumPlan({
       theme: clue.theme, scope: clue.plan?.scope === "individual_support" ? "individual_support" : "classroom_curriculum", observationCount: observations?.length ?? 0, childCount: clue.child_ids.length,
@@ -630,7 +637,7 @@ export async function evolutionRoutes(app: FastifyInstance) {
     const { data, error } = await schema.from("curriculum_plans").insert({
       tenant_id: auth.tenantId, classroom_id: clue.classroom_id, curriculum_clue_id: id,
       template_version_id: template.id, title: clue.title, implementation_period: input.implementationPeriod,
-      core_inquiry_clue: normalizedOptions.map((item) => item.coreQuestion).join("；"), content: generated.data,
+      core_inquiry_clue: normalizedOptions.map((item) => item.title).join("；"), content: generated.data,
       evidence_observation_ids: clue.evidence_observation_ids, selected_option_ids: selectedOptions.map((item) => item.id),
       version, created_by: auth.userId,
     }).select().single();
@@ -698,7 +705,9 @@ export async function evolutionRoutes(app: FastifyInstance) {
       schema.from("evidence_assets").select("file_name, evidence_type").eq("observation_id", id).eq("upload_status", "ready"),
       schema.from("classrooms").select("name").eq("id", observation.classroom_id).single(),
       schema.from("tenants").select("name").eq("id", auth.tenantId).single(),
-      schema.from("profiles").select("user_id, display_name").eq("tenant_id", auth.tenantId).in("user_id", observation.observer_ids?.length ? observation.observer_ids : [observation.created_by]),
+      observation.observer_ids?.length
+        ? schema.from("profiles").select("user_id, display_name").eq("tenant_id", auth.tenantId).in("user_id", observation.observer_ids)
+        : Promise.resolve({ data: [], error: null }),
       schema.from("analysis_runs").select("*").eq("observation_id", id).eq("decision", "adopted").order("generated_at", { ascending: false }),
     ]);
     const childMap = new Map((children ?? []).map((child) => [child.id, child.display_name]));
@@ -727,7 +736,10 @@ export async function evolutionRoutes(app: FastifyInstance) {
       variant: input.variant,
       schoolName: tenant?.name ?? "幼儿园",
       classroomName: classroom?.name ?? "班级",
-      observerNames: (profiles ?? []).map((profile) => profile.display_name),
+      observerNames: [...new Set([
+        observation.observer_name_snapshot,
+        ...(profiles ?? []).map((profile) => profile.display_name),
+      ].filter(Boolean))],
       observation,
       subjects: (subjectRows ?? []).map((subject) => ({ displayName: childMap.get(subject.child_id) ?? "园内幼儿", role: subject.role, contextualFeature: subject.contextual_feature })),
       evidence: evidence ?? [],

@@ -179,7 +179,7 @@ export const analysisResultSchema = z.object({
     indicatorCodes: z.array(z.string().trim().min(1).max(100)).max(8),
     missingEvidence: z.string().trim().min(1).max(1000),
     noJudgment: z.boolean(),
-  }).strict()).length(5),
+  }).strict()).max(5),
   learningDispositions: z.array(z.object({
     dimension: z.enum(["好奇与探究", "主动性", "专注与坚持", "想象与创造", "合作", "反思与调整"]),
     evidence: z.string().trim().min(1).max(1500),
@@ -209,11 +209,28 @@ export const analysisResultSchema = z.object({
     }).strict()).max(6),
     caution: z.string().trim().min(1).max(1000),
   }).strict(),
+  externalSupportReferences: z.array(z.object({
+    title: z.string().trim().min(1).max(300),
+    url: z.string().url().max(1000),
+    source: z.string().trim().min(1).max(200),
+    appliedSuggestion: z.string().trim().min(1).max(1200),
+  }).strict()).max(6).default([]),
   evidenceSufficiency: z.enum(["有限", "初步充分"]),
   warnings: z.array(shortText).min(1).max(8),
 }).strict();
 
 export type AnalysisResult = z.infer<typeof analysisResultSchema>;
+
+export const supportResearchSchema = z.object({
+  references: z.array(z.object({
+    title: z.string().trim().min(1).max(300),
+    url: z.string().url().max(1000),
+    source: z.string().trim().min(1).max(200),
+    appliedSuggestion: z.string().trim().min(1).max(1200),
+  }).strict()).max(6),
+}).strict();
+
+export type SupportResearch = z.infer<typeof supportResearchSchema>;
 
 export const observationDocumentExtractionSchema = z.object({
   observerName: z.string().trim().max(80).default(""),
@@ -249,19 +266,7 @@ export interface ObservationDocumentExtractionInput {
 
 export const curriculumActivityOptionSchema = z.object({
   title: z.string().trim().min(2).max(160),
-  valuePoint: z.string().trim().min(2).max(1200),
-  coreQuestion: z.string().trim().min(2).max(500),
-  socialNatureSelf: z.object({
-    社会: z.array(shortText).max(5),
-    自然: z.array(shortText).max(5),
-    自我: z.array(shortText).max(5),
-  }).strict(),
-  developmentLinks: z.array(shortText).min(1).max(8),
-  mainActivities: z.array(shortText).min(2).max(8),
-  materials: z.array(shortText).min(1).max(10),
-  teacherSupport: z.array(shortText).min(1).max(8),
-  observationFocus: z.array(shortText).min(1).max(6),
-  riskNote: z.string().trim().min(1).max(1000),
+  recommendationReason: z.string().trim().min(2).max(1200),
 }).strict();
 
 export const curriculumActivityOptionsSchema = z.object({
@@ -388,6 +393,7 @@ export interface ObservationAnalysisInput {
   history: HistoricalObservationEvidence[];
   professionalMemories?: ProfessionalMemoryForAnalysis[];
   analysisFrameworks?: AnalysisFrameworkForPrompt[];
+  peerAnalysisSummaries?: Array<{ subjectRole: string; subjectContext: string; currentExperience: string; responseTitles: string[] }>;
   prompt?: ResolvedAIPrompt;
 }
 

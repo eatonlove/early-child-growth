@@ -224,6 +224,7 @@ export function createAIProvider(config: AIProviderConfig): AIAnalysisProvider {
     textModel: config.textModel,
     visionModel: config.visionModel,
     timeoutMs: config.timeoutMs,
+    webSearchEnabled: config.webSearchEnabled,
   });
   return new ResilientAIProvider(qianwen, scenario, config.fallbackToSimulated);
 }

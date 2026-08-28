@@ -130,6 +130,24 @@ else
   echo "园所级AI提示词配置结构已就绪，跳过提示词迁移。"
 fi
 
+observation_identity_ready="$(docker exec "$DB_CONTAINER" psql -U postgres -d postgres -Atc \
+  "select exists(
+     select 1
+     from information_schema.columns
+     where table_schema = 'tongji_v3'
+       and table_name = 'observations'
+       and column_name = 'observer_name_snapshot'
+       and is_nullable = 'NO'
+   ) and to_regclass('tongji_v3.children_classroom_internal_code_unique') is not null;")"
+
+if [ "$observation_identity_ready" != "t" ]; then
+  docker exec -i "$DB_CONTAINER" psql -U postgres -d postgres \
+    -v ON_ERROR_STOP=1 --single-transaction \
+    < "$ROOT_DIR/apps/v3-api/supabase/migrations/20260828163000_observation_import_and_classroom_identity.sql"
+else
+  echo "观察教师署名与班内编号约束已就绪，跳过8.28迁移。"
+fi
+
 docker exec -i "$DB_CONTAINER" psql -U postgres -d postgres \
   -v ON_ERROR_STOP=1 --single-transaction \
   < "$ROOT_DIR/apps/v3-api/supabase/migrations/20260828084501_reload_ai_prompt_config_schema.sql"

@@ -154,16 +154,32 @@ export interface ObservationDocumentData {
 
 function professionalAnalysisSections(analysis: Record<string, any>) {
   return [
-    heading("游戏经验", HeadingLevel.HEADING_3),
+    heading("AI观察：客观整理", HeadingLevel.HEADING_3),
+    paragraph(analysis.objectiveSummary),
+    ...bulletParagraphs((analysis.facts ?? []).map((item: any) => `${item.content}【证据：${item.evidenceIds?.join("、") || item.evidence || "教师原稿"}】`)),
+    heading("AI识别：《指南》循证参照", HeadingLevel.HEADING_3),
+    paragraph(analysis.currentExperience),
+    ...bulletParagraphs((analysis.developmentReferences ?? []).map((item: any) => {
+      const interpretation = (analysis.interpretations ?? []).find((entry: any) => entry.indicatorCode === item.indicatorCode);
+      return `${item.domain}｜${item.indicatorCode}｜${item.title}｜${item.ageBand}｜${item.status}\n行为证据：${item.evidenceStatement}\n可能经验：${interpretation?.content || "待持续观察"}\n证据边界：${interpretation?.limitation || item.missingEvidence}`;
+    })),
+    heading("AI应答：教师可选择方案", HeadingLevel.HEADING_3),
+    ...bulletParagraphs((analysis.responsePlans ?? []).map((plan: any) => `${plan.title}\n建议理由：${plan.rationale}\n活动：${plan.activitySupport?.activityName}；${(plan.activitySupport?.steps ?? []).join("→")}\n材料：${(plan.materialSupport?.materials ?? []).map((item: any) => `${item.name}（${item.quantity || "按需"}，${item.variable || "开放使用"}）`).join("、")}\n教师语言：${(plan.experienceSupport?.suggestedQuestions ?? []).join("；")}\n退出条件：${plan.experienceSupport?.withdrawalCondition}\n复察：${plan.observationCut}`)),
+    heading("连续观察对比", HeadingLevel.HEADING_3),
+    paragraph(analysis.historicalComparison?.caution),
+    ...bulletParagraphs((analysis.historicalComparison?.changes ?? []).map((item: any) => `${item.dimension}：${item.content}`)),
+    heading("拓展：游戏经验", HeadingLevel.HEADING_3),
     ...bulletParagraphs((analysis.gameExperience ?? []).map((item: any) => `${item.dimension}：${item.possibleExperience}`)),
-    heading("五大领域经验", HeadingLevel.HEADING_3),
+    heading("拓展：五大领域经验", HeadingLevel.HEADING_3),
     ...bulletParagraphs((analysis.domainExperiences ?? []).map((item: any) => `${item.domain}：${item.possibleExperience}`)),
-    heading("学习品质线索", HeadingLevel.HEADING_3),
+    heading("拓展：学习品质线索", HeadingLevel.HEADING_3),
     ...bulletParagraphs((analysis.learningDispositions ?? []).map((item: any) => `${item.dimension}：${item.possibleExperience}`)),
     heading("学习与游戏可能", HeadingLevel.HEADING_3),
     ...bulletParagraphs([...(analysis.learningPossibilities ?? []), ...(analysis.gamePossibilities ?? [])]),
     heading("观察切口与重点", HeadingLevel.HEADING_3),
     ...bulletParagraphs([...(analysis.observationCut ?? []), ...(analysis.observationFocus ?? [])]),
+    heading("公开资料补充", HeadingLevel.HEADING_3),
+    ...bulletParagraphs((analysis.externalSupportReferences ?? []).map((item: any) => `${item.title}（${item.source}）\n${item.appliedSuggestion}\n${item.url}`)),
   ];
 }
 

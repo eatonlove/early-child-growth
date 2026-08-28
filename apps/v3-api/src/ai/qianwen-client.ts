@@ -26,6 +26,8 @@ interface StructuredCompletionInput<T> {
   jsonSchema: Record<string, unknown>;
   validator: z.ZodType<T, z.ZodTypeDef, any>;
   temperature?: number;
+  enableSearch?: boolean;
+  searchOptions?: Record<string, unknown>;
 }
 
 export class QwenRequestError extends Error {
@@ -122,6 +124,7 @@ export class QwenClient {
           messages: input.messages,
           temperature: input.temperature ?? 0.2,
           enable_thinking: false,
+          ...(input.enableSearch ? { enable_search: true, search_options: input.searchOptions ?? { search_strategy: "turbo" } } : {}),
           response_format: {
             type: "json_schema",
             json_schema: {

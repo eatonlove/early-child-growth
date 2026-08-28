@@ -29,8 +29,10 @@ import {
   type ReportGenerationInput,
   type ReportRevisionInput,
   type ResolvedAIPrompt,
+  supportResearchSchema,
+  type SupportResearch,
 } from "./contracts.js";
-import { analysisJsonSchema, classroomReportJsonSchema, curriculumActivityOptionsJsonSchema, curriculumJsonSchema, curriculumPlanContentJsonSchema, interestClusterJsonSchema, observationDocumentExtractionJsonSchema, reportJsonSchema } from "./json-schemas.js";
+import { analysisJsonSchema, classroomReportJsonSchema, curriculumActivityOptionsJsonSchema, curriculumJsonSchema, curriculumPlanContentJsonSchema, interestClusterJsonSchema, observationDocumentExtractionJsonSchema, reportJsonSchema, supportResearchJsonSchema } from "./json-schemas.js";
 import { QwenClient, type QwenContentPart } from "./qianwen-client.js";
 import { normalizeAnalysisResult } from "./analysis-compatibility.js";
 import { rankKnowledgeCards } from "./scenario-provider.js";
@@ -41,17 +43,18 @@ export interface QianwenProviderOptions {
   textModel: string;
   visionModel: string;
   timeoutMs: number;
+  webSearchEnabled?: boolean;
 }
 
 const DOCUMENT_EXTRACTION_PROMPT_VERSION = "observation-document-extraction.qwen.v1";
-const OBSERVATION_PROMPT_VERSION = "observation-analysis.qwen.v5";
+const OBSERVATION_PROMPT_VERSION = "observation-analysis.qwen.v6";
 const ANALYSIS_REVISION_PROMPT_VERSION = "observation-analysis-revision.qwen.v1";
 const REPORT_PROMPT_VERSION = "period-report.qwen.v2";
 const REPORT_REVISION_PROMPT_VERSION = "period-report-revision.qwen.v1";
 const CLASSROOM_REPORT_PROMPT_VERSION = "classroom-period-report.qwen.v1";
 const CURRICULUM_PROMPT_VERSION = "curriculum-draft.qwen.v2";
 const INTEREST_CLUSTER_PROMPT_VERSION = "curriculum-interest-clustering.qwen.v1";
-const CURRICULUM_OPTIONS_PROMPT_VERSION = "curriculum-activity-options.qwen.v1";
+const CURRICULUM_OPTIONS_PROMPT_VERSION = "curriculum-directions.qwen.v2";
 const CURRICULUM_PLAN_PROMPT_VERSION = "curriculum-plan-tongsheng.qwen.v1";
 
 const observationSystemPrompt = `你是幼儿园“观察·识别·应答·拓展”逐幼儿循证分析助手。你只生成教师审核用草稿，不作诊断、排名、综合评分、横向比较或一次性定论。
@@ -68,8 +71,9 @@ const observationSystemPrompt = `你是幼儿园“观察·识别·应答·拓�
 【识别：interpretations至developmentReferences】
 6. 先回答“幼儿当前正在运用什么已有经验、遇到什么问题、采用了什么策略、哪些只是待验证线索”，再关联年龄段知识卡。指标编码只能从allowedKnowledgeCards选择，引用时使用“可与……联系理解”，不得写“符合、达到、未达到”。
 7. 每条interpretation必须由个体事实支持，并包含证据ID、指标编码、限制条件和克制的形成性语言。单次观察的developmentReferences一般只能标为“线索”或“部分证据”；只有多时间点历史证据共同支持时才可标“较充分证据”。
-8. 五大领域必须完整输出五项，但不追求领域齐全。没有目标幼儿直接证据的领域设置noJudgment=true、evidenceIds=[]，明确本次不作判断；不能仅因使用某种材料就推断艺术、科学或健康经验。
+8. domainExperiences只输出有目标幼儿直接证据的领域，一般1至3项，不为凑齐五大领域生成空泛文字。不能仅因使用某种材料就推断艺术、科学或健康经验；没有证据的领域由系统界面统一提示“本次不作判断”。
 9. hypotheses只写可被下一轮观察证实或否定的假设；currentExperience、interestsAndStrengths、gameExperience和learningDispositions均不得超出证据。teacherComparison必须原样保留教师识别和应答，aiAddition只说明AI补充、修正或提醒了什么，不重复教师原文。
+9.1 alreadyGeneratedPeerAnalyses仅用于避免给不同幼儿复制相同结论。若本次证据不能支持个体差异，应明确“个体证据不足”，不得为了制造差异编造行为。
 
 【应答：responseSuggestions与responsePlans】
 10. 应答必须直接回应本次兴趣、已有经验、困难或证据缺口，保护幼儿游戏意图和自主解决空间。避免把游戏改造成统一教学活动，避免一次投放过多材料或连续追问。
@@ -79,9 +83,10 @@ const observationSystemPrompt = `你是幼儿园“观察·识别·应答·拓�
 【拓展与成长判断】
 13. learningPossibilities和gamePossibilities用于提出可生成的新问题、材料变量、表达表征或游戏延续方向，必须弱于核心“观察·识别·应答”，并保留开放性。
 14. 仅在adoptedHistory存在时进行跨时间比较；变化必须同时引用历史和当前证据。没有历史证据时明确不能判断成长变化或稳定模式。
+15. externalSupportReferences只能使用输入approvedExternalSupportReferences中已有的标题、网址、来源和建议，不得编造链接。外部资料只用于启发活动、材料和经验支持，不得作为该幼儿发展判断证据。
 
 【安全与格式】
-15. 不得补写未发生的行为、原话、次数、时长或因果关系；不得输出达标/不达标、优秀/落后、正常/异常、聪明/能力差等标签。输出3个responsePlans、1-2个observationCut和2-5个observationFocus，并完全符合JSON Schema，不要输出Markdown。`;
+16. 不得补写未发生的行为、原话、次数、时长或因果关系；不得输出达标/不达标、优秀/落后、正常/异常、聪明/能力差等标签。输出3个responsePlans、1-2个observationCut和2-5个observationFocus，并完全符合JSON Schema，不要输出Markdown。`;
 
 const documentExtractionSystemPrompt = `你是幼儿园观察记录表字段提取助手。你只负责从教师上传的文档或图片中提取已有内容，不分析幼儿发展，不补写事实。
 优先匹配输入提供的当前班级幼儿姓名；重名、不确定姓名和日期必须降低fieldConfidence并加入warnings。幼儿特征只能提取本次情境描述，不得生成性格标签。没有找到的字段输出空字符串，不得猜测。输出必须完全符合JSON Schema，不要输出Markdown。`;
@@ -104,8 +109,8 @@ const reportRevisionSystemPrompt = `你是幼儿游戏成长报告修订助手�
 const curriculumSystemPrompt = `你是幼儿园游戏生成课程助手。课程草案必须来自多幼儿或多时间点的持续游戏证据，不预设固定活动路径，不替代教师决策。
 只使用输入中的兴趣、问题、教师识别和下一步观察重点，不新增幼儿行为事实。草案要保留开放性，包含材料环境、可能路径、观察重点、家庭社区资源和调整依据。不得生成幼儿排名、评分、诊断或统一完成标准。输出必须完全符合JSON Schema，不要输出Markdown。`;
 
-const curriculumOptionsSystemPrompt = `你是幼儿园生成性课程活动方向助手。只基于教师明确选择的连续观察证据和知识卡生成4个差异化活动方向，不能添加未发生的幼儿行为。
-每个方向要说明价值点、核心问题、社会/自然/自我三维关联、具体活动、材料、教师支持、观察重点和机械化推进风险。方向是供教师选择和组合的地图，不是统一活动清单。输出必须完全符合JSON Schema，不要输出Markdown。`;
+const curriculumOptionsSystemPrompt = `你是幼儿园生成性课程方向助手。只基于教师明确选择的连续观察证据和知识卡生成4个差异化课程方向，不能添加未发生的幼儿行为。
+第一步只输出“课程题目”和“建议理由”。建议理由要说明它如何整合幼儿持续兴趣、未解决问题和连续证据；不要提前生成活动、材料或完整课程路径。教师选择方向后，系统才进入深度课程计划生成。输出必须完全符合JSON Schema，不要输出Markdown。`;
 
 const curriculumPlanSystemPrompt = `你是幼儿园“同生”课程计划助手。请依据教师选中的活动方向、连续观察证据、《指南》知识和园本模板生成课程地图。
 内容必须覆盖核心生发点、社会/自然/自我与园本品质、预设方向和思维导图、四区七步N循环实施准备、环境材料、家园共育和调整依据。不得把预设活动写成必须完成的铁轨，不得新增观察中没有的幼儿事实。输出必须完全符合JSON Schema，不要输出Markdown。`;
@@ -184,7 +189,7 @@ export const AI_PROMPT_DEFINITIONS = {
     key: "curriculum_activity_options",
     name: "课程活动方向",
     category: "课程",
-    description: "依据教师选中的连续证据与知识卡生成四个差异化活动方向。",
+    description: "依据教师选中的连续证据与知识卡生成四个“课程题目+建议理由”方向。",
     defaultVersion: CURRICULUM_OPTIONS_PROMPT_VERSION,
     defaultSystemPrompt: curriculumOptionsSystemPrompt,
   },
@@ -222,6 +227,37 @@ const forbiddenJudgment = /(达标|不达标|优秀|落后|正常儿童|异常�
 
 function assertNoForbiddenJudgment(value: unknown) {
   if (forbiddenJudgment.test(JSON.stringify(value))) throw new Error("千问输出触发幼儿标签化风险守卫");
+}
+
+function textSimilarity(left: string, right: string) {
+  const grams = (value: string) => {
+    const normalized = value.replace(/[\s，。！？、：；《》（）()“”'"·_-]/g, "");
+    return new Set(Array.from({ length: Math.max(0, normalized.length - 1) }, (_, index) => normalized.slice(index, index + 2)));
+  };
+  const a = grams(left);
+  const b = grams(right);
+  const intersection = [...a].filter((item) => b.has(item)).length;
+  return intersection / Math.max(1, Math.min(a.size, b.size));
+}
+
+function assertDistinctAnalysis(result: AnalysisResult) {
+  const interpretationTexts = result.interpretations.map((item) => item.content);
+  for (let left = 0; left < interpretationTexts.length; left += 1) {
+    for (let right = left + 1; right < interpretationTexts.length; right += 1) {
+      if (textSimilarity(interpretationTexts[left]!, interpretationTexts[right]!) > 0.9) throw new Error("千问识别内容重复度过高");
+    }
+  }
+  const planSignatures = result.responsePlans.map((plan) => [
+    plan.title,
+    plan.activitySupport.activityName,
+    plan.materialSupport.materials.map((item) => item.variable).join("；"),
+    plan.observationCut,
+  ].join("；"));
+  for (let left = 0; left < planSignatures.length; left += 1) {
+    for (let right = left + 1; right < planSignatures.length; right += 1) {
+      if (textSimilarity(planSignatures[left]!, planSignatures[right]!) > 0.9) throw new Error("千问应答方案区分度不足");
+    }
+  }
 }
 
 function knowledgeForPrompt(cards: KnowledgeRow[]) {
@@ -352,6 +388,40 @@ export class QianwenAIProvider implements AIAnalysisProvider {
     });
   }
 
+  private async researchSupport(input: ObservationAnalysisInput, cards: KnowledgeRow[]) {
+    if (!this.options.webSearchEnabled) return [];
+    try {
+      const result = await this.client.structuredCompletion<SupportResearch>({
+        model: this.options.textModel,
+        messages: [
+          {
+            role: "system",
+            content: "你是幼儿园游戏支持资源检索助手。只检索可公开访问的教育、科学或安全实践资料，返回可执行但不替代教师判断的活动、材料或经验支持。输入已经去除幼儿身份，不得反向推测身份。每条必须提供真实可访问的网址；找不到可靠来源时返回空数组。输出必须符合JSON Schema。",
+          },
+          {
+            role: "user",
+            content: JSON.stringify({
+              grade: input.classroom.grade,
+              scene: input.observation.scene,
+              theme: input.observation.theme,
+              observationFocus: input.observation.observation_focus ?? [],
+              knowledgeTopics: cards.slice(0, 6).map((card) => ({ domain: card.domain, title: card.title })),
+              request: "检索适合幼儿园真实环境的低成本活动步骤、具体材料工具及安全使用方法。不得包含幼儿姓名、原话或个体判断。",
+            }),
+          },
+        ],
+        schemaName: "tongji_support_web_research",
+        jsonSchema: supportResearchJsonSchema,
+        validator: supportResearchSchema,
+        enableSearch: true,
+        searchOptions: { search_strategy: "turbo" },
+      });
+      return result.references;
+    } catch {
+      return [];
+    }
+  }
+
   async extractObservationDocument(input: ObservationDocumentExtractionInput): Promise<AIGeneration<ObservationDocumentExtraction>> {
     const prompt = configuredPrompt(input, "observation_document_extraction");
     const content: QwenContentPart[] = [{
@@ -382,6 +452,7 @@ export class QianwenAIProvider implements AIAnalysisProvider {
   async analyzeObservation(input: ObservationAnalysisInput): Promise<AIGeneration<AnalysisResult>> {
     const prompt = configuredPrompt(input, "observation_analysis");
     const cards = rankKnowledgeCards(input.observation, input.knowledge, 12);
+    const externalSupportReferences = await this.researchSupport(input, cards);
     const ageBands = [...new Set(cards.map((card) => card.age_band).filter(Boolean))];
     const mediaIds = new Set(input.media.map((item) => item.id));
     const evidence = input.evidence.map((item) => ({
@@ -441,6 +512,8 @@ export class QianwenAIProvider implements AIAnalysisProvider {
         useBoundary: "仅用于支持策略和风险提醒，不是本次幼儿事实证据",
       })),
       schoolAnalysisFrameworks: input.analysisFrameworks ?? [],
+      approvedExternalSupportReferences: externalSupportReferences,
+      alreadyGeneratedPeerAnalyses: input.peerAnalysisSummaries ?? [],
     };
     const content: QwenContentPart[] = [{
       type: "text",
@@ -465,6 +538,8 @@ export class QianwenAIProvider implements AIAnalysisProvider {
       validator: analysisResultSchema,
     });
     const validated = validateObservationGrounding(result, input, cards);
+    validated.externalSupportReferences = externalSupportReferences;
+    assertDistinctAnalysis(validated);
     return {
       data: validated,
       provider: "QianwenAIProvider",
@@ -702,7 +777,7 @@ export class QianwenAIProvider implements AIAnalysisProvider {
       validator: curriculumActivityOptionsSchema,
     });
     assertNoForbiddenJudgment(result);
-    return { data: result, provider: "QianwenAIProvider", model: this.options.textModel, promptVersion: prompt.version, mediaAnalyzed: false, notice: "千问AI已生成4个课程活动方向，教师选择或组合后才能继续生成课程计划。" };
+    return { data: result, provider: "QianwenAIProvider", model: this.options.textModel, promptVersion: prompt.version, mediaAnalyzed: false, notice: "千问AI已生成4个“课程题目+建议理由”方向，教师选择后才能继续生成深度课程计划。" };
   }
 
   async generateCurriculumPlan(input: CurriculumPlanGenerationInput): Promise<AIGeneration<CurriculumPlanContent>> {

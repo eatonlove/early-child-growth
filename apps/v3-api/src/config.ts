@@ -33,6 +33,7 @@ const envSchema = z.object({
   QWEN_VISION_MODEL: z.string().trim().min(1).default("qwen3.7-plus"),
   QWEN_TIMEOUT_MS: z.coerce.number().int().min(5000).max(300000).default(120000),
   QWEN_MEDIA_ANALYSIS_ENABLED: z.enum(["true", "false"]).default("false"),
+  QWEN_WEB_SEARCH_ENABLED: z.enum(["true", "false"]).default("true"),
   QWEN_MAX_MEDIA: z.coerce.number().int().min(0).max(3).default(2),
   AI_FALLBACK_TO_SIMULATED: z.enum(["true", "false"]).default("true"),
 }).superRefine((value, context) => {
@@ -66,6 +67,7 @@ export const config = {
   corsOrigins: parsed.data.CORS_ORIGIN.split(",").map((item) => item.trim()).filter(Boolean),
   qwenApiKey: parsed.data.QIANWEN_API_KEY || parsed.data.DASHSCOPE_API_KEY || "",
   qwenMediaAnalysisEnabled: parsed.data.QWEN_MEDIA_ANALYSIS_ENABLED === "true",
+  qwenWebSearchEnabled: parsed.data.QWEN_WEB_SEARCH_ENABLED === "true",
   aiFallbackToSimulated: parsed.data.AI_FALLBACK_TO_SIMULATED === "true",
   isLocalLite: parsed.data.RUNTIME_MODE === "local-lite",
 };

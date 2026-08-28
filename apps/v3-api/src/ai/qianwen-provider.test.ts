@@ -156,7 +156,7 @@ describe("QianwenAIProvider", () => {
     expect(requestBody).toContain("video_url");
     expect(requestBody).toContain("image_url");
     expect(requestBody).not.toContain("不应发送的姓名");
-    expect(generated.promptVersion).toBe("observation-analysis.qwen.v5");
+    expect(generated.promptVersion).toBe("observation-analysis.qwen.v6");
 
     const apiRequest = JSON.parse(requestBody);
     expect(apiRequest.messages[0].content).toContain("逐幼儿循证分析助手");

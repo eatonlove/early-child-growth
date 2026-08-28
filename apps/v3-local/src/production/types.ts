@@ -50,6 +50,7 @@ export interface RemoteObservation {
   source_type?: "web" | "document_import";
   source_import_id?: string | null;
   observer_ids?: string[];
+  observer_name_snapshot?: string;
   group_context?: string | null;
   unlisted_participant_count?: number;
   title: string;
@@ -144,6 +145,12 @@ export interface AnalysisResult {
     stablePatterns: Array<{ content: string; evidenceIds: string[]; confidence: number }>;
     caution: string;
   };
+  externalSupportReferences: Array<{
+    title: string;
+    url: string;
+    source: string;
+    appliedSuggestion: string;
+  }>;
   evidenceSufficiency: string;
   warnings: string[];
 }
@@ -257,6 +264,8 @@ export interface RemoteObservationImport {
   field_confidence: Record<string, number>;
   matched_child_ids: string[];
   failure_reason?: string | null;
+  observation_id?: string | null;
+  created_at: string;
 }
 
 export interface RemoteAccount {
@@ -546,6 +555,7 @@ export interface RemoteCurriculumOption {
   id: string;
   title: string;
   value_point: string;
+  evidence_observation_ids: string[];
   core_question: string;
   social_nature_self: Record<"社会" | "自然" | "自我", string[]>;
   development_links: string[];

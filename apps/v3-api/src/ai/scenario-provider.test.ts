@@ -18,7 +18,7 @@ describe("scenario AI provider", () => {
     expect(result.facts.map((fact) => fact.content).join(" ")).toContain("积木倒塌");
     expect(result.facts.map((fact) => fact.content).join(" ")).toContain("这块更稳");
     expect(result.warnings.join(" ")).toContain("不输出达标/不达标");
-    expect(result.domainExperiences.map((item) => item.domain)).toEqual(["健康", "语言", "社会", "科学", "艺术"]);
+    expect(result.domainExperiences.map((item) => item.domain)).toEqual(["科学", "艺术"]);
     expect(result.responsePlans).toHaveLength(3);
     expect(result.responsePlans.every((plan) => plan.activitySupport && plan.materialSupport && plan.experienceSupport)).toBe(true);
   });
@@ -59,7 +59,7 @@ describe("scenario AI provider", () => {
 
     expect(revised.objectiveSummary).toBe("教师确认后的客观摘要");
     expect(revised.responsePlans).toHaveLength(3);
-    expect(revised.domainExperiences.map((item) => item.domain)).toEqual(["健康", "语言", "社会", "科学", "艺术"]);
+    expect(revised.domainExperiences.map((item) => item.domain)).toEqual(["科学", "艺术"]);
     expect(revised.observationFocus.length).toBeGreaterThanOrEqual(2);
   });
 

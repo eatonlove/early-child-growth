@@ -35,8 +35,7 @@ describe("Word document generation", () => {
   });
 
   it("keeps teacher-confirmed evidence in the professional observation export", async () => {
-    const buffer = await generateObservationDocument({
-      variant: "professional",
+    const input = {
       schoolName: "演示幼儿园",
       classroomName: "中一班",
       observerNames: ["演示教师"],
@@ -59,6 +58,14 @@ describe("Word document generation", () => {
             learningDispositions: [{ dimension: "专注与坚持", possibleExperience: "倒塌后继续尝试" }],
             learningPossibilities: ["继续比较"], gamePossibilities: ["改变一个材料变量"],
             observationCut: ["支撑变化时如何调整"], observationFocus: ["首次反应", "再次测试"],
+            objectiveSummary: "幼儿移动桥墩后再次测试。",
+            facts: [{ content: "移动桥墩后再次测试", evidenceIds: ["教师原稿"] }],
+            currentExperience: "出现比较支撑位置的经验线索。",
+            developmentReferences: [{ domain: "科学", indicatorCode: "SC-M-01", title: "探究与比较", ageBand: "4-5岁", status: "线索", evidenceStatement: "移动后再次测试", missingEvidence: "需跨情境复察" }],
+            interpretations: [{ indicatorCode: "SC-M-01", content: "可能在比较位置变化", limitation: "单次观察" }],
+            responsePlans: [{ title: "一次只改变一个支撑变量", rationale: "便于幼儿比较", activitySupport: { activityName: "桥梁再测试", steps: ["选择位置", "再次测试"] }, materialSupport: { materials: [{ name: "桥墩", quantity: "3个", variable: "位置" }] }, experienceSupport: { suggestedQuestions: ["哪里不一样？"], withdrawalCondition: "幼儿继续自主尝试" }, observationCut: "是否主动比较" }],
+            historicalComparison: { caution: "尚需更多时间点", changes: [] },
+            externalSupportReferences: [{ title: "幼儿探究活动参考", source: "公开资料", url: "https://example.com/support", appliedSuggestion: "一次改变一个变量" }],
           },
         },
         {
@@ -69,13 +76,23 @@ describe("Word document generation", () => {
           },
         },
       ],
-    });
-    const text = (await mammoth.extractRawText({ buffer })).value;
-    expect(text).toContain("幼儿移动桥墩后再次测试");
-    expect(text).toContain("专业分析");
-    expect(text).toContain("小禾");
-    expect(text).toContain("小山");
-    expect(text).toContain("回应同伴并共同调整");
+    };
+    const professional = await generateObservationDocument({ ...input, variant: "professional" });
+    const teacher = await generateObservationDocument({ ...input, variant: "teacher" });
+    const professionalText = (await mammoth.extractRawText({ buffer: professional })).value;
+    const teacherText = (await mammoth.extractRawText({ buffer: teacher })).value;
+    expect(professionalText).toContain("幼儿移动桥墩后再次测试");
+    expect(professionalText).toContain("教师终审后的专业分析");
+    expect(professionalText).toContain("SC-M-01");
+    expect(professionalText).toContain("一次只改变一个支撑变量");
+    expect(professionalText).toContain("幼儿探究活动参考");
+    expect(professionalText).toContain("小禾");
+    expect(professionalText).toContain("小山");
+    expect(professionalText).toContain("回应同伴并共同调整");
+    expect(teacherText).toContain("幼儿移动桥墩后再次测试");
+    expect(teacherText).not.toContain("教师终审后的专业分析");
+    expect(teacherText).not.toContain("SC-M-01");
+    expect(teacherText).not.toContain("幼儿探究活动参考");
   });
 
   it("generates the school curriculum template with cycle records", async () => {

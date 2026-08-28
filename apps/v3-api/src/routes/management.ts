@@ -41,7 +41,7 @@ const childImportInput = z.object({
       context.addIssue({
         code: z.ZodIssueCode.custom,
         path: ["rows", index, "internalCode"],
-        message: `园内编号与第${firstRow + 1}行重复`,
+        message: `班内编号与第${firstRow + 1}行重复`,
       });
     } else {
       firstRowByCode.set(code, index);
@@ -101,9 +101,18 @@ export async function managementRoutes(app: FastifyInstance) {
 
   app.patch("/api/classrooms/:id", async (request) => {
     const auth = await authenticate(request);
-    requireResearcher(auth);
     const { id } = z.object({ id: uuid }).parse(request.params);
     const input = classroomInput.partial().extend({ status: z.enum(["active", "archived"]).optional() }).parse(request.body);
+    const { data: accessibleClassroom, error: accessError } = await auth.data
+      .from("classrooms")
+      .select("id, tenant_id")
+      .eq("id", id)
+      .maybeSingle();
+    if (accessError) throw new ApiError(500, "CLASSROOM_ACCESS_CHECK_FAILED", "班级权限校验失败");
+    if (!accessibleClassroom) throw new ApiError(404, "CLASSROOM_NOT_FOUND", "班级不存在或无权访问");
+    if (auth.role === "teacher" && Object.keys(input).some((key) => key !== "name")) {
+      throw new ApiError(403, "CLASSROOM_NAME_ONLY", "教师只能修改自己负责班级的名称");
+    }
     const update = {
       ...(input.name !== undefined && { name: input.name }),
       ...(input.grade !== undefined && { grade: input.grade }),
@@ -111,8 +120,14 @@ export async function managementRoutes(app: FastifyInstance) {
       ...(input.semester !== undefined && { semester: input.semester }),
       ...(input.status !== undefined && { status: input.status }),
     };
-    const { data, error } = await auth.data.from("classrooms").update(update).eq("id", id).select().single();
-    if (error) throw new ApiError(500, "CLASSROOM_UPDATE_FAILED", "班级更新失败");
+    const builder = auth.role === "researcher"
+      ? auth.data.from("classrooms")
+      : serviceClient.schema(config.SUPABASE_SCHEMA).from("classrooms");
+    const { data, error } = await builder.update(update).eq("id", id).eq("tenant_id", auth.tenantId).select().single();
+    if (error) {
+      request.log.error({ dbError: { code: error.code, message: error.message, details: error.details, hint: error.hint } }, "classroom update failed");
+      throw new ApiError(error.code === "23505" ? 409 : 500, "CLASSROOM_UPDATE_FAILED", error.code === "23505" ? "同一学期已存在同名班级" : "班级更新失败");
+    }
     await audit(auth, "classroom.updated", "classroom", id, update);
     return { item: data };
   });
@@ -131,7 +146,7 @@ export async function managementRoutes(app: FastifyInstance) {
   app.get("/api/children/import-template", async (request, reply) => {
     await authenticate(request);
     const rows = [
-      ["园内编号*", "园内使用名*", "出生年月(YYYY-MM)*", "入园日期(YYYY-MM-DD)", "监护人授权", "已知兴趣(用|分隔)"],
+      ["班内编号*", "园内使用名*", "出生年月(YYYY-MM)*", "入园日期(YYYY-MM-DD)", "监护人授权", "已知兴趣(用|分隔)"],
       ["M2026001", "晨晨", "2022-03", "2025-09-01", "pending", "建构|汽车"],
     ];
     const csv = `\uFEFF${rows.map((row) => row.map((cell) => `"${cell.replaceAll('"', '""')}"`).join(",")).join("\r\n")}`;
@@ -156,10 +171,11 @@ export async function managementRoutes(app: FastifyInstance) {
     const { data: existing, error: existingError } = await auth.data
       .from("children")
       .select("internal_code")
+      .eq("classroom_id", input.classroomId)
       .in("internal_code", codes);
     if (existingError) throw new ApiError(500, "CHILD_IMPORT_DUPLICATE_CHECK_FAILED", "幼儿编号重复校验失败");
     if (existing?.length) {
-      throw new ApiError(409, "CHILD_IMPORT_DUPLICATE", `以下园内编号已存在：${existing.map((item) => item.internal_code).join("、")}`);
+      throw new ApiError(409, "CHILD_IMPORT_DUPLICATE", `以下班内编号已存在：${existing.map((item) => item.internal_code).join("、")}`);
     }
 
     const { data, error } = await auth.data.from("children").insert(input.rows.map((row) => ({
@@ -174,7 +190,7 @@ export async function managementRoutes(app: FastifyInstance) {
       created_by: auth.userId,
     }))).select();
     if (error) {
-      throw new ApiError(error.code === "23505" ? 409 : 500, "CHILD_IMPORT_FAILED", error.code === "23505" ? "导入数据中包含已存在的幼儿编号" : "幼儿批量导入失败");
+      throw new ApiError(error.code === "23505" ? 409 : 500, "CHILD_IMPORT_FAILED", error.code === "23505" ? "导入数据中包含当前班级已存在的班内编号" : "幼儿批量导入失败");
     }
     await audit(auth, "child.batch_imported", "classroom", input.classroomId, { count: data?.length ?? 0 });
     return reply.status(201).send({ items: data ?? [], importedCount: data?.length ?? 0 });
@@ -194,7 +210,10 @@ export async function managementRoutes(app: FastifyInstance) {
       interests: input.interests,
       created_by: auth.userId,
     }).select().single();
-    if (error) throw new ApiError(error.code === "23505" ? 409 : 500, "CHILD_CREATE_FAILED", error.code === "23505" ? "幼儿编号已存在" : "幼儿档案创建失败");
+    if (error) {
+      request.log.error({ dbError: { code: error.code, message: error.message, details: error.details, hint: error.hint } }, "child creation failed");
+      throw new ApiError(error.code === "23505" ? 409 : 500, "CHILD_CREATE_FAILED", error.code === "23505" ? "当前班级已存在相同班内编号" : "幼儿档案创建失败");
+    }
     await audit(auth, "child.created", "child", data.id, { classroomId: data.classroom_id, displayName: data.display_name });
     return reply.status(201).send({ item: data });
   });
@@ -214,9 +233,40 @@ export async function managementRoutes(app: FastifyInstance) {
       ...(input.status !== undefined && { status: input.status }),
     };
     const { data, error } = await auth.data.from("children").update(update).eq("id", id).select().single();
-    if (error) throw new ApiError(500, "CHILD_UPDATE_FAILED", "幼儿档案更新失败");
+    if (error) {
+      request.log.error({ dbError: { code: error.code, message: error.message, details: error.details, hint: error.hint }, childId: id }, "child update failed");
+      throw new ApiError(error.code === "23505" ? 409 : 500, "CHILD_UPDATE_FAILED", error.code === "23505" ? "目标班级已存在相同班内编号" : "幼儿档案更新失败");
+    }
     await audit(auth, "child.updated", "child", id, update);
     return { item: data };
+  });
+
+  app.delete("/api/children/:id", async (request, reply) => {
+    const auth = await authenticate(request);
+    const { id } = z.object({ id: uuid }).parse(request.params);
+    const { data: child, error: childError } = await auth.data
+      .from("children")
+      .select("id, classroom_id, display_name, internal_code")
+      .eq("id", id)
+      .maybeSingle();
+    if (childError) throw new ApiError(500, "CHILD_DELETE_LOOKUP_FAILED", "幼儿档案读取失败");
+    if (!child) throw new ApiError(404, "CHILD_NOT_FOUND", "幼儿档案不存在或无权访问");
+    const schema = serviceClient.schema(config.SUPABASE_SCHEMA);
+    const [{ count: observationCount, error: observationError }, { count: reportCount, error: reportError }] = await Promise.all([
+      schema.from("observation_subjects").select("id", { count: "exact", head: true }).eq("tenant_id", auth.tenantId).eq("child_id", id),
+      schema.from("period_reports").select("id", { count: "exact", head: true }).eq("tenant_id", auth.tenantId).eq("child_id", id),
+    ]);
+    if (observationError || reportError) throw new ApiError(500, "CHILD_DELETE_DEPENDENCY_CHECK_FAILED", "幼儿历史资料校验失败");
+    if ((observationCount ?? 0) > 0 || (reportCount ?? 0) > 0) {
+      throw new ApiError(409, "CHILD_HAS_HISTORY", "该幼儿已有观察或报告，请使用归档以保留证据链");
+    }
+    const { error } = await schema.from("children").delete().eq("id", id).eq("tenant_id", auth.tenantId);
+    if (error) {
+      request.log.error({ dbError: { code: error.code, message: error.message, details: error.details, hint: error.hint }, childId: id }, "child deletion failed");
+      throw new ApiError(500, "CHILD_DELETE_FAILED", "幼儿档案删除失败");
+    }
+    await audit(auth, "child.deleted", "child", id, { classroomId: child.classroom_id, displayName: child.display_name, internalCode: child.internal_code });
+    return reply.status(204).send();
   });
 
   app.get("/api/accounts", async (request) => {

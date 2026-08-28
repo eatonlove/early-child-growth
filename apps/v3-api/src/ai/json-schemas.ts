@@ -60,7 +60,7 @@ export const analysisJsonSchema = {
     "currentExperience", "interestsAndStrengths", "evidenceGaps", "developmentReferences",
     "responseSuggestions", "nextObservation", "gameExperience", "domainExperiences",
     "learningDispositions", "learningPossibilities", "gamePossibilities", "responsePlans",
-    "observationCut", "observationFocus", "historicalComparison", "evidenceSufficiency", "warnings",
+    "observationCut", "observationFocus", "historicalComparison", "externalSupportReferences", "evidenceSufficiency", "warnings",
   ],
   properties: {
     objectiveSummary: string(4000),
@@ -174,7 +174,7 @@ export const analysisJsonSchema = {
       },
     },
     domainExperiences: {
-      type: "array", minItems: 5, maxItems: 5,
+      type: "array", maxItems: 5,
       items: {
         type: "object", additionalProperties: false,
         required: ["domain", "evidence", "evidenceIds", "possibleExperience", "indicatorCodes", "missingEvidence", "noJudgment"],
@@ -241,8 +241,30 @@ export const analysisJsonSchema = {
         caution: string(1000),
       },
     },
+    externalSupportReferences: {
+      type: "array", maxItems: 6,
+      items: {
+        type: "object", additionalProperties: false,
+        required: ["title", "url", "source", "appliedSuggestion"],
+        properties: { title: string(300), url: string(1000), source: string(200), appliedSuggestion: string(1200) },
+      },
+    },
     evidenceSufficiency: { type: "string", enum: ["有限", "初步充分"] },
     warnings: { ...stringArray(8), minItems: 1 },
+  },
+} as const;
+
+export const supportResearchJsonSchema = {
+  type: "object", additionalProperties: false, required: ["references"],
+  properties: {
+    references: {
+      type: "array", maxItems: 6,
+      items: {
+        type: "object", additionalProperties: false,
+        required: ["title", "url", "source", "appliedSuggestion"],
+        properties: { title: string(300), url: string(1000), source: string(200), appliedSuggestion: string(1200) },
+      },
+    },
   },
 } as const;
 
@@ -269,19 +291,11 @@ export const observationDocumentExtractionJsonSchema = {
   },
 } as const;
 
-const socialNatureSelfSchema = {
-  type: "object", additionalProperties: false, required: ["社会", "自然", "自我"],
-  properties: { 社会: stringArray(5), 自然: stringArray(5), 自我: stringArray(5) },
-};
-
 const curriculumActivityOptionJsonSchema = {
   type: "object", additionalProperties: false,
-  required: ["title", "valuePoint", "coreQuestion", "socialNatureSelf", "developmentLinks", "mainActivities", "materials", "teacherSupport", "observationFocus", "riskNote"],
+  required: ["title", "recommendationReason"],
   properties: {
-    title: string(160), valuePoint: string(1200), coreQuestion: string(500), socialNatureSelf: socialNatureSelfSchema,
-    developmentLinks: { ...stringArray(8), minItems: 1 }, mainActivities: { ...stringArray(8), minItems: 2 },
-    materials: { ...stringArray(10), minItems: 1 }, teacherSupport: { ...stringArray(8), minItems: 1 },
-    observationFocus: { ...stringArray(6), minItems: 1 }, riskNote: string(1000),
+    title: string(160), recommendationReason: string(1200),
   },
 };
 

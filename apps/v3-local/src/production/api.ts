@@ -145,6 +145,7 @@ export const remoteApi = {
       method: "PATCH",
       body: body(value),
     }),
+  deleteChild: (id: string) => request<void>(`/api/children/${id}`, { method: "DELETE" }),
   downloadChildImportTemplate: () => download("/api/children/import-template", "同迹幼儿批量导入模板.csv"),
   importChildren: (value: { classroomId: string; rows: Array<Record<string, unknown>> }) =>
     request<{ items: RemoteChild[]; importedCount: number }>("/api/children/import", {
@@ -216,6 +217,8 @@ export const remoteApi = {
       method: "POST", headers: { "Content-Type": "application/octet-stream" }, body: file,
     });
   },
+  observationImports: (classroomId?: string) =>
+    request<{ items: RemoteObservationImport[] }>(`/api/observation-imports${classroomId ? `?classroomId=${encodeURIComponent(classroomId)}` : ""}`),
   createObservationDocument: (id: string, variant: "teacher" | "professional") =>
     request<{ documentExport: { id: string } }>(`/api/observations/${id}/document-exports`, { method: "POST", body: body({ variant }) }),
   documentExportDownload: (id: string) => download(`/api/document-exports/${id}/download`, "同迹文档.docx"),

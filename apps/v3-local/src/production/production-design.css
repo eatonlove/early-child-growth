@@ -406,20 +406,39 @@
 .evo-entry-grid svg { width: 40px; height: 40px; color: var(--tj-orange); }
 .evo-entry-grid strong { align-self: end; font-size: 20px; }
 .evo-entry-grid span { color: var(--tj-muted); line-height: 1.6; }
-.evo-child-select { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; margin: 14px 0; }
+.evo-child-toolbar { display: flex; align-items: center; gap: 12px; margin-top: 12px; }
+.evo-child-toolbar input { flex: 1; }
+.evo-child-toolbar span { flex: 0 0 auto; color: var(--tj-muted); font-weight: 700; }
+.evo-child-selected { display: flex; flex-wrap: wrap; gap: 7px; margin-top: 10px; }
+.evo-child-selected button { padding: 6px 10px; color: #315c45; border: 1px solid #b8cdae; border-radius: 999px; background: #eef6e9; cursor: pointer; }
+.evo-child-select { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); max-height: 310px; gap: 8px; margin: 12px 0; padding: 2px; overflow: auto; }
 .evo-child-select article {
   display: grid;
-  grid-template-columns: 1fr auto;
+  grid-template-columns: minmax(0, 1fr) auto;
   gap: 8px;
-  padding: 13px;
+  padding: 9px 10px;
   border: 1px solid #eadfd2;
   border-radius: 14px;
   background: #fffdf9;
 }
 .evo-child-select article.selected { border-color: #bdcfae; background: #f1f7ec; }
-.evo-child-select article > input,
 .evo-child-select article > select { grid-column: 1 / -1; }
 .evo-child-select label { display: flex; align-items: center; gap: 7px; font-weight: 700; }
+.evo-child-select label span { display: grid; min-width: 0; }
+.evo-child-select label small { color: var(--tj-muted); font-size: 10px; font-weight: 500; }
+.import-review-banner { display: grid; gap: 10px; padding: 16px; border: 1px solid #e7c78f; border-radius: 16px; background: #fff8e8; }
+.import-review-banner > div:first-child { display: flex; flex-wrap: wrap; align-items: center; gap: 9px; }
+.import-confidence-grid { display: flex; flex-wrap: wrap; gap: 6px; }
+.import-confidence-grid span { padding: 5px 8px; border-radius: 999px; font-size: 10px; }
+.import-confidence-grid .ok { color: #315c45; background: #e8f2e4; }
+.import-confidence-grid .low { color: #8a4f20; background: #fce6bf; font-weight: 800; }
+.observation-import-ledger { margin-bottom: 16px; border: 1px solid #e4d8c9; border-radius: 16px; background: rgba(255, 253, 249, 0.94); }
+.observation-import-ledger > summary { display: flex; justify-content: space-between; padding: 13px 16px; cursor: pointer; }
+.observation-import-ledger > div { display: grid; gap: 7px; padding: 0 12px 12px; }
+.observation-import-ledger article { display: grid; grid-template-columns: minmax(0, 1fr) auto auto; align-items: center; gap: 8px; padding: 9px 11px; border-radius: 12px; background: #f8f3eb; }
+.observation-import-ledger article > div { display: grid; }
+.observation-import-ledger small { color: var(--tj-muted); }
+.observation-import-ledger .import-failure { grid-column: 1 / -1; color: var(--tj-danger); }
 .evo-subject-chips { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 18px; }
 .evo-subject-chips > button {
   display: flex;
@@ -633,6 +652,15 @@
 .analysis-core-card .ai-result b { color: #6f5884; }
 .analysis-core-card p { margin: 5px 0; line-height: 1.7; }
 .analysis-core-card small { display: block; margin: 5px 0; color: var(--tj-muted); line-height: 1.55; }
+.evidence-identification-list { display: grid; gap: 9px; margin-top: 12px; }
+.evidence-identification-list article { padding: 11px; border: 1px solid #d5e1e8; border-radius: 12px; background: #f5fafc; }
+.evidence-identification-list header { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
+.evidence-identification-list header span { color: var(--tj-muted); font-size: 10px; }
+.evidence-identification-list p b { display: inline; margin: 0; color: #315c45; }
+.historical-comparison-head { display: flex; align-items: center; gap: 10px; margin-bottom: 10px; }
+.historical-comparison-head span { color: var(--tj-muted); }
+.historical-change { padding: 11px 13px; border-left: 3px solid #91b2a0; background: #f4f8f4; }
+.historical-change p { margin: 5px 0; }
 .analysis-expansion { overflow: hidden; border: 1px solid #dfd3c6; border-radius: 18px; background: rgba(255, 253, 249, 0.92); }
 .analysis-expansion > summary { display: grid; grid-template-columns: auto 1fr; gap: 3px 10px; padding: 17px 20px; cursor: pointer; }
 .analysis-expansion > summary > span { grid-row: 1 / 3; align-self: center; padding: 6px 9px; color: #765d8c; border-radius: 10px; background: var(--tj-purple-soft); font-weight: 800; }
@@ -647,6 +675,20 @@
 .analysis-confirm-grid .btn { margin-top: 12px; }
 .simple-response-list { display: grid; gap: 10px; }
 .simple-response-list article { display: flex; align-items: center; justify-content: space-between; gap: 18px; padding: 14px; border: 1px solid #e3d6c8; border-radius: 15px; background: #fffaf3; }
+.simple-response-list.detailed > article { display: block; }
+.response-plan-heading { display: flex; justify-content: space-between; gap: 12px; }
+.response-support-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; margin-top: 12px; }
+.response-support-grid section { padding: 13px; border-radius: 13px; background: #fffdf9; }
+.response-support-grid h4 { margin: 0 0 9px; color: #704a32; }
+.response-support-grid ol { padding-left: 20px; line-height: 1.65; }
+.simple-response-list.detailed footer { margin-top: 12px; padding-top: 10px; border-top: 1px dashed #d9c8b7; line-height: 1.7; }
+.external-support-list { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
+.external-support-list a { display: grid; gap: 5px; padding: 13px; color: var(--tj-ink); border: 1px solid #d7dfcc; border-radius: 14px; background: #f8fbf5; text-decoration: none; }
+.external-support-list span { color: var(--tj-muted); font-size: 11px; }
+.archived-child-list { display: grid; gap: 8px; }
+.archived-child-list article { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 11px 13px; border-radius: 12px; background: #f7f2ea; }
+.archived-child-list article > div:first-child { display: grid; }
+.simple-directions article { min-height: 150px; }
 .simple-response-list h3 { margin: 7px 0 3px; }
 .simple-response-list p { margin: 0 0 5px; }
 
@@ -904,6 +946,8 @@
   .simple-analysis-core,
   .analysis-confirm-grid,
   .analysis-expansion-grid,
+  .response-support-grid,
+  .external-support-list,
   .evo-response-grid,
   .evo-course-options,
   .evo-course-content { grid-template-columns: 1fr; }

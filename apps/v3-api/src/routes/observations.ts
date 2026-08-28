@@ -28,6 +28,7 @@ const observationInput = z.object({
   subjects: z.array(observationSubjectSchema).min(1).max(30).optional(),
   templateId: uuid.optional(),
   sourceImportId: uuid.optional(),
+  observerName: z.string().trim().min(1).max(80),
   observerIds: z.array(uuid).max(12).default([]),
   groupContext: z.string().trim().max(2000).default(""),
   unlistedParticipantCount: z.number().int().min(0).max(99).default(0),
@@ -63,6 +64,7 @@ const aiProvider = createAIProvider({
   textModel: config.QWEN_TEXT_MODEL,
   visionModel: config.QWEN_VISION_MODEL,
   timeoutMs: config.QWEN_TIMEOUT_MS,
+  webSearchEnabled: config.qwenWebSearchEnabled,
   fallbackToSimulated: config.aiFallbackToSimulated,
 });
 
@@ -116,7 +118,9 @@ export async function observationRoutes(app: FastifyInstance) {
       auth.data.from("analysis_runs").select("*").eq("observation_id", id).order("generated_at", { ascending: false }),
       auth.data.from("observation_subjects").select("*").eq("observation_id", id).order("role"),
       auth.data.from("response_plans").select("*").eq("observation_id", id).order("created_at"),
-      serviceClient.schema(config.SUPABASE_SCHEMA).from("profiles").select("user_id, display_name, role").eq("tenant_id", auth.tenantId).in("user_id", observation.observer_ids?.length ? observation.observer_ids : [observation.created_by]),
+      observation.observer_ids?.length
+        ? serviceClient.schema(config.SUPABASE_SCHEMA).from("profiles").select("user_id, display_name, role").eq("tenant_id", auth.tenantId).in("user_id", observation.observer_ids)
+        : Promise.resolve({ data: [], error: null }),
     ]);
     if (evidenceError || analysisError || subjectError || responseError || observerError) throw new ApiError(500, "OBSERVATION_DETAIL_FAILED", "观察证据、参与幼儿、观察者或分析结果读取失败");
     const subjectChildIds = (subjectRows ?? []).map((item) => item.child_id);
@@ -177,7 +181,7 @@ export async function observationRoutes(app: FastifyInstance) {
     if ((observerProfiles ?? []).length !== input.observerIds.length || (observerProfiles ?? []).some((profile) => profile.status !== "active")) {
       throw new ApiError(422, "OBSERVATION_OBSERVER_INVALID", "协同观察教师不存在或账号已停用");
     }
-    const observerIds = [...new Set([auth.userId, ...input.observerIds])];
+    const observerIds = [...new Set(input.observerIds)];
     const primaryName = (children ?? []).find((child) => child.id === primary.childId)?.display_name ?? "幼儿";
     const occurredDate = new Intl.DateTimeFormat("zh-CN", { timeZone: "Asia/Shanghai", month: "2-digit", day: "2-digit" }).format(new Date(input.occurredAt));
     const title = `${occurredDate} · ${input.theme} · ${primaryName}${subjects.length > 1 ? `等${subjects.length}名幼儿` : ""}`;
@@ -189,6 +193,7 @@ export async function observationRoutes(app: FastifyInstance) {
       source_type: input.sourceImportId ? "document_import" : "web",
       source_import_id: input.sourceImportId || null,
       observer_ids: observerIds,
+      observer_name_snapshot: input.observerName,
       group_context: input.groupContext || null,
       unlisted_participant_count: input.unlistedParticipantCount,
       title,
@@ -491,6 +496,12 @@ export async function observationRoutes(app: FastifyInstance) {
           history,
           professionalMemories: rankedMemories,
           analysisFrameworks: (frameworkRows ?? []).map((item: any) => ({ id: item.id, frameworkType: item.framework_type, name: item.name, version: item.version, description: item.description, dimensions: item.dimensions })),
+          peerAnalysisSummaries: analyses.map((item) => ({
+            subjectRole: item.subject?.role ?? "participant",
+            subjectContext: item.subject?.contextual_feature ?? "",
+            currentExperience: item.structured_result?.currentExperience ?? "",
+            responseTitles: (item.structured_result?.responsePlans ?? []).map((plan: any) => plan.title),
+          })),
           prompt: analysisPrompt,
         });
         notices.add(generated.notice);

@@ -181,7 +181,7 @@ export function buildScenarioAnalysis(
         missingEvidence: cardsForDomain[0]?.evidence_requirements[0] ?? `需要补充与${domain}领域直接相关的可见行为证据。`,
         noJudgment: cardsForDomain.length === 0,
       };
-    }),
+    }).filter((item) => !item.noJudgment),
     learningDispositions: [{
       dimension: /问|试|观察|探索|发现/.test(observation.teacher_observation) ? "好奇与探究" : "主动性",
       evidence: primaryEvidence,
@@ -213,6 +213,7 @@ export function buildScenarioAnalysis(
         ? `本次比较读取了${history.length}条更早的已采用观察，只描述时间内变化，不与其他幼儿比较。`
         : "当前没有更早的已采用观察，不能形成跨时间成长判断。",
     },
+    externalSupportReferences: [],
     evidenceSufficiency: facts.length >= 3 && matched.length >= 2 ? "初步充分" : "有限",
     warnings: [
       "本结果为模拟AI建议稿，未读取真实视频画面或音轨。",
@@ -278,28 +279,15 @@ export function buildScenarioRevision(input: AnalysisRevisionInput): AnalysisRes
 }
 
 export function buildScenarioActivityOptions(input: CurriculumActivityOptionsInput): CurriculumActivityOptions {
-  const baseQuestion = input.observations.map((item) => item.teacher_response?.nextObservationFocus).find(Boolean) ?? `幼儿还想怎样继续探究“${input.theme}”？`;
-  const directions: Array<[string, string, string]> = [
-    ["材料变量实验室", "通过改变一种材料变量继续比较和验证", "自然"],
-    ["同伴协作任务", "通过协商、分工和共同记录扩展社会性探究", "社会"],
-    ["生活情境迁移", "把游戏中的问题带到真实生活情境中验证", "生活"],
-    ["表达与展览", "通过图示、作品、讲述或表演回顾和生成新问题", "自我"],
+  const directions: Array<[string, string]> = [
+    ["材料变量实验室", "幼儿围绕同一主题持续尝试，适合通过改变一种材料变量继续比较和验证。"],
+    ["同伴协作任务", "连续证据中存在共同参与或问题解决线索，适合通过协商、分工和共同记录继续探究。"],
+    ["生活情境迁移", "当前兴趣具有延伸到真实生活场景的可能，可观察经验是否在新情境中再次出现。"],
+    ["表达与展览", "已有行动、作品或讲述线索，可通过回顾与表征帮助幼儿发现新的问题。"],
   ];
-  return { options: directions.map(([title, valuePoint, dimension], index) => ({
+  return { options: directions.map(([title, recommendationReason]) => ({
     title: `${input.theme}·${title}`,
-    valuePoint,
-    coreQuestion: index === 0 ? baseQuestion : `怎样从“${input.theme}”中继续发现与${dimension}有关的新问题？`,
-    socialNatureSelf: {
-      社会: index === 1 ? ["协商分工", "共同记录与分享"] : [],
-      自然: index === 0 ? ["比较材料特性", "观察变化并验证"] : [],
-      自我: index >= 2 ? ["表达选择和理由", "回顾并调整计划"] : [],
-    },
-    developmentLinks: ["依据连续观察选择相关《指南》知识卡，不为幼儿生成综合评分"],
-    mainActivities: ["回顾来源观察并由幼儿确认真实问题", `围绕“${title}”开展一次开放游戏`, "分享新发现并决定下一次走向"],
-    materials: index === 0 ? ["同类不同形态材料", "比较记录卡", "照片或图示工具"] : ["开放材料", "角色或任务标识", "记录与展示材料"],
-    teacherSupport: ["以提问和资源提供支持，不预设唯一答案", "记录幼儿问题、策略和支持前后变化"],
-    observationFocus: ["幼儿是否持续提出相关问题", "是否出现新的材料使用、协作或表达方式"],
-    riskNote: "该方向是可修改的课程地图，不应替代幼儿真实兴趣或变成统一活动清单。",
+    recommendationReason: `${recommendationReason}依据${input.observationCount}条观察、${input.childCount}名幼儿和${input.timePointCount}个时间点形成。`,
   })) };
 }
 
@@ -312,25 +300,25 @@ export function buildScenarioCurriculumPlan(input: CurriculumPlanGenerationInput
       evidenceReferences: input.evidenceObservationIds,
     },
     coreCompetencies: {
-      与自然同生: input.selectedOptions.flatMap((item) => item.socialNatureSelf.自然).slice(0, 8),
-      与生活同生: input.selectedOptions.flatMap((item) => item.socialNatureSelf.社会).slice(0, 8),
-      与自我同生: input.selectedOptions.flatMap((item) => item.socialNatureSelf.自我).slice(0, 8),
+      与自然同生: ["观察材料、环境或自然现象的变化并尝试验证"],
+      与生活同生: ["在真实游戏情境中协商、分工并解决共同问题"],
+      与自我同生: ["表达选择和理由，回顾并调整自己的计划"],
       qualities: { 慧创生: ["探究", "细致"], 懂生活: ["独立", "自律"], 悦生长: ["愉悦", "自豪"] },
     },
     generatedPossibilities: {
-      presetDirections: input.selectedOptions.map((item) => `${item.title}：${item.valuePoint}`),
-      mindMap: input.selectedOptions.map((item) => ({ branch: item.title, activities: item.mainActivities })),
+      presetDirections: input.selectedOptions.map((item) => `${item.title}：${item.recommendationReason}`),
+      mindMap: input.selectedOptions.map((item) => ({ branch: item.title, activities: ["回顾来源观察并确认幼儿真实问题", "由幼儿选择材料与推进方式", "记录新发现并决定下一轮方向"] })),
       opennessNote: "本计划是地图而非铁轨。教师根据幼儿新问题调整方向，未发生的预设活动不作为实施要求。",
     },
     implementationFramework: {
-      teacherSupportAndQuestions: input.selectedOptions.flatMap((item) => item.teacherSupport).slice(0, 12),
-      anticipatedChildActivities: input.selectedOptions.flatMap((item) => item.mainActivities).slice(0, 12),
-      environmentAndMaterials: input.selectedOptions.flatMap((item) => item.materials).slice(0, 12),
-      experienceAndNewDirections: input.selectedOptions.map((item) => item.coreQuestion),
+      teacherSupportAndQuestions: input.selectedOptions.map((item) => `围绕“${item.title}”先确认幼儿想继续解决什么，再提供最小必要支持。`),
+      anticipatedChildActivities: input.selectedOptions.map((item) => `幼儿围绕“${item.title}”自主选择、比较、协商或表达。`),
+      environmentAndMaterials: ["依据教师选定方向和下一轮真实问题分阶段投放开放材料，不一次性铺满。"],
+      experienceAndNewDirections: input.selectedOptions.map((item) => `“${item.title}”实施后出现了什么新问题？`),
     },
     resources: {
       environment: ["保留可持续探究的班级区域，并随幼儿问题动态调整"],
-      materials: input.selectedOptions.flatMap((item) => item.materials).slice(0, 12),
+      materials: ["根据所选课程方向与幼儿下一轮问题配置可比较、可组合的开放材料"],
       familyPartnership: ["邀请家庭提供与幼儿当前问题直接相关的生活经验或安全材料", "家庭反馈只作为补充观察，不替代园内证据"],
       processActivities: optionTitles,
       sharedOutcomes: ["幼儿问题与探究路径图", "过程照片、作品、原话与教师反思"],

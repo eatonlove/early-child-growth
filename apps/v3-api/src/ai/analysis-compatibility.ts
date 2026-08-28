@@ -118,7 +118,7 @@ export function normalizeAnalysisResult(value: unknown): AnalysisResult {
         missingEvidence: shorten(matches[0]?.missingEvidence ?? `需要补充与${domain}领域直接相关的可见行为证据。`, 900),
         noJudgment: matches.length === 0,
       };
-    })),
+    }).filter((item) => !item.noJudgment)),
     learningDispositions: validOr(analysisResultSchema.shape.learningDispositions, raw.learningDispositions, [{
       dimension: "主动性" as const,
       evidence: primaryFact,

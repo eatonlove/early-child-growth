@@ -160,11 +160,11 @@ function parseChildImportCsv(text: string) {
     const rowNumber = index + 2;
     const [internalCode = "", displayName = "", birthMonth = "", enrolledOn = "", consent = "pending", interests = ""] = parseCsvLine(line);
     if (!internalCode || !displayName || !/^\d{4}-\d{2}$/.test(birthMonth)) {
-      errors.push(`第${rowNumber}行：园内编号、园内使用名和YYYY-MM出生年月为必填项。`);
+      errors.push(`第${rowNumber}行：班内编号、园内使用名和YYYY-MM出生年月为必填项。`);
       return;
     }
     if (seen.has(internalCode.toLowerCase())) {
-      errors.push(`第${rowNumber}行：园内编号“${internalCode}”在文件中重复。`);
+      errors.push(`第${rowNumber}行：班内编号“${internalCode}”在文件中重复。`);
       return;
     }
     if (enrolledOn && !/^\d{4}-\d{2}-\d{2}$/.test(enrolledOn)) {
@@ -337,6 +337,9 @@ export function RemoteClassroomPage({ user }: { user: RemoteUser }) {
   const visibleChildren = children.filter(
     (item) => item.classroom_id === selected && item.status === "active",
   );
+  const archivedChildren = children.filter(
+    (item) => item.classroom_id === selected && item.status === "archived",
+  );
 
   const createClass = async (event: FormEvent) => {
     event.preventDefault();
@@ -344,7 +347,7 @@ export function RemoteClassroomPage({ user }: { user: RemoteUser }) {
     setError("");
     try {
       if (editingClassId)
-        await remoteApi.updateClassroom(editingClassId, classForm);
+        await remoteApi.updateClassroom(editingClassId, user.role === "researcher" ? classForm : { name: classForm.name });
       else await remoteApi.createClassroom(classForm);
       setModal(null);
       setEditingClassId("");
@@ -438,6 +441,31 @@ export function RemoteClassroomPage({ user }: { user: RemoteUser }) {
     setBusy(true);
     try {
       await remoteApi.updateChild(child.id, { status: "archived" });
+      await load();
+    } catch (reason) {
+      setError(showError(reason));
+    } finally {
+      setBusy(false);
+    }
+  };
+  const restoreChild = async (child: RemoteChild) => {
+    setBusy(true);
+    setError("");
+    try {
+      await remoteApi.updateChild(child.id, { status: "active" });
+      await load();
+    } catch (reason) {
+      setError(showError(reason));
+    } finally {
+      setBusy(false);
+    }
+  };
+  const deleteChild = async (child: RemoteChild) => {
+    if (!window.confirm(`彻底删除“${child.display_name}”？仅无观察和报告的档案可以删除，此操作不可撤销。`)) return;
+    setBusy(true);
+    setError("");
+    try {
+      await remoteApi.deleteChild(child.id);
       await load();
     } catch (reason) {
       setError(showError(reason));
@@ -569,11 +597,11 @@ export function RemoteClassroomPage({ user }: { user: RemoteUser }) {
                   {visibleChildren.length}
                   <small>名在册幼儿</small>
                 </strong>
-                {user.role === "researcher" && (
-                  <div className="remote-row-actions">
+                <div className="remote-row-actions">
                     <button className="btn btn-secondary" onClick={editClass}>
-                      编辑班级
+                      {user.role === "researcher" ? "编辑班级" : "修改班级名称"}
                     </button>
+                  {user.role === "researcher" && (
                     <button
                       className="btn btn-ghost-danger"
                       disabled={busy}
@@ -581,10 +609,20 @@ export function RemoteClassroomPage({ user }: { user: RemoteUser }) {
                     >
                       归档
                     </button>
-                  </div>
-                )}
+                  )}
+                </div>
               </div>
             </Panel>
+            {archivedChildren.length > 0 && (
+              <Panel title={`已归档幼儿 · ${archivedChildren.length}`} subtitle="归档会保留观察和报告；无历史资料时才可彻底删除。">
+                <div className="archived-child-list">
+                  {archivedChildren.map((child) => <article key={child.id}>
+                    <div><strong>{child.display_name}</strong><small>班内编号 {child.internal_code}</small></div>
+                    <div className="remote-row-actions"><button className="btn btn-secondary" disabled={busy} onClick={() => void restoreChild(child)}>恢复在园</button><button className="btn btn-ghost-danger" disabled={busy} onClick={() => void deleteChild(child)}>彻底删除</button></div>
+                  </article>)}
+                </div>
+              </Panel>
+            )}
             <Panel
               title="幼儿档案"
               subtitle="页面默认使用园内名；授权撤回后不能新增媒体证据"
@@ -663,7 +701,7 @@ export function RemoteClassroomPage({ user }: { user: RemoteUser }) {
       {modal === "class" && (
         <Modal
           title={editingClassId ? "编辑班级" : "新建班级"}
-          description="班级由教研员统一建立，避免同一学期重复。"
+          description={user.role === "researcher" ? "班级由教研员统一建立，避免同一学期重复。" : "教师可以修改自己负责班级的显示名称，年龄班、学年和学期保持不变。"}
           onClose={() => setModal(null)}
         >
           <form className="remote-form" onSubmit={createClass}>
@@ -677,7 +715,7 @@ export function RemoteClassroomPage({ user }: { user: RemoteUser }) {
                 }
               />
             </label>
-            <label>
+            {user.role === "researcher" && <label>
               <span>年龄班</span>
               <select
                 value={classForm.grade}
@@ -689,8 +727,8 @@ export function RemoteClassroomPage({ user }: { user: RemoteUser }) {
                 <option value="middle">中班</option>
                 <option value="large">大班</option>
               </select>
-            </label>
-            <label>
+            </label>}
+            {user.role === "researcher" && <label>
               <span>学年度</span>
               <input
                 required
@@ -702,8 +740,8 @@ export function RemoteClassroomPage({ user }: { user: RemoteUser }) {
                   })
                 }
               />
-            </label>
-            <label>
+            </label>}
+            {user.role === "researcher" && <label>
               <span>学期</span>
               <input
                 required
@@ -712,7 +750,7 @@ export function RemoteClassroomPage({ user }: { user: RemoteUser }) {
                   setClassForm({ ...classForm, semester: event.target.value })
                 }
               />
-            </label>
+            </label>}
             <button disabled={busy} className="btn btn-primary" type="submit">
               <Save />
               保存班级
@@ -723,12 +761,12 @@ export function RemoteClassroomPage({ user }: { user: RemoteUser }) {
       {modal === "child" && (
         <Modal
           title={`${editingChildId ? "编辑幼儿" : "新增幼儿"} · ${selectedClass?.name ?? ""}`}
-          description="只录入园内编号、显示名和开展观察所需的最少信息。"
+          description="只录入班内编号、显示名和开展观察所需的最少信息。"
           onClose={() => setModal(null)}
         >
           <form className="remote-form" onSubmit={createChild}>
             <label>
-              <span>园内编号</span>
+              <span>班内编号</span>
               <input
                 required
                 value={childForm.internalCode}
@@ -812,7 +850,7 @@ export function RemoteClassroomPage({ user }: { user: RemoteUser }) {
               <input type="file" accept=".csv,text/csv" onChange={(event) => void readImportFile(event.target.files?.[0])} />
             </label>
             {importErrors.length > 0 && <div className="import-error-list" role="alert">{importErrors.map((item) => <p key={item}>{item}</p>)}</div>}
-            {importRows.length > 0 && <div className="child-import-preview"><div><strong>导入预览</strong><span>{importRows.length}名幼儿</span></div><div className="table-wrap"><table><thead><tr><th>园内编号</th><th>园内使用名</th><th>出生年月</th><th>授权</th><th>兴趣</th></tr></thead><tbody>{importRows.slice(0, 20).map((row) => <tr key={row.internalCode}><td>{row.internalCode}</td><td>{row.displayName}</td><td>{row.birthMonth}</td><td>{row.guardianConsentStatus}</td><td>{row.interests.join("、") || "-"}</td></tr>)}</tbody></table></div>{importRows.length > 20 && <small>仅预览前20行，其余数据会一并导入。</small>}</div>}
+            {importRows.length > 0 && <div className="child-import-preview"><div><strong>导入预览</strong><span>{importRows.length}名幼儿</span></div><div className="table-wrap"><table><thead><tr><th>班内编号</th><th>园内使用名</th><th>出生年月</th><th>授权</th><th>兴趣</th></tr></thead><tbody>{importRows.slice(0, 20).map((row) => <tr key={row.internalCode}><td>{row.internalCode}</td><td>{row.displayName}</td><td>{row.birthMonth}</td><td>{row.guardianConsentStatus}</td><td>{row.interests.join("、") || "-"}</td></tr>)}</tbody></table></div>{importRows.length > 20 && <small>仅预览前20行，其余数据会一并导入。</small>}</div>}
             <div className="modal-actions"><button className="btn btn-secondary" onClick={() => void remoteApi.downloadChildImportTemplate()}><Download />重新下载模板</button><button className="btn btn-primary" disabled={busy || !importRows.length || importErrors.length > 0} onClick={() => void importChildren()}><Check />确认导入{importRows.length || ""}名幼儿</button></div>
           </div>
         </Modal>
