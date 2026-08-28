@@ -9,8 +9,11 @@ async function readJson(path, init) {
 }
 
 const health = await readJson("/api/healthz");
-if (!health.response.ok || health.payload.service !== "tongji-v3-api" || health.payload.schema !== "tongji_v3") {
+if (!health.response.ok || health.payload.status !== "ok" || health.payload.service !== "tongji-v3-api") {
   throw new Error(`健康检查失败: ${health.response.status} ${JSON.stringify(health.payload)}`);
+}
+if ("runtime" in health.payload || "schema" in health.payload || "ai" in health.payload) {
+  throw new Error(`公开健康检查暴露了内部配置: ${JSON.stringify(health.payload)}`);
 }
 
 for (const path of ["/api/me", "/api/dashboard"]) {
@@ -20,5 +23,5 @@ for (const path of ["/api/me", "/api/dashboard"]) {
   }
 }
 
-console.log(`生产链路冒烟通过：${baseUrl} -> Web反向代理 -> ${health.payload.service} -> ${health.payload.schema}`);
-console.log(`AI模式：${health.payload.ai?.mode}；文本模型：${health.payload.ai?.textModel}；媒体分析：${health.payload.ai?.mediaAnalysisEnabled}`);
+console.log(`生产链路冒烟通过：${baseUrl} -> Web反向代理 -> ${health.payload.service}`);
+console.log("公开健康检查仅返回服务状态，未暴露数据库与AI内部配置。");

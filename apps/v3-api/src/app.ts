@@ -5,6 +5,7 @@ import Fastify from "fastify";
 import { config } from "./config.js";
 import { ApiError, registerErrorHandler } from "./http.js";
 import { authRoutes } from "./routes/auth.js";
+import { aiPromptRoutes } from "./routes/ai-prompts.js";
 import { governanceRoutes } from "./routes/governance.js";
 import { evolutionRoutes } from "./routes/evolution.js";
 import { knowledgeRoutes } from "./routes/knowledge.js";
@@ -37,7 +38,7 @@ export async function buildApp() {
   });
   registerErrorHandler(app);
 
-  const health = () => ({
+  const internalHealth = () => ({
     status: "ok",
     service: "tongji-v3-api",
     runtime: config.RUNTIME_MODE,
@@ -50,8 +51,9 @@ export async function buildApp() {
       fallbackEnabled: config.aiFallbackToSimulated,
     },
   });
-  app.get("/healthz", async () => health());
-  app.get("/api/healthz", async () => health());
+  const publicHealth = () => ({ status: "ok", service: "tongji-v3-api" });
+  app.get("/healthz", async () => internalHealth());
+  app.get("/api/healthz", async () => config.isLocalLite ? internalHealth() : publicHealth());
   app.get("/api/local-media", async (request, reply) => {
     if (!config.isLocalLite) throw new ApiError(404, "LOCAL_MEDIA_DISABLED", "本地媒体服务未启用");
     const query = z.object({
@@ -64,6 +66,7 @@ export async function buildApp() {
     return reply.header("Cache-Control", "private, no-store").type(localMediaContentType(query.path)).send(body);
   });
   await authRoutes(app);
+  await aiPromptRoutes(app);
   await managementRoutes(app);
   await observationRoutes(app);
   await evolutionRoutes(app);

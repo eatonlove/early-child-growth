@@ -48,6 +48,26 @@ const classroomReport = {
   created_at: "2026-08-24T10:00:00+08:00",
 };
 
+const aiPrompt = {
+  key: "observation_analysis",
+  name: "逐幼儿观察分析",
+  category: "观察",
+  description: "结合文字、图片、视频、年龄段知识卡和历史证据生成观察、识别、应答与拓展。",
+  defaultVersion: "observation-analysis.qwen.v5",
+  effectiveVersion: "observation-analysis.qwen.v5",
+  source: "default",
+  revision: 0,
+  defaultPrompt: "你是逐幼儿循证分析助手。严格区分客观事实、专业解释和待验证假设，依据年龄段知识卡提出可执行应答，不补造未提供的行为、语言、次数和时长。".repeat(2),
+  customPrompt: null,
+  effectivePrompt: "你是逐幼儿循证分析助手。严格区分客观事实、专业解释和待验证假设，依据年龄段知识卡提出可执行应答，不补造未提供的行为、语言、次数和时长。".repeat(2),
+  basePromptVersion: "observation-analysis.qwen.v5",
+  baseVersionOutdated: false,
+  changeNote: "",
+  updatedAt: null,
+  updatedBy: null,
+  updatedByName: null,
+};
+
 async function mockApi(page: Page, role: "teacher" | "researcher", withAnalysis = false, withClassroomReport = false) {
   await page.route("**/api/**", async (route) => {
     const url = new URL(route.request().url());
@@ -61,6 +81,7 @@ async function mockApi(page: Page, role: "teacher" | "researcher", withAnalysis 
       : path === "/api/observation-templates" ? { items: [{ id: "33333333-3333-4333-8333-333333333333", code: "BUILDING", name: "建构游戏标准观察表", grade: null, scenes: ["建构区"], focus_options: ["材料选择与使用"], fields: ["连续动作"], version: 1 }] }
       : path === "/api/knowledge" ? { items: [], version: "guide-cn-2012.v1.0.0" }
       : path === "/api/accounts" ? { items: [{ user_id: "teacher-id", username: "teacher", display_name: "陈老师", role: "teacher", status: "active", classroom_ids: [classroom.id] }] }
+      : path === "/api/ai-prompts" ? { immutableSafetyPrompt: "禁止诊断、排名、标签化和编造证据。", items: [aiPrompt] }
       : path === "/api/quality-reviews" ? { items: [] }
       : path === "/api/export-requests" ? { items: [] }
       : path === "/api/research-activities" ? { items: [] }
@@ -163,6 +184,16 @@ test("生产教研员端可进入真实账号管理", async ({ page }) => {
   await expect(page.getByRole("heading", { name: "账号与权限管理" })).toBeVisible();
   await expect(page.getByRole("button", { name: "新增账号" })).toBeVisible();
   await expect(page.getByText("陈老师", { exact: true })).toBeVisible();
+});
+
+test("生产教研员端可查看并编辑全部AI场景提示词", async ({ page }) => {
+  await mockApi(page, "researcher");
+  await page.goto("/");
+  await page.getByRole("button", { name: /提示词配置/ }).click();
+  await expect(page.getByRole("heading", { name: "提示词配置" })).toBeVisible();
+  await expect(page.getByText("安全与循证底线不可修改")).toBeVisible();
+  await expect(page.getByRole("heading", { name: "逐幼儿观察分析" })).toBeVisible();
+  await expect(page.getByLabel(/园所场景提示词/)).toHaveValue(/逐幼儿循证分析助手/);
 });
 
 test("教研治理模块按角色开放", async ({ page }) => {

@@ -270,6 +270,38 @@ export interface RemoteAccount {
   disabled_reason?: string | null;
 }
 
+export type RemoteAIPromptKey =
+  | "observation_document_extraction"
+  | "observation_analysis"
+  | "analysis_revision"
+  | "individual_period_report"
+  | "classroom_period_report"
+  | "report_revision"
+  | "curriculum_interest_clustering"
+  | "curriculum_draft"
+  | "curriculum_activity_options"
+  | "curriculum_plan";
+
+export interface RemoteAIPrompt {
+  key: RemoteAIPromptKey;
+  name: string;
+  category: string;
+  description: string;
+  defaultVersion: string;
+  effectiveVersion: string;
+  source: "default" | "custom";
+  revision: number;
+  defaultPrompt: string;
+  customPrompt: string | null;
+  effectivePrompt: string;
+  basePromptVersion: string;
+  baseVersionOutdated: boolean;
+  changeNote: string;
+  updatedAt: string | null;
+  updatedBy: string | null;
+  updatedByName: string | null;
+}
+
 export interface RemoteKnowledgeCard {
   id: string;
   code: string;

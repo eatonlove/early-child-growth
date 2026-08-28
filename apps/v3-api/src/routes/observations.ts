@@ -3,6 +3,7 @@ import type { FastifyInstance } from "fastify";
 import { z } from "zod";
 import type { KnowledgeRow, MediaForAnalysis, ProfessionalMemoryForAnalysis } from "../ai/contracts.js";
 import { createAIProvider } from "../ai/provider.js";
+import { resolveTenantPrompt } from "../ai/prompt-config.js";
 import { effectiveAnalysisResult, flattenAnalysisClaims, legacyClaimDecision, claimDecisions } from "../analysis-claims.js";
 import { config } from "../config.js";
 import { ApiError, audit, authenticate } from "../http.js";
@@ -409,6 +410,7 @@ export async function observationRoutes(app: FastifyInstance) {
     const { data: knowledge, error: knowledgeError } = await auth.data.from("knowledge_cards").select("*").eq("grade", classroom.grade).eq("status", "active").limit(200);
     if (knowledgeError || !knowledge?.length) throw new ApiError(409, "KNOWLEDGE_NOT_READY", "当前班级年龄段知识库尚未初始化");
     const schema = serviceClient.schema(config.SUPABASE_SCHEMA);
+    const analysisPrompt = await resolveTenantPrompt(auth.tenantId, "observation_analysis");
     const createdRunIds: string[] = [];
     const analyses: any[] = [];
     const notices = new Set<string>();
@@ -462,7 +464,12 @@ export async function observationRoutes(app: FastifyInstance) {
           }));
           media = signed.filter((item): item is MediaForAnalysis => item !== null);
         }
-        const observationForChild = { ...observation, subject_context: subject.contextual_feature || "未补充本次个体情境特征" };
+        const observationForChild = {
+          ...observation,
+          subject_context: subject.contextual_feature || "未补充本次个体情境特征",
+          subject_role: subject.role,
+          subject_evidence_anchors: subject.evidence_anchors ?? [],
+        };
         const rankedMemories: ProfessionalMemoryForAnalysis[] = ((professionalMemories ?? []) as any[])
           .slice()
           .sort((left: any, right: any) => {
@@ -484,6 +491,7 @@ export async function observationRoutes(app: FastifyInstance) {
           history,
           professionalMemories: rankedMemories,
           analysisFrameworks: (frameworkRows ?? []).map((item: any) => ({ id: item.id, frameworkType: item.framework_type, name: item.name, version: item.version, description: item.description, dimensions: item.dimensions })),
+          prompt: analysisPrompt,
         });
         notices.add(generated.notice);
         if (generated.fallbackReason) request.log.warn({ observationId: observation.id, childId: child.id, fallbackReason: generated.fallbackReason }, "AI provider used safe fallback");

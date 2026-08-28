@@ -4,6 +4,7 @@ import { z } from "zod";
 import type { KnowledgeRow } from "../ai/contracts.js";
 import { normalizeAnalysisResult } from "../ai/analysis-compatibility.js";
 import { createAIProvider } from "../ai/provider.js";
+import { resolveTenantPrompt } from "../ai/prompt-config.js";
 import { effectiveAnalysisResult, flattenAnalysisClaims } from "../analysis-claims.js";
 import { config } from "../config.js";
 import {
@@ -184,6 +185,7 @@ export async function evolutionRoutes(app: FastifyInstance) {
         rawText,
         classroomChildren: (children ?? []).map((child) => ({ id: child.id, displayName: child.display_name })),
         mediaUrl,
+        prompt: await resolveTenantPrompt(auth.tenantId, "observation_document_extraction"),
       });
       const childMap = new Map((children ?? []).map((child) => [child.display_name.trim(), child.id]));
       const matchedChildIds = generated.data.subjects.map((subject) => childMap.get(subject.displayName.trim())).filter((value): value is string => Boolean(value));
@@ -258,7 +260,11 @@ export async function evolutionRoutes(app: FastifyInstance) {
     const { data: analysis, error: analysisError } = await auth.data.from("analysis_runs").select("*").eq("id", id).maybeSingle();
     if (analysisError) throw new ApiError(500, "ANALYSIS_READ_FAILED", "AI分析读取失败");
     if (!analysis) throw new ApiError(404, "ANALYSIS_NOT_FOUND", "AI分析不存在或无权访问");
-    const generated = await aiProvider.reviseAnalysis({ original: normalizeAnalysisResult(analysis.structured_result), teacherFeedback: input.feedback });
+    const generated = await aiProvider.reviseAnalysis({
+      original: normalizeAnalysisResult(analysis.structured_result),
+      teacherFeedback: input.feedback,
+      prompt: await resolveTenantPrompt(auth.tenantId, "analysis_revision"),
+    });
     if (generated.fallbackReason) {
       request.log.warn({ analysisId: id, observationId: analysis.observation_id, fallbackReason: generated.fallbackReason }, "AI analysis revision provider used safe fallback");
     }
@@ -548,6 +554,7 @@ export async function evolutionRoutes(app: FastifyInstance) {
       theme: clue.theme, scope: clue.plan?.scope === "individual_support" ? "individual_support" : "classroom_curriculum", observationCount: observations?.length ?? 0, childCount: clue.child_ids.length,
       timePointCount: clue.time_point_count, observations: observations ?? [], evidenceObservationIds: clue.evidence_observation_ids,
       knowledge: (knowledge ?? []) as KnowledgeRow[],
+      prompt: await resolveTenantPrompt(auth.tenantId, "curriculum_activity_options"),
     });
     const schema = serviceClient.schema(config.SUPABASE_SCHEMA);
     await schema.from("curriculum_activity_options").delete().eq("curriculum_clue_id", id).eq("status", "suggested");
@@ -615,6 +622,7 @@ export async function evolutionRoutes(app: FastifyInstance) {
       knowledge: (knowledge ?? []) as KnowledgeRow[], classroomName: classroom.name,
       implementationPeriod: input.implementationPeriod, templateStructure: template.structure,
       selectedOptions: normalizedOptions,
+      prompt: await resolveTenantPrompt(auth.tenantId, "curriculum_plan"),
     });
     const schema = serviceClient.schema(config.SUPABASE_SCHEMA);
     const { data: versions } = await schema.from("curriculum_plans").select("version").eq("curriculum_clue_id", id).order("version", { ascending: false }).limit(1);

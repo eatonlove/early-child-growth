@@ -10,7 +10,7 @@
 - 成功响应：单对象使用 `{ "item": ... }`，列表使用 `{ "items": [...] }`。
 - 错误响应：`{ "code": "ERROR_CODE", "message": "用户可理解说明", "fields"?: {} }`。
 - 所有写操作由 API 写入 `tongji_v3.audit_events`。
-- `GET /api/healthz` 返回API服务、业务schema和实际AI配置；站点根路径的 `/healthz` 只表示Web容器存活。
+- 生产环境的 `GET /api/healthz` 只返回API服务状态，不公开数据库或AI内部配置；站点根路径的 `/healthz` 只表示Web容器存活。本地验证环境保留详细状态，便于检查真实AI开关。
 - `GET /api/local-media` 仅在 `RUNTIME_MODE=local-lite` 下提供本地限时签名文件；生产模式固定返回404。
 
 ## 2. 身份与账号
@@ -174,7 +174,50 @@
 
 `decision` 可取 `adopted | abandoned`。AI原文保存在 `analysis_runs.structured_result`，教师确认说明和AI修订版本独立留痕。只有教师确认采用的分析才进入成长轨迹、周期报告和课程线索；不采用的分析不会成为正式证据。
 
-## 6. 知识库
+## 6. AI 提示词配置
+
+仅教研员可以查看和修改本园所的 AI 场景提示词。系统默认提示词保留在代码中，园所修改以租户覆盖配置保存，不影响其他园所。
+
+| 方法 | 路径 | 权限 | 作用 |
+|---|---|---|---|
+| GET | `/ai-prompts` | 教研员 | 返回全部场景、系统默认内容、园所自定义内容、生效版本和固定安全约束 |
+| PUT | `/ai-prompts/:key` | 教研员 | 保存园所自定义提示词，下一次对应 AI 调用立即生效 |
+| POST | `/ai-prompts/:key/reset` | 教研员 | 删除园所覆盖配置并恢复系统默认提示词 |
+
+当前场景编码：
+
+```text
+observation_document_extraction
+observation_analysis
+analysis_revision
+individual_period_report
+classroom_period_report
+report_revision
+curriculum_interest_clustering
+curriculum_draft
+curriculum_activity_options
+curriculum_plan
+```
+
+保存请求使用乐观并发修订号，避免多人编辑时静默覆盖：
+
+```json
+{
+  "systemPrompt": "不少于100字符的园所场景提示词",
+  "expectedRevision": 2,
+  "changeNote": "加强同伴协商行为的证据要求"
+}
+```
+
+恢复默认请求：
+
+```json
+{ "expectedRevision": 3 }
+```
+
+园所提示词不能替换系统固定安全约束。每次 AI 调用都会同时注入不可修改的隐私保护、证据可追溯、禁止编造、禁止诊断与标签化、结构化输出约束。AI 结果继续保存 `promptVersion`；自定义版本格式为 `custom.<场景编码>.r<修订号>@<基础默认版本>`。保存只影响后续生成，不重写历史分析、报告或课程草案。审计日志只保存提示词哈希、长度、版本和修改说明，不复制完整提示词正文。
+
+## 7. 知识库
 
 `GET /knowledge?grade=middle&domain=科学&query=探究`
 
@@ -185,7 +228,7 @@
 - 3张形成性评价、支架与课程生成理论卡。
 - 7套标准游戏观察模板。
 
-## 7. 成长、报告与课程
+## 8. 成长、报告与课程
 
 | 方法 | 路径 | 作用 |
 |---|---|---|
@@ -211,7 +254,7 @@
 | POST | `/curriculum-plans/:id/document-exports` | 直接生成课程计划Word |
 | GET | `/document-exports/:id/download` | 获取当前用户有权访问的下载地址 |
 
-## 8. 教研活动模式
+## 9. 教研活动模式
 
 | 方法 | 路径 | 权限 | 作用 |
 |---|---|---|---|
@@ -222,7 +265,7 @@
 
 每名参与者在同一活动只保留一份可更新的独立记录。活动结束后停止新增和修改，避免事后改写原始判断。
 
-## 9. 关键错误码
+## 10. 关键错误码
 
 | Code | 含义 |
 |---|---|
@@ -237,3 +280,4 @@
 | `RESEARCH_ACTIVITY_NOT_OPEN` | 教研活动尚未开始或已经结束 |
 | `REPORT_EVIDENCE_INSUFFICIENT` | 指定周期没有教师已采用的正式证据 |
 | `FOLLOW_UP_EVIDENCE_REQUIRED` | 应答效果验证缺少幼儿后续反应 |
+| `AI_PROMPT_VERSION_CONFLICT` | 提示词已被其他教研员修改，需要刷新后重试 |

@@ -3,7 +3,7 @@ import path from "node:path";
 import process from "node:process";
 
 const root = process.cwd();
-const routeFiles = ["auth.ts", "management.ts", "observations.ts", "knowledge.ts", "governance.ts", "outcomes.ts", "evolution.ts"];
+const routeFiles = ["auth.ts", "management.ts", "observations.ts", "knowledge.ts", "governance.ts", "outcomes.ts", "evolution.ts", "ai-prompts.ts"];
 const backendSource = (
   await Promise.all([
     ...routeFiles.map((file) => readFile(path.join(root, "apps/v3-api/src/routes", file), "utf8")),
@@ -59,6 +59,9 @@ const contract = [
   ["POST", "/api/accounts", true],
   ["PATCH", "/api/accounts/:userId/status", true],
   ["PATCH", "/api/accounts/:userId/password", true],
+  ["GET", "/api/ai-prompts", true],
+  ["PUT", "/api/ai-prompts/:key", true],
+  ["POST", "/api/ai-prompts/:key/reset", true],
   ["GET", "/api/research-activities", true],
   ["POST", "/api/research-activities", true],
   ["PATCH", "/api/research-activities/:id", true],
@@ -93,11 +96,29 @@ const contract = [
 ];
 
 const backendRoutes = new Set(
-  [...backendSource.matchAll(/app\.(get|post|patch|delete)\(\s*["'](\/api\/[^"']+)["']/g)]
+  [...backendSource.matchAll(/app\.(get|post|put|patch|delete)\(\s*["'](\/api\/[^"']+)["']/g)]
     .map((match) => `${match[1].toUpperCase()} ${match[2]}`),
 );
 const expectedRoutes = new Set(contract.map(([method, route]) => `${method} ${route}`));
 const errors = [];
+const promptKeys = [
+  "observation_document_extraction",
+  "observation_analysis",
+  "analysis_revision",
+  "individual_period_report",
+  "classroom_period_report",
+  "report_revision",
+  "curriculum_interest_clustering",
+  "curriculum_draft",
+  "curriculum_activity_options",
+  "curriculum_plan",
+];
+
+for (const promptKey of promptKeys) {
+  if (!backendSource.includes(`resolveTenantPrompt(auth.tenantId, "${promptKey}")`)) {
+    errors.push(`AI场景未接入园所生效提示词: ${promptKey}`);
+  }
+}
 
 for (const mimeType of [
   "application/vnd.openxmlformats-officedocument.wordprocessingml.document",

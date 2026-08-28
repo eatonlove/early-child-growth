@@ -1,5 +1,7 @@
 import type {
   RemoteAccount,
+  RemoteAIPrompt,
+  RemoteAIPromptKey,
   RemoteAnalysisFramework,
   AnalysisClaimDecision,
   RemoteAnalysis,
@@ -282,6 +284,21 @@ export const remoteApi = {
     request<{ ok: true }>(`/api/accounts/${userId}/password`, {
       method: "PATCH",
       body: body({ password }),
+    }),
+  aiPrompts: () =>
+    request<{ immutableSafetyPrompt: string; items: RemoteAIPrompt[] }>("/api/ai-prompts"),
+  updateAIPrompt: (
+    key: RemoteAIPromptKey,
+    value: { systemPrompt: string; expectedRevision: number; changeNote: string },
+  ) =>
+    request<{ item: RemoteAIPrompt }>(`/api/ai-prompts/${key}`, {
+      method: "PUT",
+      body: body(value),
+    }),
+  resetAIPrompt: (key: RemoteAIPromptKey, expectedRevision: number) =>
+    request<{ item: RemoteAIPrompt }>(`/api/ai-prompts/${key}/reset`, {
+      method: "POST",
+      body: body({ expectedRevision }),
     }),
   researchActivities: () =>
     request<{ items: RemoteResearchActivity[] }>("/api/research-activities"),

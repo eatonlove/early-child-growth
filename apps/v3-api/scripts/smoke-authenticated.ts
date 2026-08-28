@@ -61,8 +61,6 @@ try {
     "/api/observation-templates?grade=middle&scene=%E5%BB%BA%E6%9E%84%E5%8C%BA",
     "/api/knowledge?grade=middle",
     "/api/accounts",
-    "/api/quality-reviews",
-    "/api/export-requests",
     "/api/research-activities",
     "/api/support-actions",
     "/api/reports",

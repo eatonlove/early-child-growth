@@ -119,5 +119,20 @@ else
   echo "同迹私有桶已允许DOC和DOCX文件，跳过Word MIME修复迁移。"
 fi
 
+ai_prompt_configs_ready="$(docker exec "$DB_CONTAINER" psql -U postgres -d postgres -Atc \
+  "select to_regclass('tongji_v3.ai_prompt_configs') is not null;")"
+
+if [ "$ai_prompt_configs_ready" != "t" ]; then
+  docker exec -i "$DB_CONTAINER" psql -U postgres -d postgres \
+    -v ON_ERROR_STOP=1 --single-transaction \
+    < "$ROOT_DIR/apps/v3-api/supabase/migrations/20260828081822_ai_prompt_configs.sql"
+else
+  echo "园所级AI提示词配置结构已就绪，跳过提示词迁移。"
+fi
+
+docker exec -i "$DB_CONTAINER" psql -U postgres -d postgres \
+  -v ON_ERROR_STOP=1 --single-transaction \
+  < "$ROOT_DIR/apps/v3-api/supabase/migrations/20260828084501_reload_ai_prompt_config_schema.sql"
+
 docker exec "$DB_CONTAINER" psql -U postgres -d postgres -Atc \
   "select table_schema || '.' || table_name from information_schema.tables where table_schema = 'tongji_v3' order by table_name;"

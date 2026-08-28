@@ -2,6 +2,7 @@ import { useEffect, useState, type FormEvent } from "react";
 import type { LucideIcon } from "lucide-react";
 import {
   Activity,
+  Bot,
   BookOpen,
   ChevronRight,
   Database,
@@ -37,6 +38,7 @@ import {
   RemoteResearchPage,
 } from "./pages";
 import { RemoteCurriculumV32Page, RemoteObservationV32Page, RemoteProfessionalMemoryPage } from "./evolution-pages";
+import { RemoteAIPromptPage } from "./prompt-pages";
 import { TongjiMark } from "./TongjiMark";
 import "./production-design.css";
 
@@ -166,6 +168,7 @@ function RemoteShell() {
       ? [
           ...navigation,
           ["/research", "教研活动", Microscope] as [string, string, LucideIcon],
+          ["/ai-prompts", "提示词配置", Bot] as [string, string, LucideIcon],
           ["/accounts", "账号管理", KeyRound] as [string, string, LucideIcon],
         ]
       : [
@@ -295,6 +298,10 @@ function RemoteShell() {
             <Route path="/knowledge" element={<RemoteKnowledgePage />} />
             <Route path="/memories" element={<RemoteProfessionalMemoryPage user={user} />} />
             <Route path="/research" element={<RemoteResearchPage user={user} />} />
+            <Route
+              path="/ai-prompts"
+              element={user.role === "researcher" ? <RemoteAIPromptPage /> : <Navigate to="/" replace />}
+            />
             <Route
               path="/accounts"
               element={

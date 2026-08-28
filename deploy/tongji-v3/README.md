@@ -47,6 +47,9 @@ apps/v3-api/supabase/migrations/20260821122655_fix_research_activity_returning_r
 apps/v3-api/supabase/migrations/20260824064422_preserve_archived_classroom_history.sql
 apps/v3-api/supabase/migrations/20260824072542_add_claim_reviews_and_semantic_evidence.sql
 apps/v3-api/supabase/migrations/20260827055219_expand_observation_analysis_curriculum.sql
+apps/v3-api/supabase/migrations/20260827150000_allow_tongji_word_documents.sql
+apps/v3-api/supabase/migrations/20260828081822_ai_prompt_configs.sql
+apps/v3-api/supabase/migrations/20260828084501_reload_ai_prompt_config_schema.sql
 ```
 
 托管 Supabase：
@@ -66,7 +69,7 @@ chmod +x ./*.sh
 ./migrate.sh
 ```
 
-脚本逐个事务执行迁移，并检查基础表、治理表、共享 Auth 触发器兼容状态、创建回读 RLS 修复，以及多人观察、组合应答、课程循环和专业记忆结构。兼容迁移只在服务器存在租房应用的 `private.handle_new_auth_user()` 触发器时生效：租房用户保持原逻辑，带有 `application=tongji_v3` 标记或使用 `@tongji-v3.local` 内部邮箱域名的同迹用户不写入租房资料表。迁移后将 `tongji_v3` 追加到 `PGRST_DB_SCHEMAS`，再只重建 `supabase-rest`；不要移除其他应用正在使用的 schema。
+脚本逐个事务执行迁移，并检查基础表、治理表、共享 Auth 触发器兼容状态、创建回读 RLS 修复、多人观察、组合应答、课程循环、专业记忆和园所级AI提示词配置结构。兼容迁移只在服务器存在租房应用的 `private.handle_new_auth_user()` 触发器时生效：租房用户保持原逻辑，带有 `application=tongji_v3` 标记或使用 `@tongji-v3.local` 内部邮箱域名的同迹用户不写入租房资料表。迁移会通知 PostgREST 刷新 schema；不要移除其他应用正在使用的 schema。
 
 ## 4. 配置与初始化
 
@@ -85,7 +88,8 @@ chmod 600 .env
 ./seed.sh
 ./bootstrap-admin.sh
 curl -fsS http://127.0.0.1:8300/healthz       # Web容器
-curl -fsS http://127.0.0.1:8300/api/healthz   # API、schema与AI配置
+curl -fsS http://127.0.0.1:8300/api/healthz   # API公开健康状态
+docker compose --env-file .env exec -T api node -e "fetch('http://127.0.0.1:4310/healthz').then(r=>r.json()).then(console.log)" # 容器内部详细状态
 ```
 
 `bootstrap-admin.sh` 在终端中隐藏读取密码，只把密码传给一次性容器，不写入 `.env`。
@@ -121,9 +125,9 @@ curl -fsS https://tongji.meidaquan.com/api/healthz   # API健康
 5. 媒体使用签名地址进入私有bucket。
 6. AI输出事实、解释、假设、知识依据与应答，页面显示实际Provider与模型。
 7. 千问媒体分析开启后，仅授权为 `granted` 的图片/视频画面会参与分析，视频音轨不处理。
-8. 教师可逐条采用、修改、拒绝或标记待验证；终审后只为采用或修改的应答建议创建行动。
+8. 教师可对整份“观察、识别、应答”结果确认采用或不采用，并可先提交意见让AI生成修订稿。
 9. 停用账号后，旧页面下一次请求立即失败。
-10. 教研员可完成观察质量审核与导出审批，教师无审批权限。
+10. 观察记录、个体报告、班级报告和课程计划不经过审批流，可按当前页面规则直接编辑或导出。
 11. 教研活动进行中教师可提交独立记录，结束后停止提交。
 12. 采用AI建议后可实施应答、填写复察证据并进入成长轨迹。
 13. 报告至少需要2条、跨2个日期的终审证据；课程线索使用可解释语义聚类并回链多幼儿、多时间点观察。

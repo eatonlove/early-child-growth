@@ -25,8 +25,11 @@ export interface ObservationForAnalysis {
   scene: string;
   theme: string;
   organization_stage: string;
+  observation_focus?: string[];
   group_context?: string | null;
   subject_context?: string | null;
+  subject_role?: "primary" | "participant" | "incidental";
+  subject_evidence_anchors?: string[];
 }
 
 export interface MediaForAnalysis {
@@ -64,6 +67,14 @@ export interface AnalysisFrameworkForPrompt {
   version: number;
   description: string;
   dimensions: Array<{ label: string; evidenceReminder: string }>;
+}
+
+export interface ResolvedAIPrompt {
+  key: string;
+  systemPrompt: string;
+  version: string;
+  source: "default" | "custom";
+  revision: number;
 }
 
 const shortText = z.string().trim().min(1).max(2000);
@@ -233,6 +244,7 @@ export interface ObservationDocumentExtractionInput {
   rawText: string;
   classroomChildren: Array<{ id: string; displayName: string }>;
   mediaUrl?: string;
+  prompt?: ResolvedAIPrompt;
 }
 
 export const curriculumActivityOptionSchema = z.object({
@@ -376,6 +388,7 @@ export interface ObservationAnalysisInput {
   history: HistoricalObservationEvidence[];
   professionalMemories?: ProfessionalMemoryForAnalysis[];
   analysisFrameworks?: AnalysisFrameworkForPrompt[];
+  prompt?: ResolvedAIPrompt;
 }
 
 export interface ReportGenerationInput {
@@ -386,6 +399,7 @@ export interface ReportGenerationInput {
   observations: Array<Record<string, any>>;
   analyses: Array<Record<string, any>>;
   supports: Array<Record<string, any>>;
+  prompt?: ResolvedAIPrompt;
 }
 
 export interface ClassroomReportGenerationInput {
@@ -405,12 +419,14 @@ export interface ClassroomReportGenerationInput {
     | "supportFollowUpRate"
     | "curriculumClues"
   >;
+  prompt?: ResolvedAIPrompt;
 }
 
 export interface ReportRevisionInput {
   reportType: "teacher" | "guardian" | "classroom";
   existingContent: ReportContent | ClassroomReportContent;
   instruction: string;
+  prompt?: ResolvedAIPrompt;
 }
 
 export interface CurriculumGenerationInput {
@@ -420,6 +436,7 @@ export interface CurriculumGenerationInput {
   childCount: number;
   timePointCount: number;
   observations: Array<Record<string, any>>;
+  prompt?: ResolvedAIPrompt;
 }
 
 export interface CurriculumActivityOptionsInput extends CurriculumGenerationInput {
@@ -437,6 +454,7 @@ export interface CurriculumPlanGenerationInput extends CurriculumActivityOptions
 export interface AnalysisRevisionInput {
   original: AnalysisResult;
   teacherFeedback: Array<{ section: string; decision: string; note: string; content?: string }>;
+  prompt?: ResolvedAIPrompt;
 }
 
 export const interestClusterResultSchema = z.object({
@@ -458,6 +476,7 @@ export interface InterestClusteringInput {
     teacher_identification: string;
     teacher_response: Record<string, unknown>;
   }>;
+  prompt?: ResolvedAIPrompt;
 }
 
 export interface AIGeneration<T> {

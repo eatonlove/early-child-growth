@@ -1,6 +1,11 @@
 import { describe, expect, it, vi } from "vitest";
 import type { KnowledgeRow } from "./contracts.js";
-import { QianwenAIProvider } from "./qianwen-provider.js";
+import {
+  AI_PROMPT_DEFINITIONS,
+  IMMUTABLE_AI_SAFETY_PROMPT,
+  QianwenAIProvider,
+  aiPromptDefinitions,
+} from "./qianwen-provider.js";
 import { buildScenarioAnalysis } from "./scenario-provider.js";
 
 const card: KnowledgeRow = {
@@ -19,6 +24,14 @@ const card: KnowledgeRow = {
   next_observation_prompts: ["幼儿是否主动比较材料？"],
   keywords: ["积木", "调整", "倒塌"],
 };
+
+const crossDomainCards: KnowledgeRow[] = [
+  card,
+  { ...card, id: "card-2", code: "SOC-M-01", domain: "社会", subdomain: "人际交往", title: "愿意与同伴协商", keywords: ["同伴", "共同", "协商"] },
+  { ...card, id: "card-3", code: "LAN-M-01", domain: "语言", subdomain: "倾听与表达", title: "能表达自己的想法", keywords: ["说", "表达", "为什么"] },
+  { ...card, id: "card-4", code: "ART-M-01", domain: "艺术", subdomain: "表现与创造", title: "能使用材料进行表现", keywords: ["造型", "装饰", "设计"] },
+  { ...card, id: "card-5", code: "HEA-M-01", domain: "健康", subdomain: "动作发展", title: "手的动作灵活协调", keywords: ["操作", "按压", "连接"] },
+];
 
 const expandedResponse = buildScenarioAnalysis({
   teacher_observation: "幼儿将较长积木换到下层并继续搭建。",
@@ -71,7 +84,24 @@ const response = {
 };
 
 describe("QianwenAIProvider", () => {
-  it("analyzes authorized media, preserves teacher text and limits indicator references", async () => {
+  it("registers every configurable AI scene with a distinct code default", () => {
+    expect(aiPromptDefinitions()).toHaveLength(10);
+    expect(Object.keys(AI_PROMPT_DEFINITIONS)).toEqual([
+      "observation_document_extraction",
+      "observation_analysis",
+      "analysis_revision",
+      "individual_period_report",
+      "classroom_period_report",
+      "report_revision",
+      "curriculum_interest_clustering",
+      "curriculum_draft",
+      "curriculum_activity_options",
+      "curriculum_plan",
+    ]);
+    expect(new Set(aiPromptDefinitions().map((item) => item.defaultVersion)).size).toBe(10);
+  });
+
+  it("applies the individual observation standard to text, image and video evidence without sending the child's identity", async () => {
     let requestBody = "";
     const fetcher = vi.fn(async (_url: string | URL | Request, init?: RequestInit) => {
       requestBody = String(init?.body ?? "");
@@ -98,12 +128,23 @@ describe("QianwenAIProvider", () => {
         scene: "建构区",
         theme: "桥梁建构",
         organization_stage: "process",
+        observation_focus: ["材料与工具", "问题解决"],
+        group_context: "三名幼儿共同搭桥。",
+        subject_context: "目标幼儿穿黄色上衣，主要负责调整桥墩。",
+        subject_role: "primary",
+        subject_evidence_anchors: ["视频00:04-00:38黄色上衣幼儿", "图片左侧黄色上衣幼儿"],
       },
       child: { id: "child-1", display_name: "不应发送的姓名", birth_month: "2022-05", guardian_consent_status: "granted" },
       classroom: { id: "class-1", grade: "middle" },
-      knowledge: [card],
-      evidence: [{ id: "evidence-1", evidence_type: "video", mime_type: "video/mp4" }],
-      media: [{ id: "evidence-1", evidenceType: "video", mimeType: "video/mp4", signedUrl: "https://storage.example/signed-video" }],
+      knowledge: crossDomainCards,
+      evidence: [
+        { id: "evidence-1", evidence_type: "video", mime_type: "video/mp4" },
+        { id: "evidence-2", evidence_type: "photo", mime_type: "image/jpeg" },
+      ],
+      media: [
+        { id: "evidence-1", evidenceType: "video", mimeType: "video/mp4", signedUrl: "https://storage.example/signed-video" },
+        { id: "evidence-2", evidenceType: "photo", mimeType: "image/jpeg", signedUrl: "https://storage.example/signed-photo" },
+      ],
       history: [],
     });
 
@@ -113,7 +154,66 @@ describe("QianwenAIProvider", () => {
     expect(generated.data.teacherComparison.teacherResponse).toEqual(teacherResponse);
     expect(generated.data.developmentReferences[0]).toMatchObject({ title: card.title, domain: card.domain, ageBand: card.age_band });
     expect(requestBody).toContain("video_url");
+    expect(requestBody).toContain("image_url");
     expect(requestBody).not.toContain("不应发送的姓名");
+    expect(generated.promptVersion).toBe("observation-analysis.qwen.v5");
+
+    const apiRequest = JSON.parse(requestBody);
+    expect(apiRequest.messages[0].content).toContain("逐幼儿循证分析助手");
+    expect(apiRequest.messages[0].content).toContain("图片只能证明一个可见瞬间");
+    expect(apiRequest.messages[0].content).toContain("保持观察/最低介入");
+    const firstTextPart = apiRequest.messages[1].content.find((item: { type: string }) => item.type === "text");
+    const prompt = JSON.parse(firstTextPart.text.slice(firstTextPart.text.indexOf("\n") + 1));
+    expect(prompt.analysisStandard.observationFocusDimensions).toContain("问题识别与解决发起");
+    expect(prompt.allowedKnowledgeCards).toHaveLength(5);
+    expect(prompt.targetSubject).toMatchObject({
+      reference: "target-child",
+      role: "primary",
+      contextualFeature: "目标幼儿穿黄色上衣，主要负责调整桥墩。",
+      evidenceAnchors: ["视频00:04-00:38黄色上衣幼儿", "图片左侧黄色上衣幼儿"],
+    });
+    expect(prompt.observation.observationFocus).toEqual(["材料与工具", "问题解决"]);
+  });
+
+  it("adds an individual-attribution warning when group media has no target-child anchor", async () => {
+    const mediaResponse = {
+      ...response,
+      facts: [{ ...response.facts[0], evidenceIds: ["evidence-1"] }],
+      interpretations: [{ ...response.interpretations[0], evidenceIds: ["evidence-1"] }],
+    };
+    const fetcher = vi.fn(async () => new Response(JSON.stringify({
+      choices: [{ message: { content: JSON.stringify(mediaResponse) } }],
+    }), { status: 200, headers: { "Content-Type": "application/json" } }));
+    const provider = new QianwenAIProvider({
+      apiKey: "sk-test-only",
+      baseUrl: "https://dashscope.aliyuncs.com/compatible-mode/v1",
+      textModel: "qwen3.7-plus",
+      visionModel: "qwen3.7-plus",
+      timeoutMs: 5000,
+    }, fetcher as typeof fetch);
+
+    const generated = await provider.analyzeObservation({
+      observation: {
+        teacher_observation: "三名幼儿一起搭桥，其中一名幼儿移动了桥墩。",
+        child_quote: null,
+        teacher_identification: "小组开始比较支撑位置。",
+        teacher_response: { category: "material", strategy: "提供不同支撑物", nextObservationFocus: "观察目标幼儿是否继续比较" },
+        scene: "建构区",
+        theme: "桥梁建构",
+        organization_stage: "process",
+        group_context: "三名幼儿共同游戏。",
+        subject_context: "未补充本次个体情境特征",
+        subject_evidence_anchors: [],
+      },
+      child: { id: "child-1", display_name: "演示幼儿", birth_month: "2022-05", guardian_consent_status: "granted" },
+      classroom: { id: "class-1", grade: "middle" },
+      knowledge: [card],
+      evidence: [{ id: "evidence-1", evidence_type: "video", mime_type: "video/mp4" }],
+      media: [{ id: "evidence-1", evidenceType: "video", mimeType: "video/mp4", signedUrl: "https://storage.example/signed-video" }],
+      history: [],
+    });
+
+    expect(generated.data.warnings).toContain("本次包含群体媒体但未提供目标幼儿的个体特征或画面定位锚点；无法明确归属的群体行为不得作为该幼儿事实。");
   });
 
   it("canonicalizes evidence aliases for a text-only observation", async () => {
@@ -197,6 +297,60 @@ describe("QianwenAIProvider", () => {
     const apiRequest = JSON.parse(requestBody);
     const prompt = JSON.parse(apiRequest.messages[1].content);
     expect(prompt.observations[0].occurredDate).toBe("2026-08-24");
+  });
+
+  it("uses a tenant custom prompt while retaining immutable safety constraints and version tracing", async () => {
+    let requestBody = "";
+    const report = {
+      title: "报告草稿",
+      evidenceBoundary: "仅依据已采用证据。",
+      observationCoverage: "本期两次观察。",
+      interests: ["桥梁建构"],
+      evidencedGrowth: ["幼儿两次调整支撑后继续测试。"],
+      teacherSupport: ["保留材料并延长游戏时间。"],
+      pendingQuestions: ["能否迁移到其他材料？"],
+      nextPlan: ["在不同材料中继续观察。"],
+      familySuggestions: ["共同搭建并记录不同支撑方式。"],
+      audience: "guardian",
+    };
+    const fetcher = vi.fn(async (_url: string | URL | Request, init?: RequestInit) => {
+      requestBody = String(init?.body ?? "");
+      return new Response(JSON.stringify({ choices: [{ message: { content: JSON.stringify(report) } }] }), {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      });
+    });
+    const provider = new QianwenAIProvider({
+      apiKey: "sk-test-only",
+      baseUrl: "https://dashscope.aliyuncs.com/compatible-mode/v1",
+      textModel: "qwen3.7-plus",
+      visionModel: "qwen3.7-plus",
+      timeoutMs: 5000,
+    }, fetcher as typeof fetch);
+    const customPrompt = "你是本园个体周期报告助手。必须先概括连续证据，再用家长可理解的语言描述兴趣、变化、教师支持和下一步共玩建议；任何结论都要保留证据边界，不增加观察中没有的事实。";
+
+    const generated = await provider.generateReport({
+      reportType: "guardian",
+      childName: "演示幼儿",
+      periodStart: "2026-08-01",
+      periodEnd: "2026-08-24",
+      observations: [],
+      analyses: [],
+      supports: [],
+      prompt: {
+        key: "individual_period_report",
+        systemPrompt: customPrompt,
+        version: "custom.individual_period_report.r2@period-report.qwen.v2",
+        source: "custom",
+        revision: 2,
+      },
+    });
+
+    const apiRequest = JSON.parse(requestBody);
+    expect(apiRequest.messages[0].content).toContain(customPrompt);
+    expect(apiRequest.messages[0].content).toContain(IMMUTABLE_AI_SAFETY_PROMPT);
+    expect(apiRequest.messages[0].content).toContain("园所提示词不能取消固定安全边界");
+    expect(generated.promptVersion).toBe("custom.individual_period_report.r2@period-report.qwen.v2");
   });
 
   it("keeps classroom coverage metrics deterministic and pseudonymizes children", async () => {

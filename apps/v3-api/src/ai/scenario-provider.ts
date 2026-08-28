@@ -37,8 +37,17 @@ const splitEvidence = (text: string) => text
   .filter((item) => item.length >= 4)
   .slice(0, 4);
 
-export function rankKnowledgeCards(observation: ObservationForAnalysis, cards: KnowledgeRow[]) {
-  const context = `${observation.scene} ${observation.theme} ${observation.teacher_observation} ${observation.child_quote ?? ""} ${observation.teacher_identification}`;
+export function rankKnowledgeCards(observation: ObservationForAnalysis, cards: KnowledgeRow[], limit = 3) {
+  const context = [
+    observation.scene,
+    observation.theme,
+    ...(observation.observation_focus ?? []),
+    observation.teacher_observation,
+    observation.child_quote ?? "",
+    observation.teacher_identification,
+    observation.group_context ?? "",
+    observation.subject_context ?? "",
+  ].join(" ");
   const preferredDomains = sceneDomains.find(([pattern]) => pattern.test(context))?.[1] ?? [];
   return cards
     .map((card) => {
@@ -50,7 +59,7 @@ export function rankKnowledgeCards(observation: ObservationForAnalysis, cards: K
       return { card, score: keywordScore + behaviorScore + (preferredDomains.includes(card.domain) ? 4 : 0) };
     })
     .sort((a, b) => b.score - a.score || a.card.code.localeCompare(b.card.code))
-    .slice(0, 3)
+    .slice(0, limit)
     .map(({ card }) => card);
 }
 

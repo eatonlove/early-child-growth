@@ -1,5 +1,6 @@
 import type { FastifyInstance } from "fastify";
 import { z } from "zod";
+import { resolveTenantPrompt } from "../ai/prompt-config.js";
 import { createAIProvider } from "../ai/provider.js";
 import { classroomReportContentSchema, reportContentSchema } from "../ai/contracts.js";
 import { effectiveAnalysisResult } from "../analysis-claims.js";
@@ -237,9 +238,10 @@ export async function outcomeRoutes(app: FastifyInstance) {
           periodEnd: input.periodEnd,
           observations: reportObservations,
           analyses: effectiveAnalyses,
-          supports: usedSupports,
-          metrics,
-        });
+        supports: usedSupports,
+        metrics,
+        prompt: await resolveTenantPrompt(auth.tenantId, "classroom_period_report"),
+      });
       } catch {
         throw new ApiError(502, "AI_CLASSROOM_REPORT_FAILED", "AI班级报告生成暂时不可用，请稍后重试");
       }
@@ -321,6 +323,7 @@ export async function outcomeRoutes(app: FastifyInstance) {
         observations: observations ?? [],
         analyses: effectiveAnalyses,
         supports: usedSupports,
+        prompt: await resolveTenantPrompt(auth.tenantId, "individual_period_report"),
       });
     } catch {
       throw new ApiError(502, "AI_REPORT_FAILED", "AI报告生成暂时不可用，请稍后重试");
@@ -402,7 +405,12 @@ export async function outcomeRoutes(app: FastifyInstance) {
       : reportContentSchema.parse(existing);
     let generated;
     try {
-      generated = await aiProvider.reviseReport({ reportType: current.report_type, existingContent, instruction });
+      generated = await aiProvider.reviseReport({
+        reportType: current.report_type,
+        existingContent,
+        instruction,
+        prompt: await resolveTenantPrompt(auth.tenantId, "report_revision"),
+      });
     } catch {
       throw new ApiError(502, "AI_REPORT_REVISION_FAILED", "AI报告修订暂时不可用，请稍后重试");
     }
@@ -470,6 +478,10 @@ export async function outcomeRoutes(app: FastifyInstance) {
     const { data: observations, error } = await auth.data.from("observations").select("id, child_id, scene, theme, occurred_at, teacher_identification, teacher_response").eq("classroom_id", classroomId).eq("status", "adopted").order("occurred_at");
     if (error) throw new ApiError(500, "CURRICULUM_SCAN_FAILED", "课程线索扫描失败");
     if (!observations?.length) return { items: [] };
+    const [clusteringPrompt, curriculumPrompt] = await Promise.all([
+      resolveTenantPrompt(auth.tenantId, "curriculum_interest_clustering"),
+      resolveTenantPrompt(auth.tenantId, "curriculum_draft"),
+    ]);
     let clustered;
     try {
       clustered = await aiProvider.clusterInterests({ observations: observations.map((item) => ({
@@ -478,7 +490,7 @@ export async function outcomeRoutes(app: FastifyInstance) {
         scene: item.scene,
         teacher_identification: item.teacher_identification,
         teacher_response: item.teacher_response,
-      })) });
+      })), prompt: clusteringPrompt });
     } catch {
       throw new ApiError(502, "AI_INTEREST_CLUSTER_FAILED", "兴趣语义聚类暂时不可用，请稍后重试");
     }
@@ -506,6 +518,7 @@ export async function outcomeRoutes(app: FastifyInstance) {
             childCount: childIds.length,
             timePointCount: timePoints.length,
             observations: group,
+            prompt: curriculumPrompt,
           });
         } catch {
           throw new ApiError(502, "AI_CURRICULUM_FAILED", "AI课程草案生成暂时不可用，请稍后重试");

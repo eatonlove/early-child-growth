@@ -224,6 +224,7 @@ export function RemoteDashboardPage({ user }: { user: RemoteUser }) {
     { path: "/knowledge", label: "知识库", image: "icon-knowledge-base.webp" },
     { path: "/memories", label: "园所经验库", image: "icon-knowledge-base.webp" },
     { path: "/research", label: "教研活动", image: "icon-research-activity.webp" },
+    { path: "/ai-prompts", label: "提示词配置", image: "icon-knowledge-base.webp" },
     { path: "/accounts", label: "账号管理", image: "icon-account-management.webp" },
   ];
   const modules = user.role === "researcher" ? researcherModules : teacherModules;
