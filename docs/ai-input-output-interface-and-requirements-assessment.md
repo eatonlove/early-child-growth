@@ -494,7 +494,7 @@ Content-Type: application/json
 
 ```json
 {
-  "model": "qwen3.7-plus",
+  "model": "qwen3.7-plus-2026-05-26",
   "messages": [
     { "role": "system", "content": "场景Prompt" },
     { "role": "user", "content": "JSON上下文或多模态内容" }
@@ -516,8 +516,8 @@ Content-Type: application/json
 
 | 项目 | 当前值或规则 |
 |---|---|
-| 文本模型 | `qwen3.7-plus` |
-| 视觉/视频模型 | `qwen3.7-plus` |
+| 文本模型 | `qwen3.7-plus-2026-05-26` |
+| 视觉/视频模型 | `qwen3.7-plus-2026-05-26` |
 | 超时 | 120秒，可配置为5至300秒 |
 | 自动重试 | 最多2次；仅网络错误、429和5xx重试 |
 | 温度 | `0.2` |
@@ -731,7 +731,7 @@ Content-Type: application/json
 ```json
 {
   "provider": "QianwenAIProvider",
-  "model": "qwen3.7-plus",
+  "model": "qwen3.7-plus-2026-05-26",
   "promptVersion": "对应场景版本",
   "fallbackUsed": false
 }

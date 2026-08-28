@@ -28,8 +28,8 @@
 AI_MODE=qianwen
 DASHSCOPE_API_KEY=sk-your-key-here
 QWEN_BASE_URL=https://dashscope.aliyuncs.com/compatible-mode/v1
-QWEN_TEXT_MODEL=qwen3.7-plus
-QWEN_VISION_MODEL=qwen3.7-plus
+QWEN_TEXT_MODEL=qwen3.7-plus-2026-05-26
+QWEN_VISION_MODEL=qwen3.7-plus-2026-05-26
 QWEN_TIMEOUT_MS=120000
 QWEN_MEDIA_ANALYSIS_ENABLED=false
 QWEN_MAX_MEDIA=2
