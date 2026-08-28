@@ -122,7 +122,7 @@
 | PATCH | `/analyses/:id/claims/:claimKey` | 兼容历史精细审阅数据，不在当前教师页面暴露 |
 | POST | `/analyses/:id/finalize` | 兼容历史精细审阅数据，不在当前教师页面暴露 |
 
-分析只接受已经提交的教师记录。`AI_MODE=qianwen` 时使用 `QianwenAIProvider`；在监护授权为 `granted` 且 `QWEN_MEDIA_ANALYSIS_ENABLED=true` 时，可将私有图片或视频的15分钟签名链接作为多模态输入。视频只分析画面，不处理音轨。未启用千问或安全回退时使用 `ScenarioAIProvider`，页面必须显示实际 Provider 和模型。
+分析只接受已经提交的教师记录。`AI_MODE=qianwen` 时使用 `QianwenAIProvider`；在监护授权为 `granted` 且 `QWEN_MEDIA_ANALYSIS_ENABLED=true` 时，可将私有图片或视频的15分钟签名链接作为多模态输入。视频只分析画面，不处理音轨。生产环境默认禁止在真实 AI 失败时静默回退到模拟结果，并返回明确的服务错误；只有显式使用 `AI_MODE=scenario` 的本地演示环境才使用 `ScenarioAIProvider`。页面必须显示实际 Provider 和模型。
 
 固定输出：
 

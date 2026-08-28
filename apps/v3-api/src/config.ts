@@ -35,7 +35,7 @@ const envSchema = z.object({
   QWEN_MEDIA_ANALYSIS_ENABLED: z.enum(["true", "false"]).default("false"),
   QWEN_WEB_SEARCH_ENABLED: z.enum(["true", "false"]).default("true"),
   QWEN_MAX_MEDIA: z.coerce.number().int().min(0).max(3).default(2),
-  AI_FALLBACK_TO_SIMULATED: z.enum(["true", "false"]).default("true"),
+  AI_FALLBACK_TO_SIMULATED: z.enum(["true", "false"]).default("false"),
 }).superRefine((value, context) => {
   const key = value.QIANWEN_API_KEY || value.DASHSCOPE_API_KEY;
   if (value.AI_MODE === "qianwen" && !isStandardQwenApiKey(key)) {
