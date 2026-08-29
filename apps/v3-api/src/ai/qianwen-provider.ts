@@ -229,7 +229,9 @@ function configuredPrompt(input: { prompt?: ResolvedAIPrompt }, key: AIPromptKey
 }
 
 const forbiddenJudgment = /(不达标|达标|优秀|落后|正常儿童|异常儿童|能力差|综合评分|综合得分|班级排名|诊断为)/g;
-const boundaryLanguage = /(不能|无法|不应|不得|不可|不宜|不作|不做|不进行|不生成|不形成|不输出|不用于|不代表|不支持|不建议|不包含|不涉及|不要|未作|未做|未进行|未生成|未形成|未输出|未使用|未用于|未评价|未判断|未比较|未区分|未包含|未涉及|避免|禁止|无依据|证据不足|不足以|尚不足以)/;
+const boundaryLanguage = /(不能|无法|不应|不得|不可|不宜|不作|不做|不进行|不生成|不形成|不输出|不用于|不代表|不支持|不建议|不包含|不涉及|不以|不要|未作|未做|未进行|未生成|未形成|未输出|未使用|未用于|未评价|未判断|未比较|未区分|未包含|未涉及|避免|禁止|无依据|证据不足|不足以|尚不足以)/;
+const unconditionalJudgments = new Set(["正常儿童", "异常儿童", "能力差", "综合评分", "综合得分", "班级排名", "诊断为"]);
+const childLabelContext = /(幼儿|儿童|孩子|该生|目标幼儿|表现|发展|能力|水平|经验|同龄|同伴|班级|评价|结论)/;
 
 function stringValues(value: unknown): string[] {
   if (typeof value === "string") return [value];
@@ -253,7 +255,9 @@ export function assertNoForbiddenJudgment(value: unknown) {
         .filter((position) => position >= 0);
       const clauseEnd = followingStops.length ? Math.min(...followingStops) : text.length;
       const clause = text.slice(clauseStart, clauseEnd);
-      if (!boundaryLanguage.test(clause)) {
+      const isolatedLabel = clause.trim().replace(/[“”'"、，：:（）()]/g, "") === match[0];
+      const unsafe = unconditionalJudgments.has(match[0]) || childLabelContext.test(clause) || isolatedLabel;
+      if (!boundaryLanguage.test(clause) && unsafe) {
         throw new Error(`千问输出触发幼儿标签化风险守卫：${match[0]}`);
       }
     }

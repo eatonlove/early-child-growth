@@ -90,6 +90,8 @@ describe("QianwenAIProvider", () => {
     expect(() => assertNoForbiddenJudgment({ caution: "本稿未使用“优秀/落后”等横向标签。" })).not.toThrow();
     expect(() => assertNoForbiddenJudgment({ conclusion: "该幼儿已经达标。" })).toThrow("幼儿标签化风险守卫：达标");
     expect(() => assertNoForbiddenJudgment({ conclusion: "该幼儿尚未达标。" })).toThrow("幼儿标签化风险守卫：达标");
+    expect(() => assertNoForbiddenJudgment({ conclusion: "发展水平相对落后。" })).toThrow("幼儿标签化风险守卫：落后");
+    expect(() => assertNoForbiddenJudgment({ conclusion: "落后于同龄幼儿。" })).toThrow("幼儿标签化风险守卫：落后");
     expect(() => assertNoForbiddenJudgment({ conclusion: "该幼儿能力差，需要重点纠正。" })).toThrow("幼儿标签化风险守卫：能力差");
   });
   it("registers every configurable AI scene with a distinct code default", () => {
