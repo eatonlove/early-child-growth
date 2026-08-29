@@ -615,15 +615,14 @@ export class QianwenAIProvider implements AIAnalysisProvider {
     let validated: AnalysisResult;
     try {
       validated = validateObservationGrounding(result, input, cards);
-    } catch (reason) {
-      const firstFailure = reason instanceof Error ? reason.message : "安全或证据回链校验失败";
+    } catch {
       result = await this.client.structuredCompletion<AnalysisResult>({
         ...request,
         messages: [
           ...request.messages,
           {
             role: "user",
-            content: `上一次草稿未通过后端安全与证据回链校验（${firstFailure}）。请丢弃上一次草稿，重新生成完整JSON：不得出现幼儿达标、优秀、落后、能力差或诊断性标签；儿童经验判断必须引用允许的原始证据ID；未来应答方案如无更具体证据ID，统一引用teacher-observation。`,
+            content: "上一次草稿未通过后端安全与证据回链校验。请丢弃上一次草稿，重新生成完整JSON：不得使用任何标签化、横向比较、能力定性或诊断性措辞；儿童经验判断必须引用允许的原始证据ID；未来应答方案如无更具体证据ID，统一引用teacher-observation。",
           },
         ],
       });
