@@ -229,7 +229,7 @@ function configuredPrompt(input: { prompt?: ResolvedAIPrompt }, key: AIPromptKey
 }
 
 const forbiddenJudgment = /(不达标|达标|优秀|落后|正常儿童|异常儿童|能力差|综合评分|综合得分|班级排名|诊断为)/g;
-const boundaryLanguage = /(不能|无法|不应|不得|不可|不宜|不作|不做|不进行|不生成|不形成|不输出|不用于|不代表|不支持|不建议|不要|避免|禁止|无依据|证据不足|不足以|尚不足以)/;
+const boundaryLanguage = /(不能|无法|不应|不得|不可|不宜|不作|不做|不进行|不生成|不形成|不输出|不用于|不代表|不支持|不建议|不包含|不涉及|不要|未作|未做|未进行|未生成|未形成|未输出|未使用|未用于|未评价|未判断|未比较|未区分|未包含|未涉及|避免|禁止|无依据|证据不足|不足以|尚不足以)/;
 
 function stringValues(value: unknown): string[] {
   if (typeof value === "string") return [value];
