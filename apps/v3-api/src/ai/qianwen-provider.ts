@@ -600,7 +600,7 @@ export class QianwenAIProvider implements AIAnalysisProvider {
       }
       content.push({ type: "text", text: `上一项媒体的证据ID为 ${media.id}，只能按该ID引用。` });
     }
-    const result = await this.client.structuredCompletion<AnalysisResult>({
+    const request = {
       model: input.media.length ? this.options.visionModel : this.options.textModel,
       messages: [
         { role: "system", content: prompt.systemPrompt },
@@ -610,8 +610,25 @@ export class QianwenAIProvider implements AIAnalysisProvider {
       jsonSchema: analysisJsonSchema,
       validator: analysisResultSchema,
       timeoutMs: input.media.length ? this.options.visionTimeoutMs : undefined,
-    });
-    const validated = validateObservationGrounding(result, input, cards);
+    } satisfies Parameters<QwenClient["structuredCompletion"]>[0];
+    let result = await this.client.structuredCompletion<AnalysisResult>(request);
+    let validated: AnalysisResult;
+    try {
+      validated = validateObservationGrounding(result, input, cards);
+    } catch (reason) {
+      const firstFailure = reason instanceof Error ? reason.message : "安全或证据回链校验失败";
+      result = await this.client.structuredCompletion<AnalysisResult>({
+        ...request,
+        messages: [
+          ...request.messages,
+          {
+            role: "user",
+            content: `上一次草稿未通过后端安全与证据回链校验（${firstFailure}）。请丢弃上一次草稿，重新生成完整JSON：不得出现幼儿达标、优秀、落后、能力差或诊断性标签；儿童经验判断必须引用允许的原始证据ID；未来应答方案如无更具体证据ID，统一引用teacher-observation。`,
+          },
+        ],
+      });
+      validated = validateObservationGrounding(result, input, cards);
+    }
     validated.externalSupportReferences = externalSupportReferences;
     assertDistinctAnalysis(validated);
     flagPeerSimilarity(validated, input);

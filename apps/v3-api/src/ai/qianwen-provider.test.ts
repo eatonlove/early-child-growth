@@ -109,13 +109,18 @@ describe("QianwenAIProvider", () => {
 
   it("applies the individual observation standard to text, image and video evidence without sending the child's identity", async () => {
     let requestBody = "";
+    let requestCount = 0;
     const responseWithoutPlanEvidence = {
       ...response,
       responsePlans: response.responsePlans.map((plan) => ({ ...plan, evidenceIds: ["current-observation"] })),
     };
     const fetcher = vi.fn(async (_url: string | URL | Request, init?: RequestInit) => {
+      requestCount += 1;
       requestBody = String(init?.body ?? "");
-      return new Response(JSON.stringify({ choices: [{ message: { content: JSON.stringify(responseWithoutPlanEvidence) } }] }), {
+      const result = requestCount === 1
+        ? { ...responseWithoutPlanEvidence, currentExperience: "该幼儿在本次活动中表现落后。" }
+        : responseWithoutPlanEvidence;
+      return new Response(JSON.stringify({ choices: [{ message: { content: JSON.stringify(result) } }] }), {
         status: 200,
         headers: { "Content-Type": "application/json" },
       });
@@ -163,6 +168,7 @@ describe("QianwenAIProvider", () => {
     expect(generated.mediaAnalyzed).toBe(true);
     expect(generated.data.teacherComparison.teacherIdentification).toBe("幼儿开始比较材料与稳定性的关系。");
     expect(generated.data.teacherComparison.teacherResponse).toEqual(teacherResponse);
+    expect(fetcher).toHaveBeenCalledTimes(2);
     expect(generated.data.responsePlans.every((plan) => plan.evidenceIds.includes("teacher-observation"))).toBe(true);
     expect(generated.data.developmentReferences[0]).toMatchObject({ title: card.title, domain: card.domain, ageBand: card.age_band });
     expect(requestBody).toContain("video_url");
@@ -172,6 +178,7 @@ describe("QianwenAIProvider", () => {
 
     const apiRequest = JSON.parse(requestBody);
     expect(apiRequest.messages[0].content).toContain("逐幼儿循证分析助手");
+    expect(apiRequest.messages.at(-1).content).toContain("丢弃上一次草稿");
     expect(apiRequest.messages[0].content).toContain("图片只能证明一个可见瞬间");
     expect(apiRequest.messages[0].content).toContain("保持观察/最低介入");
     const firstTextPart = apiRequest.messages[1].content.find((item: { type: string }) => item.type === "text");
