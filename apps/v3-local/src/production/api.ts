@@ -3,6 +3,7 @@ import type {
   RemoteAIPrompt,
   RemoteAIPromptKey,
   RemoteAnalysisFramework,
+  RemoteAnalysisJob,
   AnalysisClaimDecision,
   RemoteAnalysis,
   RemoteAnalysisClaimReview,
@@ -177,6 +178,7 @@ export const remoteApi = {
       subjects: RemoteObservationSubject[];
       responsePlans: RemoteResponsePlan[];
       observers: RemoteObserver[];
+      analysisJob: RemoteAnalysisJob | null;
     }>(`/api/observations/${id}`),
   createObservation: (value: Record<string, unknown>) =>
     request<{ item: RemoteObservation }>("/api/observations", {
@@ -184,10 +186,12 @@ export const remoteApi = {
       body: body(value),
     }),
   analyze: (id: string) =>
-    request<{ item: RemoteAnalysis; items: RemoteAnalysis[]; aiNotice: string; simulationNotice: string }>(
+    request<{ item: RemoteAnalysisJob }>(
       `/api/observations/${id}/analyze`,
       { method: "POST" },
     ),
+  analysisJob: (id: string) =>
+    request<{ item: RemoteAnalysisJob }>(`/api/analysis-jobs/${id}`),
   decideAnalysis: (
     id: string,
     decision: "adopted" | "abandoned",
@@ -240,11 +244,7 @@ export const remoteApi = {
   evidenceTicket: (observationId: string, file: File) =>
     request<{
       evidenceId: string;
-      path: string;
-      token: string;
-      bucket: string;
-      supabaseUrl: string;
-      publishableKey: string;
+      uploadPath: string;
     }>(`/api/observations/${observationId}/evidence-ticket`, {
       method: "POST",
       body: body({

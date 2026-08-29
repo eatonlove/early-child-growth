@@ -120,6 +120,41 @@ describe("QwenClient", () => {
     expect(result).toEqual({ answer: "单份视频分析" });
   });
 
+  it("repairs an empty optional teacher-question list without inventing evidence", async () => {
+    const fetcher = vi.fn(async () => new Response(JSON.stringify({
+      choices: [{ message: { content: JSON.stringify({
+        facts: ["幼儿把两块木板并排放置"],
+        responsePlans: [{ experienceSupport: { suggestedQuestions: [] } }],
+      }) } }],
+    }), { status: 200, headers: { "Content-Type": "application/json" } }));
+    const client = new QwenClient({
+      apiKey: "sk-test-only",
+      baseUrl: "https://dashscope.aliyuncs.com/compatible-mode/v1",
+      timeoutMs: 5000,
+      retries: 0,
+      fetcher: fetcher as typeof fetch,
+    });
+    const validator = z.object({
+      facts: z.array(z.string()).min(1),
+      responsePlans: z.array(z.object({
+        experienceSupport: z.object({ suggestedQuestions: z.array(z.string()).min(1) }).strict(),
+      }).strict()).min(1),
+    }).strict();
+
+    const result = await client.structuredCompletion({
+      model: "qwen3.7-plus",
+      messages: [{ role: "user", content: "生成观察分析" }],
+      schemaName: "observation_analysis_test",
+      jsonSchema: {},
+      validator,
+    });
+
+    expect(result.facts).toEqual(["幼儿把两块木板并排放置"]);
+    expect(result.responsePlans[0]?.experienceSupport.suggestedQuestions).toEqual([
+      "你接下来想先试哪一种办法？为什么？",
+    ]);
+  });
+
   it("rejects Token Plan keys for backend automation", () => {
     expect(() => new QwenClient({
       apiKey: "sk-sp-test-only",

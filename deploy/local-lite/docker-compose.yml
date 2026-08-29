@@ -119,7 +119,7 @@ services:
       timeout: 3s
       retries: 20
       start_period: 5s
-    mem_limit: 512m
+    mem_limit: 768m
     cpus: 0.75
     pids_limit: 160
 

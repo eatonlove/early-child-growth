@@ -5,9 +5,11 @@ import type { KnowledgeRow, MediaForAnalysis, ProfessionalMemoryForAnalysis } fr
 import { createAIProvider } from "../ai/provider.js";
 import { QwenRequestError } from "../ai/qianwen-client.js";
 import { resolveTenantPrompt } from "../ai/prompt-config.js";
+import { enqueueAnalysisTask } from "../analysis-task-queue.js";
 import { effectiveAnalysisResult, flattenAnalysisClaims, legacyClaimDecision, claimDecisions } from "../analysis-claims.js";
 import { config } from "../config.js";
 import { ApiError, audit, authenticate } from "../http.js";
+import { optimizeMediaLosslessly } from "../media-optimizer.js";
 import { mediaStorage } from "../runtime/media-storage.js";
 import { serviceClient } from "../supabase.js";
 
@@ -141,7 +143,7 @@ export async function observationRoutes(app: FastifyInstance) {
     const { id } = z.object({ id: uuid }).parse(request.params);
     const { data: observation, error } = await auth.data.from("observations").select("*").eq("id", id).single();
     if (error || !observation) throw new ApiError(404, "OBSERVATION_NOT_FOUND", "观察记录不存在或无权访问");
-    const [{ data: evidence, error: evidenceError }, { data: analyses, error: analysisError }, { data: subjectRows, error: subjectError }, { data: responsePlans, error: responseError }, { data: observers, error: observerError }] = await Promise.all([
+    const [{ data: evidence, error: evidenceError }, { data: analyses, error: analysisError }, { data: subjectRows, error: subjectError }, { data: responsePlans, error: responseError }, { data: observers, error: observerError }, { data: analysisJobs, error: analysisJobError }] = await Promise.all([
       auth.data.from("evidence_assets").select("*").eq("observation_id", id).order("created_at"),
       auth.data.from("analysis_runs").select("*").eq("observation_id", id).order("generated_at", { ascending: false }),
       auth.data.from("observation_subjects").select("*").eq("observation_id", id).order("role"),
@@ -149,8 +151,9 @@ export async function observationRoutes(app: FastifyInstance) {
       observation.observer_ids?.length
         ? serviceClient.schema(config.SUPABASE_SCHEMA).from("profiles").select("user_id, display_name, role").eq("tenant_id", auth.tenantId).in("user_id", observation.observer_ids)
         : Promise.resolve({ data: [], error: null }),
+      auth.data.from("analysis_jobs").select("*").eq("observation_id", id).order("created_at", { ascending: false }).limit(1),
     ]);
-    if (evidenceError || analysisError || subjectError || responseError || observerError) throw new ApiError(500, "OBSERVATION_DETAIL_FAILED", "观察证据、参与幼儿、观察者或分析结果读取失败");
+    if (evidenceError || analysisError || subjectError || responseError || observerError || analysisJobError) throw new ApiError(500, "OBSERVATION_DETAIL_FAILED", "观察证据、参与幼儿、观察者或分析结果读取失败");
     const subjectChildIds = (subjectRows ?? []).map((item) => item.child_id);
     const { data: subjectChildren, error: childError } = subjectChildIds.length
       ? await auth.data.from("children").select("id, display_name").in("id", subjectChildIds)
@@ -187,7 +190,17 @@ export async function observationRoutes(app: FastifyInstance) {
       subjects: (subjectRows ?? []).map((item) => ({ ...item, display_name: childMap.get(item.child_id) ?? "园内幼儿" })),
       responsePlans: responsePlans ?? [],
       observers: (observers ?? []).map((item) => ({ userId: item.user_id, displayName: item.display_name, role: item.role })),
+      analysisJob: analysisJobs?.[0] ?? null,
     };
+  });
+
+  app.get("/api/analysis-jobs/:id", async (request) => {
+    const auth = await authenticate(request);
+    const { id } = z.object({ id: uuid }).parse(request.params);
+    const { data, error } = await auth.data.from("analysis_jobs").select("*").eq("id", id).maybeSingle();
+    if (error) throw new ApiError(500, "ANALYSIS_JOB_READ_FAILED", "AI分析任务读取失败");
+    if (!data) throw new ApiError(404, "ANALYSIS_JOB_NOT_FOUND", "AI分析任务不存在或无权访问");
+    return { item: data };
   });
 
   app.post("/api/observations", async (request, reply) => {
@@ -290,8 +303,6 @@ export async function observationRoutes(app: FastifyInstance) {
     if (child?.guardian_consent_status === "withdrawn") throw new ApiError(422, "CONSENT_WITHDRAWN", "监护人已撤回授权，不能新增媒体证据");
 
     const path = `${auth.tenantId}/${observation.classroom_id}/${observation.child_id}/${observation.id}/${randomUUID()}.${media.ext}`;
-    const { data: ticket, error: ticketError } = await mediaStorage.createSignedUploadUrl(path);
-    if (ticketError || !ticket) throw new ApiError(500, "UPLOAD_TICKET_FAILED", "上传凭证创建失败");
     const { data: evidence, error: evidenceError } = await auth.data.from("evidence_assets").insert({
       tenant_id: auth.tenantId,
       classroom_id: observation.classroom_id,
@@ -302,12 +313,14 @@ export async function observationRoutes(app: FastifyInstance) {
       file_name: input.fileName,
       mime_type: input.mimeType,
       size_bytes: input.sizeBytes,
+      original_size_bytes: input.sizeBytes,
+      optimization_status: "pending",
       upload_status: "pending",
       retention_until: new Date(Date.now() + 180 * 86400000).toISOString().slice(0, 10),
       created_by: auth.userId,
     }).select().single();
     if (evidenceError) throw new ApiError(500, "EVIDENCE_CREATE_FAILED", "证据元数据创建失败");
-    return reply.status(201).send({ evidenceId: evidence.id, path: ticket.path, token: ticket.token, bucket: config.SUPABASE_STORAGE_BUCKET, supabaseUrl: config.SUPABASE_URL, publishableKey: config.SUPABASE_PUBLISHABLE_KEY });
+    return reply.status(201).send({ evidenceId: evidence.id, uploadPath: `/api/evidence/${evidence.id}/upload` });
   });
 
   app.post("/api/evidence/:id/complete", async (request) => {
@@ -321,16 +334,50 @@ export async function observationRoutes(app: FastifyInstance) {
     const fileName = evidence.storage_path.slice(slash + 1);
     const { data: objects, error: listError } = await mediaStorage.list(folder, { search: fileName, limit: 2 });
     if (listError || !objects?.some((item) => item.name === fileName)) throw new ApiError(409, "UPLOAD_NOT_FOUND", "尚未检测到已上传文件");
+    const { data: originalBody, error: downloadError } = await mediaStorage.download(evidence.storage_path);
+    if (downloadError || !originalBody) throw new ApiError(503, "MEDIA_OPTIMIZATION_READ_FAILED", "媒体已上传，但暂时无法进入无损优化");
+    const expectedSize = evidence.original_size_bytes ?? evidence.size_bytes;
+    if (expectedSize && originalBody.length !== expectedSize) {
+      await mediaStorage.remove(evidence.storage_path);
+      await serviceClient.schema(config.SUPABASE_SCHEMA).from("evidence_assets").update({
+        upload_status: "failed", optimization_status: "failed", optimization_error: "上传文件大小与凭证不一致",
+      }).eq("id", id).eq("tenant_id", auth.tenantId);
+      throw new ApiError(422, "MEDIA_SIZE_MISMATCH", "上传文件不完整或与凭证不一致，原文件未保留");
+    }
+    let optimized;
+    try {
+      optimized = await optimizeMediaLosslessly(originalBody, evidence.mime_type);
+    } catch (reason) {
+      await mediaStorage.remove(evidence.storage_path);
+      await serviceClient.schema(config.SUPABASE_SCHEMA).from("evidence_assets").update({
+        upload_status: "failed", optimization_status: "failed",
+        optimization_error: reason instanceof Error ? reason.message.slice(0, 1000) : "媒体优化失败",
+      }).eq("id", id).eq("tenant_id", auth.tenantId);
+      throw new ApiError(422, "MEDIA_OPTIMIZATION_FAILED", "媒体无损优化失败，原文件未保留，请检查文件是否完整后重新上传");
+    }
+    const { error: optimizedUploadError } = await mediaStorage.upload(evidence.storage_path, optimized.body, {
+      contentType: optimized.mimeType, cacheControl: "3600", upsert: true,
+    });
+    if (optimizedUploadError) throw new ApiError(503, "MEDIA_OPTIMIZATION_SAVE_FAILED", "媒体无损优化已完成，但优化文件暂时无法保存");
     const { data: updated, error } = await serviceClient
       .schema(config.SUPABASE_SCHEMA)
       .from("evidence_assets")
-      .update({ upload_status: "ready" })
+      .update({
+        upload_status: "ready", size_bytes: optimized.optimizedSizeBytes,
+        original_size_bytes: optimized.originalSizeBytes, optimized_size_bytes: optimized.optimizedSizeBytes,
+        optimization_status: optimized.status, optimization_mode: optimized.mode,
+        optimization_tool: optimized.tool, optimization_error: null, optimized_at: new Date().toISOString(),
+      })
       .eq("id", id)
       .eq("tenant_id", auth.tenantId)
       .select()
       .single();
     if (error) throw new ApiError(500, "EVIDENCE_CONFIRM_FAILED", "证据确认失败");
-    await audit(auth, "evidence.uploaded", "evidence", id, { observationId: evidence.observation_id, mimeType: evidence.mime_type, sizeBytes: evidence.size_bytes });
+    await audit(auth, "evidence.uploaded", "evidence", id, {
+      observationId: evidence.observation_id, mimeType: evidence.mime_type,
+      originalSizeBytes: optimized.originalSizeBytes, optimizedSizeBytes: optimized.optimizedSizeBytes,
+      optimizationMode: optimized.mode, uploadChannel: "legacy-signed-complete",
+    });
     return { item: updated };
   });
 
@@ -378,8 +425,20 @@ export async function observationRoutes(app: FastifyInstance) {
         throw new ApiError(422, "CONSENT_WITHDRAWN", "监护人已撤回授权，不能新增媒体证据");
       }
 
-      const { error: uploadError } = await mediaStorage.upload(evidence.storage_path, request.body, {
-          contentType: evidence.mime_type,
+      let optimized;
+      try {
+        optimized = await optimizeMediaLosslessly(request.body, evidence.mime_type);
+      } catch (reason) {
+        await serviceClient.schema(config.SUPABASE_SCHEMA).from("evidence_assets").update({
+          upload_status: "failed", optimization_status: "failed",
+          optimization_error: reason instanceof Error ? reason.message.slice(0, 1000) : "媒体优化失败",
+        }).eq("id", id).eq("tenant_id", auth.tenantId);
+        request.log.warn({ err: reason, evidenceId: id, mimeType: evidence.mime_type }, "lossless media optimization failed");
+        throw new ApiError(422, "MEDIA_OPTIMIZATION_FAILED", "媒体无损优化失败，原文件未写入存储，请检查文件是否完整后重新上传");
+      }
+
+      const { error: uploadError } = await mediaStorage.upload(evidence.storage_path, optimized.body, {
+          contentType: optimized.mimeType,
           cacheControl: "3600",
           upsert: false,
         });
@@ -391,7 +450,12 @@ export async function observationRoutes(app: FastifyInstance) {
       const { data: updated, error: updateError } = await serviceClient
         .schema(config.SUPABASE_SCHEMA)
         .from("evidence_assets")
-        .update({ upload_status: "ready" })
+        .update({
+          upload_status: "ready", size_bytes: optimized.optimizedSizeBytes,
+          original_size_bytes: optimized.originalSizeBytes, optimized_size_bytes: optimized.optimizedSizeBytes,
+          optimization_status: optimized.status, optimization_mode: optimized.mode,
+          optimization_tool: optimized.tool, optimization_error: null, optimized_at: new Date().toISOString(),
+        })
         .eq("id", id)
         .eq("tenant_id", auth.tenantId)
         .select()
@@ -403,7 +467,9 @@ export async function observationRoutes(app: FastifyInstance) {
       await audit(auth, "evidence.uploaded", "evidence", id, {
         observationId: evidence.observation_id,
         mimeType: evidence.mime_type,
-        sizeBytes: evidence.size_bytes,
+        originalSizeBytes: optimized.originalSizeBytes,
+        optimizedSizeBytes: optimized.optimizedSizeBytes,
+        optimizationMode: optimized.mode,
         uploadChannel: "api-proxy",
       });
       return { item: updated };
@@ -428,21 +494,56 @@ export async function observationRoutes(app: FastifyInstance) {
     if (observationError) throw new ApiError(500, "OBSERVATION_LOOKUP_FAILED", "观察记录读取失败");
     if (!observation) throw new ApiError(404, "OBSERVATION_NOT_FOUND", "观察记录不存在或无权访问");
     if (observation.status === "draft") throw new ApiError(409, "OBSERVATION_NOT_SUBMITTED", "请先提交教师观察、识别和应答");
+    const schema = serviceClient.schema(config.SUPABASE_SCHEMA);
+    const { data: activeJob, error: activeJobError } = await auth.data.from("analysis_jobs").select("*")
+      .eq("observation_id", id).in("status", ["queued", "processing"]).order("created_at", { ascending: false }).limit(1).maybeSingle();
+    if (activeJobError) throw new ApiError(500, "ANALYSIS_JOB_READ_FAILED", "AI分析任务状态读取失败");
+    if (activeJob) return reply.status(202).send({ item: activeJob });
+    const { data: job, error: jobError } = await schema.from("analysis_jobs").insert({
+      tenant_id: auth.tenantId,
+      classroom_id: observation.classroom_id,
+      observation_id: observation.id,
+      requested_by: auth.userId,
+      status: "queued",
+      stage: "queued",
+      progress: 0,
+    }).select().single();
+    if (jobError || !job) {
+      if (jobError?.code === "23505") {
+        const { data: racedJob } = await auth.data.from("analysis_jobs").select("*")
+          .eq("observation_id", id).in("status", ["queued", "processing"]).order("created_at", { ascending: false }).limit(1).maybeSingle();
+        if (racedJob) return reply.status(202).send({ item: racedJob });
+      }
+      throw new ApiError(500, "ANALYSIS_JOB_CREATE_FAILED", "AI分析任务创建失败");
+    }
+    await audit(auth, "analysis.queued", "analysis_job", job.id, { observationId: id });
+    reply.status(202).send({ item: job });
+
+    const updateJob = async (value: Record<string, unknown>) => {
+      const { error } = await schema.from("analysis_jobs").update({ ...value, heartbeat_at: new Date().toISOString() })
+        .eq("id", job.id).eq("tenant_id", auth.tenantId);
+      if (error) request.log.warn({ dbError: error, analysisJobId: job.id }, "analysis job progress update failed");
+    };
+    enqueueAnalysisTask(async () => {
+      await updateJob({ status: "processing", stage: "preparing", progress: 3, attempt_count: 1, started_at: new Date().toISOString() });
+      try {
     const [{ data: classroom, error: classroomError }, { data: evidence, error: evidenceError }, { data: subjectRows, error: subjectError }, { data: professionalMemories, error: memoryError }, { data: frameworkRows, error: frameworkError }] = await Promise.all([
-      auth.data.from("classrooms").select("id, grade").eq("id", observation.classroom_id).single(),
-      auth.data.from("evidence_assets").select("id, evidence_type, transcript, event_segments, upload_status, storage_path, mime_type").eq("observation_id", id).eq("upload_status", "ready"),
-      auth.data.from("observation_subjects").select("*").eq("observation_id", id).order("role"),
-      auth.data.from("professional_memories").select("id, memory_type, summary, retrieval_text, applicability, quality_score").eq("status", "active").order("quality_score", { ascending: false }).limit(24),
-      auth.data.from("analysis_framework_versions").select("id, framework_type, name, version, description, dimensions").eq("status", "active").eq("is_default", true).order("framework_type"),
+      schema.from("classrooms").select("id, grade").eq("tenant_id", auth.tenantId).eq("id", observation.classroom_id).single(),
+      schema.from("evidence_assets").select("id, evidence_type, transcript, event_segments, upload_status, storage_path, mime_type").eq("tenant_id", auth.tenantId).eq("observation_id", id).eq("upload_status", "ready"),
+      schema.from("observation_subjects").select("*").eq("tenant_id", auth.tenantId).eq("observation_id", id).order("role"),
+      schema.from("professional_memories").select("id, memory_type, summary, retrieval_text, applicability, quality_score").eq("tenant_id", auth.tenantId).eq("status", "active").order("quality_score", { ascending: false }).limit(24),
+      schema.from("analysis_framework_versions").select("id, framework_type, name, version, description, dimensions").eq("tenant_id", auth.tenantId).eq("status", "active").eq("is_default", true).order("framework_type"),
     ]);
     if (classroomError || evidenceError || subjectError || memoryError || frameworkError) throw new ApiError(500, "ANALYSIS_CONTEXT_READ_FAILED", "AI分析上下文读取失败");
     if (!classroom || !subjectRows?.length) throw new ApiError(422, "ANALYSIS_CONTEXT_MISSING", "班级或观察幼儿信息不完整");
     const subjectIds = subjectRows.map((item) => item.child_id);
-    const { data: children, error: childError } = await auth.data.from("children").select("id, display_name, birth_month, guardian_consent_status").in("id", subjectIds);
+    const { data: children, error: childError } = await schema.from("children").select("id, display_name, birth_month, guardian_consent_status").eq("tenant_id", auth.tenantId).in("id", subjectIds);
     if (childError || (children ?? []).length !== subjectIds.length) throw new ApiError(500, "ANALYSIS_CHILDREN_READ_FAILED", "观察幼儿信息读取失败");
-    const { data: knowledge, error: knowledgeError } = await auth.data.from("knowledge_cards").select("*").eq("grade", classroom.grade).eq("status", "active").limit(200);
+    const { data: knowledge, error: knowledgeError } = await schema.from("knowledge_cards").select("*")
+      .or(`tenant_id.eq.${auth.tenantId},tenant_id.is.null`)
+      .eq("grade", classroom.grade).eq("status", "active").limit(200);
     if (knowledgeError || !knowledge?.length) throw new ApiError(409, "KNOWLEDGE_NOT_READY", "当前班级年龄段知识库尚未初始化");
-    const schema = serviceClient.schema(config.SUPABASE_SCHEMA);
+    await updateJob({ stage: "context_ready", progress: 18 });
     const analysisPrompt = await resolveTenantPrompt(auth.tenantId, "observation_analysis");
     const createdRunIds: string[] = [];
     const analyses: any[] = [];
@@ -453,24 +554,28 @@ export async function observationRoutes(app: FastifyInstance) {
       await schema.from("analysis_runs").delete().in("id", createdRunIds).eq("tenant_id", auth.tenantId);
     };
     try {
-      for (const subject of subjectRows) {
+      for (const [subjectIndex, subject] of subjectRows.entries()) {
         const child = (children ?? []).find((item) => item.id === subject.child_id)!;
-        const { data: historySubjects, error: historySubjectError } = await auth.data.from("observation_subjects").select("observation_id").eq("child_id", child.id).neq("observation_id", id).order("created_at", { ascending: false }).limit(24);
+        await updateJob({
+          stage: "analyzing_subject",
+          progress: Math.round(22 + (subjectIndex / subjectRows.length) * 62),
+        });
+        const { data: historySubjects, error: historySubjectError } = await schema.from("observation_subjects").select("observation_id").eq("tenant_id", auth.tenantId).eq("child_id", child.id).neq("observation_id", id).order("created_at", { ascending: false }).limit(24);
         if (historySubjectError) throw new ApiError(500, "ANALYSIS_HISTORY_READ_FAILED", "历史观察关联读取失败");
         const historyIds = (historySubjects ?? []).map((item) => item.observation_id);
         const { data: historicalObservations, error: historyError } = historyIds.length
-          ? await auth.data.from("observations").select("id, occurred_at, scene, theme, teacher_observation, child_quote, teacher_identification, teacher_response")
-            .in("id", historyIds).eq("status", "adopted").lt("occurred_at", observation.occurred_at).order("occurred_at", { ascending: true }).limit(12)
+          ? await schema.from("observations").select("id, occurred_at, scene, theme, teacher_observation, child_quote, teacher_identification, teacher_response")
+            .eq("tenant_id", auth.tenantId).in("id", historyIds).eq("status", "adopted").lt("occurred_at", observation.occurred_at).order("occurred_at", { ascending: true }).limit(12)
           : { data: [], error: null };
         if (historyError) throw new ApiError(500, "ANALYSIS_HISTORY_READ_FAILED", "历史观察证据读取失败");
         const historicalIds = (historicalObservations ?? []).map((item) => item.id);
         const { data: historicalAnalyses, error: historicalAnalysisError } = historicalIds.length
-          ? await auth.data.from("analysis_runs").select("*").in("observation_id", historicalIds).eq("child_id", child.id).eq("decision", "adopted").order("generated_at", { ascending: false })
+          ? await schema.from("analysis_runs").select("*").eq("tenant_id", auth.tenantId).in("observation_id", historicalIds).eq("child_id", child.id).eq("decision", "adopted").order("generated_at", { ascending: false })
           : { data: [], error: null };
         if (historicalAnalysisError) throw new ApiError(500, "ANALYSIS_HISTORY_READ_FAILED", "历史分析证据读取失败");
         const historicalAnalysisIds = (historicalAnalyses ?? []).map((item) => item.id);
         const { data: historicalReviews, error: historicalReviewError } = historicalAnalysisIds.length
-          ? await auth.data.from("analysis_claim_reviews").select("*").in("analysis_run_id", historicalAnalysisIds)
+          ? await schema.from("analysis_claim_reviews").select("*").eq("tenant_id", auth.tenantId).in("analysis_run_id", historicalAnalysisIds)
           : { data: [], error: null };
         if (historicalReviewError) throw new ApiError(500, "ANALYSIS_HISTORY_REVIEW_READ_FAILED", "历史审核结论读取失败");
         const latestAnalysisByObservation = new Map<string, any>();
@@ -545,6 +650,7 @@ export async function observationRoutes(app: FastifyInstance) {
         const { data: analysis, error } = await schema.from("analysis_runs").insert({
           tenant_id: auth.tenantId, classroom_id: observation.classroom_id, child_id: child.id,
           observation_id: observation.id, provider: generated.provider, model: generated.model,
+          analysis_job_id: job.id,
           prompt_version: generated.promptVersion, knowledge_version: "guide-cn-2012.v1.0.0",
           input_snapshot: {
             observation: observationForChild, subject: { role: subject.role, contextualFeature: subject.contextual_feature, evidenceAnchors: subject.evidence_anchors },
@@ -580,6 +686,11 @@ export async function observationRoutes(app: FastifyInstance) {
         ]);
         if (claimError || responseError) throw new ApiError(500, "AI_REVIEW_ITEMS_SAVE_FAILED", `${child.display_name}的审核项或应答方案初始化失败`);
         analyses.push({ ...analysis, subject: { ...subject, display_name: child.display_name } });
+        await updateJob({
+          stage: "saving_subject",
+          progress: Math.round(22 + ((subjectIndex + 1) / subjectRows.length) * 62),
+          analysis_run_ids: createdRunIds,
+        });
       }
     } catch (reason) {
       await cleanupCreatedAnalyses();
@@ -600,14 +711,36 @@ export async function observationRoutes(app: FastifyInstance) {
       await cleanupCreatedAnalyses();
       throw new ApiError(500, "AI_ANALYSIS_STATE_FAILED", "AI分析状态保存失败，结果已回滚");
     }
-    await audit(auth, "analysis.generated", "observation", observation.id, {
-      observationId: observation.id,
-      childIds: subjectIds,
-      analysisRunIds: createdRunIds,
-      analysisCount: analyses.length,
-    });
+    try {
+      await audit(auth, "analysis.generated", "observation", observation.id, {
+        observationId: observation.id,
+        childIds: subjectIds,
+        analysisRunIds: createdRunIds,
+        analysisCount: analyses.length,
+      });
+    } catch (reason) {
+      await cleanupCreatedAnalyses();
+      await schema.from("observations").update({ status: observation.status })
+        .eq("id", observation.id).eq("tenant_id", auth.tenantId);
+      throw reason;
+    }
     const notice = [...notices].join("；");
-    return reply.status(201).send({ item: analyses[0], items: analyses, aiNotice: notice, simulationNotice: notice });
+        await updateJob({
+          status: "completed", stage: "completed", progress: 100,
+          analysis_run_ids: createdRunIds, ai_notice: notice, completed_at: new Date().toISOString(),
+        });
+      } catch (reason) {
+        const error = reason instanceof ApiError
+          ? reason
+          : new ApiError(502, "AI_ANALYSIS_FAILED", reason instanceof Error ? reason.message : "AI分析暂时不可用");
+        request.log.error({ err: reason, observationId: id, analysisJobId: job.id }, "background AI analysis job failed");
+        await updateJob({
+          status: "failed", stage: "failed", progress: 100,
+          error_code: error.code, error_message: error.message, completed_at: new Date().toISOString(),
+        });
+      }
+    });
+    return reply;
   });
 
   app.post("/api/analyses/:id/decision", async (request) => {

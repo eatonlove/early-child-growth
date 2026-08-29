@@ -10,7 +10,7 @@ import type {
   RemoteCurriculumPlan, RemoteCurriculumTemplate, RemoteCurriculumWorkspace, RemoteEvidence,
   RemoteCurriculumResourcePackage,
   RemoteObservation, RemoteObservationImport, RemoteObservationSubject, RemoteObservationTemplate,
-  RemoteObserver, RemoteProfessionalMemory, RemoteResponsePlan, RemoteUser,
+  RemoteObserver, RemoteProfessionalMemory, RemoteResponsePlan, RemoteUser, RemoteAnalysisJob,
 } from "./types";
 
 const showError = (reason: unknown) => reason instanceof RemoteApiError ? reason.message : "操作失败，请稍后重试";
@@ -50,6 +50,24 @@ type ObservationDetail = {
   subjects: RemoteObservationSubject[];
   responsePlans: RemoteResponsePlan[];
   observers: RemoteObserver[];
+  analysisJob: RemoteAnalysisJob | null;
+};
+
+const analysisStageLabel: Record<RemoteAnalysisJob["stage"], string> = {
+  queued: "等待后台分析",
+  preparing: "准备观察与儿童证据",
+  context_ready: "读取年龄段知识库与历史观察",
+  analyzing_subject: "逐幼儿分析文字、图片与视频",
+  saving_subject: "保存证据链和应答建议",
+  completed: "分析完成",
+  failed: "分析失败",
+};
+
+const formatBytes = (value?: number | null) => {
+  if (value == null) return "";
+  if (value < 1024) return `${value} B`;
+  if (value < 1024 * 1024) return `${(value / 1024).toFixed(1)} KB`;
+  return `${(value / 1024 / 1024).toFixed(1)} MB`;
 };
 
 const analysisSections = [
@@ -291,7 +309,6 @@ export function RemoteObservationV32Page({ user }: { user: RemoteUser }) {
   const [imports, setImports] = useState<RemoteObservationImport[]>([]);
   const [childSearch, setChildSearch] = useState("");
   const [archiveFilter, setArchiveFilter] = useState({ classroomId: "", academicYear: "", semester: "", year: "", month: "" });
-  const [analysisProgress, setAnalysisProgress] = useState<{ step: number; elapsed: number } | null>(null);
   const [busy, setBusy] = useState(false);
   const [loaded, setLoaded] = useState(false);
   const [error, setError] = useState("");
@@ -317,6 +334,27 @@ export function RemoteObservationV32Page({ user }: { user: RemoteUser }) {
   const refreshDetail = async () => { if (!selected) return; const result = await remoteApi.observation(selected); setDetail(result); setAnalysisChildId((current) => result.subjects.some((item) => item.child_id === current) ? current : result.subjects[0]?.child_id || ""); };
   useEffect(() => { load().catch((reason) => setError(showError(reason))).finally(() => setLoaded(true)); }, []);
   useEffect(() => { if (selected) refreshDetail().catch((reason) => setError(showError(reason))); else setDetail(null); }, [selected]);
+  useEffect(() => {
+    const job = detail?.analysisJob;
+    if (!job || !["queued", "processing"].includes(job.status)) return;
+    let cancelled = false;
+    const poll = async () => {
+      try {
+        const result = await remoteApi.analysisJob(job.id);
+        if (cancelled) return;
+        setDetail((current) => current ? { ...current, analysisJob: result.item } : current);
+        if (result.item.status === "completed") {
+          await Promise.all([refreshDetail(), load()]);
+        } else if (result.item.status === "failed") {
+          setError(result.item.error_message || "AI分析失败，请稍后重试");
+        }
+      } catch (reason) {
+        if (!cancelled) setError(showError(reason));
+      }
+    };
+    const timer = window.setInterval(() => void poll(), 2500);
+    return () => { cancelled = true; window.clearInterval(timer); };
+  }, [detail?.analysisJob?.id, detail?.analysisJob?.status]);
   useEffect(() => {
     if (!archiveClassrooms.some((item) => item.id === archiveFilter.classroomId)) setArchiveFilter((current) => ({ ...current, classroomId: "" }));
   }, [archiveFilter.academicYear, archiveFilter.semester, classrooms]);
@@ -383,20 +421,14 @@ export function RemoteObservationV32Page({ user }: { user: RemoteUser }) {
   });
   const runAnalysis = async () => {
     if (!detail || busy) return;
-    setBusy(true); setError(""); setAnalysisProgress({ step: 0, elapsed: 0 });
-    const startedAt = Date.now();
-    const timer = window.setInterval(() => {
-      const elapsed = Math.floor((Date.now() - startedAt) / 1000);
-      const step = elapsed < 5 ? 0 : elapsed < 20 ? 1 : elapsed < 50 ? 2 : elapsed < 100 ? 3 : 4;
-      setAnalysisProgress({ step, elapsed });
-    }, 1000);
+    setBusy(true); setError("");
     try {
-      await remoteApi.analyze(detail.item.id);
-      await Promise.all([refreshDetail(), load()]);
+      const result = await remoteApi.analyze(detail.item.id);
+      setDetail((current) => current ? { ...current, analysisJob: result.item } : current);
     } catch (reason) {
       setError(showError(reason));
     } finally {
-      window.clearInterval(timer); setAnalysisProgress(null); setBusy(false);
+      setBusy(false);
     }
   };
   return <div className="page remote-page evo-page">
@@ -419,9 +451,10 @@ export function RemoteObservationV32Page({ user }: { user: RemoteUser }) {
       {!loaded ? <LoadingState /> : detail ? <div className="detail-stack">
         <Panel><div className="remote-detail-head"><div><div className="knowledge-badges"><Badge tone="green">{detail.item.scene}</Badge><Badge tone="blue">{stageLabel[detail.item.organization_stage]}</Badge><Badge tone={tone(detail.item.status)}>{statusLabel[detail.item.status]}</Badge></div><h2>{detail.item.title}</h2><p>{detail.item.theme} · 观察教师：{detail.item.observer_name_snapshot || detail.observers.map((item) => item.displayName).join("、") || "未填写"}{detail.observers.length ? ` · 协同：${detail.observers.map((item) => item.displayName).join("、")}` : ""}</p></div><div className="page-action-row"><button className="btn btn-secondary" disabled={busy} onClick={() => exportObservation("teacher")}><Download />导出教师原稿</button><button className="btn btn-secondary" disabled={busy || detail.item.status !== "adopted"} title={detail.item.status !== "adopted" ? "完成所有幼儿AI确认后可导出专业版" : ""} onClick={() => exportObservation("professional")}><FileText />导出专业版</button></div></div><div className="evo-subject-chips">{detail.subjects.map((subject) => <button className={analysisChildId === subject.child_id ? "selected" : ""} key={subject.id} onClick={() => setAnalysisChildId(subject.child_id)}><strong>{subject.display_name}</strong><small>{subject.role === "primary" ? "主要观察" : subject.role === "incidental" ? "偶发参与" : "共同参与"} · {subject.contextual_feature || "未补充本次特征"}</small></button>)}{detail.item.unlisted_participant_count ? <span>另有{detail.item.unlisted_participant_count}名未列名参与者</span> : null}</div></Panel>
         <div className="remote-three-layers"><Panel><Badge tone="blue">观察</Badge><p>{detail.item.teacher_observation}</p></Panel><Panel><Badge tone="green">识别</Badge><p>{detail.item.teacher_identification}</p></Panel><Panel><Badge tone="orange">教师原始应答</Badge><p>{detail.item.teacher_response.strategy}</p><small>复察：{detail.item.teacher_response.nextObservationFocus}</small></Panel></div>
-        {detail.evidence.length > 0 && <Panel title="照片、视频与作品证据"><div className="remote-file-list">{detail.evidence.map((item) => <button className="btn btn-secondary" key={item.id} disabled={item.upload_status !== "ready"} onClick={() => void withBusy(async () => { const result = await remoteApi.evidenceDownload(item.id); window.open(result.url, "_blank", "noopener,noreferrer"); })}><FileVideo />{item.file_name || "未命名证据"}</button>)}</div></Panel>}
-        {(!latest || latest.decision !== "pending") && <Panel className="remote-ai-launch"><Sparkles /><div><Badge tone="purple">按幼儿独立分析</Badge><h2>为{detail.subjects.length}名幼儿分别生成专业第二视角</h2><p>会读取该幼儿已采用的历史观察，并结合可归属的文字、图片或视频证据生成差异化应答；个体证据不足时会明确提示。</p></div><button className="btn btn-primary" disabled={busy} onClick={() => void runAnalysis()}><BrainCircuit />{latest ? "生成新版本" : "运行AI分析"}</button></Panel>}
-        {analysisProgress && <Panel className="ai-progress-panel"><div className="ai-progress-heading"><div><Badge tone="purple">AI正在分析</Badge><strong>{["准备观察与儿童证据", "读取图片或视频画面", "匹配年龄段知识与历史观察", `逐幼儿生成识别和应答（共${detail.subjects.length}名）`, "校验证据链与安全边界"][analysisProgress.step]}</strong></div><span>{analysisProgress.elapsed}秒</span></div><div className="ai-progress-track"><i style={{ width: `${Math.min(94, 12 + analysisProgress.step * 20 + analysisProgress.elapsed / 12)}%` }} /></div><p>媒体和多幼儿分析可能需要数分钟，请保持当前页面开启，系统完成前不要重复提交。</p></Panel>}
+        {detail.evidence.length > 0 && <Panel title="照片、视频与作品证据"><div className="remote-file-list">{detail.evidence.map((item) => <button className="btn btn-secondary evidence-file-button" key={item.id} disabled={item.upload_status !== "ready"} onClick={() => void withBusy(async () => { const result = await remoteApi.evidenceDownload(item.id); window.open(result.url, "_blank", "noopener,noreferrer"); })}><FileVideo /><span><strong>{item.file_name || "未命名证据"}</strong><small>{item.optimization_status === "optimized" ? `无损优化 ${formatBytes(item.original_size_bytes)} → ${formatBytes(item.optimized_size_bytes)}` : item.optimization_status === "not_applicable" ? "原样私有存储" : item.optimization_status === "legacy" ? "历史媒体" : item.optimization_status === "failed" ? "无损优化失败" : "等待处理"}</small></span></button>)}</div></Panel>}
+        {(!latest || latest.decision !== "pending") && !["queued", "processing"].includes(detail.analysisJob?.status ?? "") && <Panel className="remote-ai-launch"><Sparkles /><div><Badge tone="purple">按幼儿独立分析</Badge><h2>为{detail.subjects.length}名幼儿分别生成专业第二视角</h2><p>会读取该幼儿已采用的历史观察，并结合可归属的文字、图片或视频证据生成差异化应答；个体证据不足时会明确提示。</p></div><button className="btn btn-primary" disabled={busy} onClick={() => void runAnalysis()}><BrainCircuit />{latest ? "生成新版本" : "运行AI分析"}</button></Panel>}
+        {detail.analysisJob && ["queued", "processing"].includes(detail.analysisJob.status) && <Panel className="ai-progress-panel"><div className="ai-progress-heading"><div><Badge tone="purple">后台AI分析</Badge><strong>{analysisStageLabel[detail.analysisJob.stage]}</strong></div><span>{detail.analysisJob.progress}%</span></div><div className="ai-progress-track"><i style={{ width: `${detail.analysisJob.progress}%` }} /></div><p>任务已保存到后台，可以离开或关闭本页面；再次进入后会继续显示真实进度。</p></Panel>}
+        {detail.analysisJob?.status === "failed" && <Panel className="ai-progress-panel ai-progress-failed"><div className="ai-progress-heading"><div><Badge tone="red">上次分析失败</Badge><strong>{detail.analysisJob.error_message || "AI分析暂时不可用"}</strong></div></div><p>失败原因已保留，可直接重新发起，不会把未完成内容写入正式分析。</p></Panel>}
         {latest && <SimpleAnalysisBoard analysis={latest} observation={detail.item} childName={childMap.get(analysisChildId)?.display_name ?? "幼儿"} responsePlans={responsePlans} evidence={detail.evidence} busy={busy} onRefresh={async () => { await Promise.all([refreshDetail(), load()]); }} onError={setError} />}
       </div> : <EmptyState title="还没有观察记录" description="教师可网页填写，也可上传现有观察表由AI提取字段后校对。" />}
     </div>
@@ -432,7 +465,7 @@ export function RemoteObservationV32Page({ user }: { user: RemoteUser }) {
       <div className="remote-form-section"><span>01 情境与观察者</span><div className="remote-form-grid"><label><b>观察教师</b><input required value={form.observerName} onChange={(event) => setForm({ ...form, observerName: event.target.value })} /><small>观察教师署名与当前上传账号不强制绑定</small></label><label><b>班级</b><select value={form.classroomId} onChange={(event) => setForm({ ...form, classroomId: event.target.value, observerIds: [] })}>{classrooms.map((item) => <option value={item.id} key={item.id}>{item.name} · {gradeLabel[item.grade]}</option>)}</select></label><label className="full-field"><b>协同观察者账号（可选）</b><div className="evo-observer-picker">{observers.map((item) => <label key={item.userId}><input type="checkbox" checked={form.observerIds.includes(item.userId)} onChange={() => setForm((current) => ({ ...current, observerIds: current.observerIds.includes(item.userId) ? current.observerIds.filter((id) => id !== item.userId) : [...current.observerIds, item.userId] }))} />{item.displayName}<small>{item.role === "researcher" ? "教研员" : "教师"}</small></label>)}</div></label><label><b>发生时间</b><input required type="datetime-local" value={form.occurredAt} onChange={(event) => setForm({ ...form, occurredAt: event.target.value })} /></label><label><b>游戏场地</b><input required value={form.scene} onChange={(event) => setForm({ ...form, scene: event.target.value })} /></label><label><b>游戏主题</b><input required value={form.theme} onChange={(event) => setForm({ ...form, theme: event.target.value })} /></label><label><b>组织阶段</b><select value={form.organizationStage} onChange={(event) => setForm({ ...form, organizationStage: event.target.value })}>{Object.entries(stageLabel).map(([value, label]) => <option value={value} key={value}>{label}</option>)}</select></label><label><b>观察模板</b><select value={form.templateId} onChange={(event) => setForm({ ...form, templateId: event.target.value })}><option value="">通用观察结构</option>{templates.map((item) => <option value={item.id} key={item.id}>{item.name}</option>)}</select></label><label><b>持续分钟</b><input type="number" min="1" max="240" value={form.durationMinutes} onChange={(event) => setForm({ ...form, durationMinutes: Number(event.target.value) })} /></label></div></div>
       <div className="remote-form-section"><span>02 参与幼儿与本次特征</span><p>搜索并勾选本次可识别幼儿，指定1名主要观察对象。多人共用照片或视频时，请为每名幼儿补充衣着、位置或时间段，帮助AI可靠区分。</p><div className="evo-child-toolbar"><input value={childSearch} onChange={(event) => setChildSearch(event.target.value)} placeholder="搜索幼儿姓名或班内编号" /><span>已选 {form.subjects.length} 名</span></div><div className="evo-child-selected">{form.subjects.map((subject) => <button type="button" key={subject.childId} onClick={() => toggleSubject(subject.childId)}>{childMap.get(subject.childId)?.display_name || "幼儿"} ×</button>)}</div><div className="evo-child-select">{filteredClassChildren.map((child) => { const subject = form.subjects.find((item) => item.childId === child.id); return <article className={subject ? "selected" : ""} key={child.id}><label><input type="checkbox" checked={Boolean(subject)} onChange={() => toggleSubject(child.id)} /><span><strong>{child.display_name}</strong><small>{child.internal_code}</small></span></label>{subject && <><select value={subject.role} onChange={(event) => setForm((current) => { const nextRole = event.target.value as SubjectDraft["role"]; return { ...current, subjects: current.subjects.map((item) => item.childId === child.id ? { ...item, role: nextRole } : nextRole === "primary" && item.role === "primary" ? { ...item, role: "participant" } : item) }; })}><option value="primary">主要观察</option><option value="participant">共同参与</option><option value="incidental">偶发参与</option></select><input placeholder="本次情境特征，如黄色上衣、负责桥墩" value={subject.contextualFeature} onChange={(event) => setForm((current) => ({ ...current, subjects: current.subjects.map((item) => item.childId === child.id ? { ...item, contextualFeature: event.target.value } : item) }))} /><textarea rows={2} placeholder="媒体定位，每行一条，如：视频00:04-00:20画面左侧黄色上衣幼儿" value={subject.evidenceAnchors.join("\n")} onChange={(event) => setForm((current) => ({ ...current, subjects: current.subjects.map((item) => item.childId === child.id ? { ...item, evidenceAnchors: lines(event.target.value).slice(0, 20) } : item) }))} /></>}</article>})}</div><div className="remote-form-grid"><label><b>未列名参与人数</b><input type="number" min="0" max="99" value={form.unlistedParticipantCount} onChange={(event) => setForm({ ...form, unlistedParticipantCount: Number(event.target.value) })} /></label><label className="full-field"><b>群体情境</b><textarea rows={2} value={form.groupContext} onChange={(event) => setForm({ ...form, groupContext: event.target.value })} /></label></div></div>
       <div className="remote-form-section"><span>03 观察、识别与原始应答</span><label><b>客观白描（含关键幼儿原话）</b><textarea required minLength={10} rows={7} value={form.teacherObservation} onChange={(event) => setForm({ ...form, teacherObservation: event.target.value })} /></label><label><b>教师识别</b><textarea required minLength={5} rows={4} value={form.teacherIdentification} onChange={(event) => setForm({ ...form, teacherIdentification: event.target.value })} /></label><div className="remote-form-grid"><label><b>原始应答类型</b><select value={form.responseCategory} onChange={(event) => setForm({ ...form, responseCategory: event.target.value })}><option value="experience">经验支持</option><option value="material">材料支持</option><option value="activity">活动支持</option></select></label><label><b>观察重点</b><input value={form.observationFocus} onChange={(event) => setForm({ ...form, observationFocus: event.target.value })} /></label><label className="full-field"><b>教师原始应答</b><textarea required minLength={2} rows={3} value={form.responseStrategy} onChange={(event) => setForm({ ...form, responseStrategy: event.target.value })} /></label><label className="full-field"><b>下一次观察重点</b><textarea required minLength={2} rows={2} value={form.nextObservationFocus} onChange={(event) => setForm({ ...form, nextObservationFocus: event.target.value })} /></label></div></div>
-      <div className="remote-form-section"><span>04 媒体证据</span><input type="file" multiple accept="image/jpeg,image/png,image/webp,video/mp4,video/quicktime,application/pdf" onChange={(event) => setFiles(Array.from(event.target.files ?? []).slice(0, 5))} /><small>图片10MB/张，视频100MB/段；上传后私有保存并关联本次观察。</small></div><button className="btn btn-primary" disabled={busy || form.subjects.length === 0} type="submit"><Save />保存教师观察</button>
+      <div className="remote-form-section"><span>04 媒体证据</span><input type="file" multiple accept="image/jpeg,image/png,image/webp,video/mp4,video/quicktime,application/pdf" onChange={(event) => setFiles(Array.from(event.target.files ?? []).slice(0, 5))} /><small>图片10MB/张，视频100MB/段；存储和AI分析前先做无损优化，图片保留原始像素，视频只重封装、不重新编码。</small></div><button className="btn btn-primary" disabled={busy || form.subjects.length === 0} type="submit"><Save />保存教师观察</button>
     </form></Modal>}
   </div>;
 }

@@ -74,7 +74,16 @@ const aiPrompt = {
   updatedByName: null,
 };
 
-async function mockApi(page: Page, role: "teacher" | "researcher", withAnalysis = false, withClassroomReport = false) {
+async function mockApi(page: Page, role: "teacher" | "researcher", withAnalysis = false, withClassroomReport = false, withActiveAnalysisJob = false) {
+  const analysisJob = {
+    id: "99999999-9999-4999-8999-999999999999",
+    observation_id: observation.id,
+    status: "processing",
+    stage: "analyzing_subject",
+    progress: 52,
+    analysis_run_ids: [],
+    requested_at: "2026-08-29T09:00:00+08:00",
+  };
   await page.route("**/api/**", async (route) => {
     const url = new URL(route.request().url());
     const path = url.pathname;
@@ -84,7 +93,8 @@ async function mockApi(page: Page, role: "teacher" | "researcher", withAnalysis 
       : path === "/api/classrooms" ? { items: [classroom] }
       : path === "/api/children" ? { items: [child] }
       : path === "/api/observations" ? { items: withAnalysis ? [observation] : [] }
-      : path === `/api/observations/${observation.id}` ? { item: observation, evidence: [], analyses: [analysis], subjects: [{ id: "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb", child_id: child.id, role: "primary", contextual_feature: "主动调整桥墩", display_name: child.display_name }], responsePlans: [], observers: [] }
+      : path === `/api/observations/${observation.id}` ? { item: observation, evidence: [], analyses: [analysis], subjects: [{ id: "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb", child_id: child.id, role: "primary", contextual_feature: "主动调整桥墩", display_name: child.display_name }], responsePlans: [], observers: [], analysisJob: withActiveAnalysisJob ? analysisJob : null }
+      : path === `/api/analysis-jobs/${analysisJob.id}` ? { item: analysisJob }
       : path === "/api/observers" ? { items: [{ userId: "teacher-id", displayName: "陈老师", role: "teacher" }] }
       : path === "/api/observation-imports" && method === "POST" ? { item: { ...observationImport, status: "pending_upload" } }
       : path === "/api/observation-imports" ? { items: [] }
@@ -182,6 +192,17 @@ test("AI结果展示连续观察、指南证据链与教师最终确认", async 
   await expect(page.getByText(/仍需跨时间复察/)).toBeVisible();
   await expect(page.getByRole("heading", { name: "教师确认" })).toBeVisible();
   await expect(page.getByRole("button", { name: "确认并采用" })).toBeVisible();
+});
+
+test("后台AI任务离开或刷新观察页面后仍可恢复真实进度", async ({ page }) => {
+  await mockApi(page, "teacher", true, false, true);
+  await page.goto("/observations");
+  await expect(page.getByText("逐幼儿分析文字、图片与视频")).toBeVisible();
+  await expect(page.getByText(/可以离开或关闭本页面/)).toBeVisible();
+  await expect(page.getByText("52%")).toBeVisible();
+  await page.reload();
+  await expect(page.getByText("逐幼儿分析文字、图片与视频")).toBeVisible();
+  await expect(page.getByText("52%")).toBeVisible();
 });
 
 test("周期报告支持班级维度生成与画像展示", async ({ page }) => {

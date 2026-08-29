@@ -11,7 +11,7 @@ services:
     init: true
     read_only: true
     tmpfs:
-      - /tmp:size=64m,mode=1777
+      - /tmp:size=256m,mode=1777
     security_opt:
       - no-new-privileges:true
     cap_drop:
@@ -25,7 +25,7 @@ services:
       timeout: 5s
       retries: 5
       start_period: 15s
-    mem_limit: 512m
+    mem_limit: 768m
     cpus: 0.75
     pids_limit: 160
 

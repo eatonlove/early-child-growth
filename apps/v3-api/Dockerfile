@@ -11,6 +11,7 @@ RUN npm run build
 FROM node:22.18-alpine AS runtime
 ENV NODE_ENV=production
 WORKDIR /app
+RUN apk add --no-cache ffmpeg libjpeg-turbo-utils optipng
 RUN addgroup -S tongji && adduser -S -G tongji tongji
 RUN mkdir -p /data/media && chown -R tongji:tongji /data
 COPY apps/v3-api/package.json apps/v3-api/package-lock.json ./

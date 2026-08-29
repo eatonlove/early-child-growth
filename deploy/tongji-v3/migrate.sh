@@ -160,6 +160,18 @@ else
   echo "园本游戏课程资源包结构已就绪，跳过8.29迁移。"
 fi
 
+async_analysis_ready="$(docker exec "$DB_CONTAINER" psql -U postgres -d postgres -Atc \
+  "select to_regclass('tongji_v3.analysis_jobs') is not null
+      and exists(select 1 from information_schema.columns where table_schema = 'tongji_v3' and table_name = 'evidence_assets' and column_name = 'optimization_status');")"
+
+if [ "$async_analysis_ready" != "t" ]; then
+  docker exec -i "$DB_CONTAINER" psql -U postgres -d postgres \
+    -v ON_ERROR_STOP=1 --single-transaction \
+    < "$ROOT_DIR/apps/v3-api/supabase/migrations/20260829190000_async_analysis_and_media_optimization.sql"
+else
+  echo "媒体无损优化与AI后台任务结构已就绪，跳过8.29异步迁移。"
+fi
+
 docker exec -i "$DB_CONTAINER" psql -U postgres -d postgres \
   -v ON_ERROR_STOP=1 --single-transaction \
   < "$ROOT_DIR/apps/v3-api/supabase/migrations/20260828084501_reload_ai_prompt_config_schema.sql"

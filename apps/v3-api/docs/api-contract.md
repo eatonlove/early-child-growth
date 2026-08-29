@@ -103,8 +103,11 @@
 
 1. `POST /observations/:id/evidence-ticket` 校验观察、授权、媒体类型和大小并创建待上传证据。
 2. `POST /evidence/:id/upload` 通过同迹API受控上传到私有媒体空间，避免向浏览器暴露内部存储地址。
-3. 服务端核对文件大小、媒体类型、租户和授权后将证据标记为 `ready`。
-4. `GET /evidence/:id/download` 返回5分钟有效、使用公网HTTPS域名的私有查看链接。
+3. 服务端核对文件大小、媒体类型、租户和授权后，在写入私有存储前执行无损优化：JPEG仅重排DCT系数并保留EXIF/ICC，PNG仅做无损压缩，MP4/MOV仅流复制重封装、不重编码画面与音轨；WebP及文档原样保存。优化结果不小于原文件时保留更小的原文件。
+4. 证据记录保存 `original_size_bytes`、`optimized_size_bytes`、`optimization_status`、`optimization_mode` 和 `optimization_tool`；只有优化或原样处理成功后才标记为 `ready` 并可进入AI分析。
+5. `GET /evidence/:id/download` 返回5分钟有效、使用公网HTTPS域名的私有查看链接。
+
+新上传凭证只返回同迹受控 `uploadPath`，不再向前端返回内部存储地址、密钥或直传令牌。`POST /evidence/:id/complete` 仅兼容升级前已经签发但未完成的历史直传记录。
 
 对象路径固定为：
 
@@ -116,13 +119,16 @@
 
 | 方法 | 路径 | 作用 |
 |---|---|---|
-| POST | `/observations/:id/analyze` | 按班级年龄检索知识卡，由当前AI Provider生成结构化草稿 |
+| POST | `/observations/:id/analyze` | 创建后台分析任务并立即返回 `202` 与任务对象；重复提交返回同一活动任务 |
+| GET | `/analysis-jobs/:id` | 读取后台分析任务的真实阶段、进度、结果ID或失败原因 |
 | POST | `/analyses/:id/decision` | 教师对整份“观察、识别、应答”AI结果确认采用或不采用 |
 | POST | `/analyses/:id/revise` | 根据教师反馈生成新的AI修订稿 |
 | PATCH | `/analyses/:id/claims/:claimKey` | 兼容历史精细审阅数据，不在当前教师页面暴露 |
 | POST | `/analyses/:id/finalize` | 兼容历史精细审阅数据，不在当前教师页面暴露 |
 
-分析只接受已经提交的教师记录。`AI_MODE=qianwen` 时使用 `QianwenAIProvider`；在监护授权为 `granted` 且 `QWEN_MEDIA_ANALYSIS_ENABLED=true` 时，可将私有图片或视频的15分钟签名链接作为多模态输入。视频只分析画面，不处理音轨。生产环境默认禁止在真实 AI 失败时静默回退到模拟结果，并返回明确的服务错误；只有显式使用 `AI_MODE=scenario` 的本地演示环境才使用 `ScenarioAIProvider`。页面必须显示实际 Provider 和模型。
+分析只接受已经提交的教师记录。任务入库后由服务端继续执行，不依赖浏览器页面或前端会话持续连接；页面关闭、切换或刷新不会取消任务，并可通过任务接口恢复进度。服务进程重启时，未完成任务会被安全标记为失败并删除不完整分析，教师可重新发起。
+
+`AI_MODE=qianwen` 时使用 `QianwenAIProvider`；在监护授权为 `granted` 且 `QWEN_MEDIA_ANALYSIS_ENABLED=true` 时，可将无损优化后私有图片或视频的15分钟签名链接作为多模态输入。视频只分析画面，不处理音轨。生产环境默认禁止在真实 AI 失败时静默回退到模拟结果，并返回明确的服务错误；只有显式使用 `AI_MODE=scenario` 的本地演示环境才使用 `ScenarioAIProvider`。页面必须显示实际 Provider 和模型。
 
 固定输出：
 

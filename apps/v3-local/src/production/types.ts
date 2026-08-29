@@ -197,6 +197,35 @@ export interface RemoteEvidence {
   mime_type?: string | null;
   size_bytes?: number | null;
   upload_status: "pending" | "ready" | "failed";
+  original_size_bytes?: number | null;
+  optimized_size_bytes?: number | null;
+  optimization_status?: "pending" | "optimized" | "not_applicable" | "failed" | "legacy";
+  optimization_mode?: "lossless" | "none" | null;
+  optimization_tool?: string | null;
+  optimization_error?: string | null;
+}
+
+export interface RemoteAnalysisJob {
+  id: string;
+  observation_id: string;
+  status: "queued" | "processing" | "completed" | "failed" | "cancelled";
+  stage:
+    | "queued"
+    | "preparing"
+    | "context_ready"
+    | "analyzing_subject"
+    | "saving_subject"
+    | "completed"
+    | "failed";
+  progress: number;
+  analysis_run_ids: string[];
+  ai_notice?: string | null;
+  error_code?: string | null;
+  error_message?: string | null;
+  requested_at: string;
+  started_at?: string | null;
+  completed_at?: string | null;
+  heartbeat_at?: string | null;
 }
 
 export interface RemoteObservationSubject {

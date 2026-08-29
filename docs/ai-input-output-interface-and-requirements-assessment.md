@@ -397,7 +397,7 @@ riskNote
 | 场景 | 同迹业务API | 前端直接输入 | 后端补充的AI输入 | 业务API输出 |
 |---|---|---|---|---|
 | 观察表提取 | `POST /api/observation-imports` + `POST /api/observation-imports/:id/upload` | 班级ID、文件名、MIME、大小、文件二进制 | 文档提取文本、当前班级幼儿候选、图片短时地址 | `item`、结构化字段、`aiNotice` |
-| 逐幼儿观察分析 | `POST /api/observations/:id/analyze` | URL中的观察ID，无请求体 | 观察、每名幼儿、年龄段知识卡、证据、媒体、历史、园所经验、分析框架 | `item`、`items[]`、`aiNotice`；多人观察每人一条分析 |
+| 逐幼儿观察分析 | `POST /api/observations/:id/analyze` + `GET /api/analysis-jobs/:id` | URL中的观察ID，无请求体 | 观察、每名幼儿、年龄段知识卡、无损优化后的证据媒体、历史、园所经验、分析框架 | 首次返回后台任务 `item`；任务完成后观察详情返回多人逐幼儿分析，失败时任务保存明确错误码与原因 |
 | 教师意见修订分析 | `POST /api/analyses/:id/revise` | `feedback[]` | 原分析完整结构 | 新分析版本、反馈版本、`aiNotice` |
 | 个体或班级周期报告 | `POST /api/reports/generate` | 班级ID、可选幼儿ID、报告类型、起止日期 | 已采用观察、终审分析、支持效果、系统统计 | 报告数据行及 `aiNotice` |
 | AI修订报告 | `POST /api/reports/:id/revise` | `instruction` | 当前报告结构；班级固定指标由后端锁定 | 修订后的报告及 `aiNotice` |

@@ -83,6 +83,26 @@ function extractJson(content: unknown) {
   }
 }
 
+function repairNonEvidentiaryDefaults(value: unknown) {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return value;
+  const responsePlans = (value as { responsePlans?: unknown }).responsePlans;
+  if (!Array.isArray(responsePlans)) return value;
+  for (const plan of responsePlans) {
+    if (!plan || typeof plan !== "object") continue;
+    const experienceSupport = (plan as { experienceSupport?: unknown }).experienceSupport;
+    if (!experienceSupport || typeof experienceSupport !== "object" || Array.isArray(experienceSupport)) continue;
+    const suggestedQuestions = (experienceSupport as { suggestedQuestions?: unknown }).suggestedQuestions;
+    if (Array.isArray(suggestedQuestions) && suggestedQuestions.length === 0) {
+      // This is a future teacher prompt, not an observation fact. Supplying a neutral
+      // open question keeps one optional support detail from invalidating all evidence.
+      (experienceSupport as { suggestedQuestions: string[] }).suggestedQuestions = [
+        "你接下来想先试哪一种办法？为什么？",
+      ];
+    }
+  }
+  return value;
+}
+
 export class QwenClient {
   private readonly fetcher: typeof fetch;
   private readonly retries: number;
@@ -152,7 +172,7 @@ export class QwenClient {
     const payload = await response.json() as {
       choices?: Array<{ message?: { content?: unknown } }>;
     };
-    const parsed = extractJson(payload.choices?.[0]?.message?.content);
+    const parsed = repairNonEvidentiaryDefaults(extractJson(payload.choices?.[0]?.message?.content));
     const validated = input.validator.safeParse(parsed);
     if (!validated.success) {
       const rootType = Array.isArray(parsed) ? "array" : parsed === null ? "null" : typeof parsed;
