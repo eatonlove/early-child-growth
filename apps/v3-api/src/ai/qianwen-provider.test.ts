@@ -111,7 +111,7 @@ describe("QianwenAIProvider", () => {
     let requestBody = "";
     const responseWithoutPlanEvidence = {
       ...response,
-      responsePlans: response.responsePlans.map((plan) => ({ ...plan, evidenceIds: [] })),
+      responsePlans: response.responsePlans.map((plan) => ({ ...plan, evidenceIds: ["current-observation"] })),
     };
     const fetcher = vi.fn(async (_url: string | URL | Request, init?: RequestInit) => {
       requestBody = String(init?.body ?? "");

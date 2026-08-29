@@ -381,7 +381,7 @@ function validateObservationGrounding(result: AnalysisResult, input: Observation
     }),
   }));
   for (const plan of result.responsePlans) {
-    plan.evidenceIds = canonicalEvidenceIds(plan.evidenceIds, input);
+    plan.evidenceIds = canonicalEvidenceIds(plan.evidenceIds, input).filter((id) => evidenceIds.has(id));
     if (!plan.evidenceIds.length) plan.evidenceIds = ["teacher-observation"];
   }
   const groundedCollections: Array<[string, Array<{ evidenceIds: string[] }>]> = [
