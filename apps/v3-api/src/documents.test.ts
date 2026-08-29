@@ -1,6 +1,6 @@
 import mammoth from "mammoth";
 import { describe, expect, it } from "vitest";
-import { documentStorageObjectPath, generateBlankObservationTemplate, generateCurriculumDocument, generateObservationDocument, observationDocumentFormat } from "./documents.js";
+import { documentStorageObjectPath, generateBlankObservationTemplate, generateCurriculumDocument, generateObservationArchiveDocument, generateObservationDocument, observationDocumentFormat } from "./documents.js";
 
 describe("Word document generation", () => {
   it("uses an ASCII-only storage key independent of the download filename", () => {
@@ -113,5 +113,33 @@ describe("Word document generation", () => {
     expect(text).toContain("四区七步N循环");
     expect(text).toContain("第1轮");
     expect(text).toContain("桥会倒");
+  });
+
+  it("generates a class observation archive with multiple records", async () => {
+    const record = {
+      variant: "teacher" as const,
+      schoolName: "成都市第六幼儿园B区",
+      classroomName: "中四班",
+      observerNames: ["陈老师"],
+      observation: {
+        title: "泡泡大探秘", occurred_at: "2026-08-20T09:00:00+08:00", scene: "科学区", theme: "泡泡",
+        organization_stage: "process", teacher_observation: "幼儿更换吹泡工具后再次尝试。",
+        teacher_identification: "教师识别到比较工具差异的线索。",
+        teacher_response: { strategy: "提供不同口径的工具", nextObservationFocus: "观察幼儿如何比较结果" },
+      },
+      subjects: [{ displayName: "小禾", role: "primary", contextualFeature: "主动更换工具" }],
+      evidence: [{ evidence_type: "photo", file_name: "泡泡工具.jpg" }],
+    };
+    const buffer = await generateObservationArchiveDocument({
+      schoolName: "成都市第六幼儿园B区",
+      archiveLabel: "2025-2026学年下学期 · 中四班 · 2026年8月",
+      records: [record, { ...record, observation: { ...record.observation, title: "泡泡再比较" } }],
+    });
+    const text = (await mammoth.extractRawText({ buffer })).value;
+    expect(text).toContain("班级游戏观察档案");
+    expect(text).toContain("2025-2026学年下学期");
+    expect(text).toContain("泡泡大探秘");
+    expect(text).toContain("泡泡再比较");
+    expect(text).toContain("2条");
   });
 });

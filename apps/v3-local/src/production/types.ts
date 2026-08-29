@@ -538,6 +538,31 @@ export interface RemoteProfessionalMemory {
   approved_at?: string | null;
 }
 
+export interface RemoteCurriculumResourceAsset {
+  id: string;
+  package_id: string;
+  asset_type: "plan" | "materials" | "booklet" | "supplement";
+  file_name: string;
+  mime_type: string;
+  size_bytes: number;
+  created_at: string;
+}
+
+export interface RemoteCurriculumResourcePackage {
+  id: string;
+  title: string;
+  summary: string;
+  applicable_grades: GradeCode[];
+  themes: string[];
+  status: "draft" | "pending" | "active" | "rejected" | "disabled";
+  review_comment?: string | null;
+  creator_name: string;
+  created_by: string;
+  created_at: string;
+  reviewed_at?: string | null;
+  assets: RemoteCurriculumResourceAsset[];
+}
+
 export interface RemoteAnalysisFramework {
   id: string;
   framework_type: "game_experience" | "learning_disposition";

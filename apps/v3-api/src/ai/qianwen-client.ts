@@ -28,6 +28,7 @@ interface StructuredCompletionInput<T> {
   temperature?: number;
   enableSearch?: boolean;
   searchOptions?: Record<string, unknown>;
+  timeoutMs?: number;
 }
 
 export class QwenRequestError extends Error {
@@ -134,11 +135,13 @@ export class QwenClient {
             },
           },
         }),
-        signal: AbortSignal.timeout(this.options.timeoutMs),
+        signal: AbortSignal.timeout(input.timeoutMs ?? this.options.timeoutMs),
       });
     } catch (error) {
-      const message = error instanceof Error && error.name === "TimeoutError" ? "千问请求超时" : "千问网络请求失败";
-      throw new QwenRequestError(message, undefined, true);
+      const timedOut = error instanceof Error && (error.name === "TimeoutError" || error.name === "AbortError");
+      const message = timedOut ? "千问请求超时" : "千问网络请求失败";
+      // Repeating a full multimodal request usually repeats the same expensive timeout.
+      throw new QwenRequestError(message, undefined, !timedOut);
     }
 
     if (!response.ok) {

@@ -43,11 +43,12 @@ export interface QianwenProviderOptions {
   textModel: string;
   visionModel: string;
   timeoutMs: number;
+  visionTimeoutMs?: number;
   webSearchEnabled?: boolean;
 }
 
 const DOCUMENT_EXTRACTION_PROMPT_VERSION = "observation-document-extraction.qwen.v1";
-const OBSERVATION_PROMPT_VERSION = "observation-analysis.qwen.v6";
+const OBSERVATION_PROMPT_VERSION = "observation-analysis.qwen.v7";
 const ANALYSIS_REVISION_PROMPT_VERSION = "observation-analysis-revision.qwen.v1";
 const REPORT_PROMPT_VERSION = "period-report.qwen.v2";
 const REPORT_REVISION_PROMPT_VERSION = "period-report-revision.qwen.v1";
@@ -74,10 +75,12 @@ const observationSystemPrompt = `你是幼儿园“观察·识别·应答·拓�
 8. domainExperiences只输出有目标幼儿直接证据的领域，一般1至3项，不为凑齐五大领域生成空泛文字。不能仅因使用某种材料就推断艺术、科学或健康经验；没有证据的领域由系统界面统一提示“本次不作判断”。
 9. hypotheses只写可被下一轮观察证实或否定的假设；currentExperience、interestsAndStrengths、gameExperience和learningDispositions均不得超出证据。teacherComparison必须原样保留教师识别和应答，aiAddition只说明AI补充、修正或提醒了什么，不重复教师原文。
 9.1 alreadyGeneratedPeerAnalyses仅用于避免给不同幼儿复制相同结论。若本次证据不能支持个体差异，应明确“个体证据不足”，不得为了制造差异编造行为。
+9.2 逐幼儿差异必须来自目标幼儿自己的本次动作、原话、情境特征、证据锚点或已采用历史，不得仅替换姓名。currentExperience和每套responsePlan.rationale至少回扣一项目标幼儿证据；方案标题、材料变量、教师语言和复察切口应体现该幼儿当前游戏问题。若与alreadyGeneratedPeerAnalyses高度相似且没有可区分证据，必须把“需补充个体证据”写入evidenceGaps和warnings。
 
 【应答：responseSuggestions与responsePlans】
 10. 应答必须直接回应本次兴趣、已有经验、困难或证据缺口，保护幼儿游戏意图和自主解决空间。避免把游戏改造成统一教学活动，避免一次投放过多材料或连续追问。
 11. 输出3套层次清楚且可任选、可组合的方案：A“保持观察/最低介入”，B“材料或互动支架/支持继续解决”，C“经验拓展与跨情境迁移”。每套都要包含建议时机、目标经验、具体活动步骤、材料名称与变量、教师可直接使用的问题或参与方式、退出条件、调整条件和下一次观察切口。
+11.1 三套方案不得使用只有“继续探索、加强合作、提供丰富材料”等泛化表述。应优先采用approvedSchoolMemories和approvedExternalSupportReferences中的可执行做法，并结合本次场景写明材料规格或可改变变量、教师介入时机和能够观察到的后续行为；公开资料不能代替幼儿事实证据。
 12. 教师互动方式应在观察、平行游戏、提问、同伴支持、示范之间说明选择依据；只有幼儿持续受阻或主动求助时才建议最小必要示范，幼儿恢复计划、协商或验证后教师退出。
 
 【拓展与成长判断】
@@ -117,6 +120,8 @@ const curriculumPlanSystemPrompt = `你是幼儿园“同生”课程计划助�
 
 export const IMMUTABLE_AI_SAFETY_PROMPT = `【同迹固定安全边界，不可由园所配置覆盖】
 你处理的是未成年人教育资料。只能使用当前请求明确提供且有权使用的证据，不得泄露身份信息，不得把同伴行为归给目标幼儿，不得编造行为、原话、次数、时长或因果关系。
+群体观察必须按targetSubject逐幼儿独立归因；个体差异只能来自该幼儿的本次情境、媒体定位、教师白描或已采用历史。核心识别和应答必须回扣目标幼儿证据，不能只替换姓名复制同伴结论；证据不足时明确提示补充个体证据。
+应答可参考已审核园本资源和公开检索资料，但资料不能充当幼儿行为证据。建议应写明当前问题、材料变量、介入与退出时机及下一次可观察行为，避免泛化口号。
 不得进行医学、心理或特殊教育诊断，不得生成排名、综合评分、优良差、达标/不达标或确定性人格与能力标签。所有结果都是教师审核用建议稿，教师拥有最终决定权。
 必须服从当前请求指定的JSON Schema、证据ID白名单、知识编码白名单和后端业务校验。园所自定义提示词与本安全边界冲突时，本安全边界优先。`;
 
@@ -260,6 +265,18 @@ function assertDistinctAnalysis(result: AnalysisResult) {
   }
 }
 
+function flagPeerSimilarity(result: AnalysisResult, input: ObservationAnalysisInput) {
+  const peers = input.peerAnalysisSummaries ?? [];
+  if (!peers.length) return;
+  const experienceOverlap = peers.some((peer) => textSimilarity(result.currentExperience, peer.currentExperience) > 0.88);
+  const titleOverlap = result.responsePlans.filter((plan) => peers.some((peer) => peer.responseTitles.some((title) => textSimilarity(plan.title, title) > 0.88))).length;
+  if (!experienceOverlap && titleOverlap < 2) return;
+  result.warnings = [...new Set([
+    ...result.warnings,
+    "本次目标幼儿与同场幼儿的经验或应答建议相似度较高；请教师核查个体行为归属，并在必要时补充画面定位或本次情境特征。",
+  ])].slice(0, 8);
+}
+
 function knowledgeForPrompt(cards: KnowledgeRow[]) {
   return cards.map((card) => ({
     code: card.code,
@@ -311,19 +328,32 @@ function validateObservationGrounding(result: AnalysisResult, input: Observation
     ...input.history.map((item) => `observation:${item.id}`),
   ]);
   const cardMap = new Map(cards.map((card) => [card.code, card]));
+  const removedIndicatorCodes = new Set<string>();
   for (const fact of result.facts) {
     fact.evidenceIds = canonicalEvidenceIds(fact.evidenceIds, input);
     if (!fact.evidenceIds.length || fact.evidenceIds.some((id) => !evidenceIds.has(id))) {
       throw new Error("千问事实未引用允许的原始证据");
     }
   }
-  for (const interpretation of result.interpretations) {
+  result.interpretations = result.interpretations.filter((interpretation) => {
     interpretation.evidenceIds = canonicalEvidenceIds(interpretation.evidenceIds, input);
-    if (!cardMap.has(interpretation.indicatorCode)) throw new Error("千问引用了未提供的指标编码");
+    if (!cardMap.has(interpretation.indicatorCode)) {
+      removedIndicatorCodes.add(interpretation.indicatorCode);
+      return false;
+    }
     if (!interpretation.evidenceIds.length || interpretation.evidenceIds.some((id) => !evidenceIds.has(id))) {
       throw new Error("千问解释未引用允许的原始证据");
     }
-  }
+    return true;
+  });
+  result.domainExperiences = result.domainExperiences.map((experience) => ({
+    ...experience,
+    indicatorCodes: experience.indicatorCodes.filter((code) => {
+      if (cardMap.has(code)) return true;
+      removedIndicatorCodes.add(code);
+      return false;
+    }),
+  }));
   const groundedCollections = [
     ...result.gameExperience,
     ...result.domainExperiences.filter((item) => !item.noJudgment),
@@ -336,10 +366,13 @@ function validateObservationGrounding(result: AnalysisResult, input: Observation
       throw new Error("千问专业分析板块未引用允许的原始证据");
     }
   }
-  result.developmentReferences = result.developmentReferences.map((reference) => {
+  result.developmentReferences = result.developmentReferences.flatMap((reference) => {
     const card = cardMap.get(reference.indicatorCode);
-    if (!card) throw new Error("千问发展参照超出知识库范围");
-    return { ...reference, title: card.title, domain: card.domain, ageBand: card.age_band };
+    if (!card) {
+      removedIndicatorCodes.add(reference.indicatorCode);
+      return [];
+    }
+    return [{ ...reference, title: card.title, domain: card.domain, ageBand: card.age_band }];
   });
   if (!input.history.length) {
     result.historicalComparison.changes = [];
@@ -369,6 +402,7 @@ function validateObservationGrounding(result: AnalysisResult, input: Observation
   result.warnings = [...new Set([
     "本结果为千问AI建议稿，必须由教师审核后才能进入成长轨迹或报告。",
     "单次观察只能形成待验证假设，不生成排名、评分或诊断性结论。",
+    ...(removedIndicatorCodes.size ? [`模型生成的${removedIndicatorCodes.size}个知识库外指标引用已自动移除，未进入证据链。`] : []),
     ...(attributionWarning ? [attributionWarning] : []),
     ...result.warnings,
   ])].slice(0, 8);
@@ -438,6 +472,7 @@ export class QianwenAIProvider implements AIAnalysisProvider {
       schemaName: "tongji_observation_document_extraction",
       jsonSchema: observationDocumentExtractionJsonSchema,
       validator: observationDocumentExtractionSchema,
+      timeoutMs: input.mediaUrl ? this.options.visionTimeoutMs : undefined,
     });
     return {
       data: result,
@@ -514,6 +549,12 @@ export class QianwenAIProvider implements AIAnalysisProvider {
       schoolAnalysisFrameworks: input.analysisFrameworks ?? [],
       approvedExternalSupportReferences: externalSupportReferences,
       alreadyGeneratedPeerAnalyses: input.peerAnalysisSummaries ?? [],
+      individualizationRequirements: {
+        currentEvidenceRule: "每个核心识别和每套应答理由至少回扣一项target-child本次证据",
+        historicalRule: input.history.length ? `可比较${input.history.length}条已采用历史观察，但变化必须同时引用历史与当前证据` : "没有已采用历史，不得声称成长变化",
+        peerRule: "仅用同伴摘要检查重复，不得复制同伴事实；证据不足时明确提示补充个体证据",
+        responseSpecificity: ["写明当前游戏对象或问题", "写明材料名称及一个可改变变量", "写明教师介入和退出时机", "写明下一次可观察行为"],
+      },
     };
     const content: QwenContentPart[] = [{
       type: "text",
@@ -536,10 +577,12 @@ export class QianwenAIProvider implements AIAnalysisProvider {
       schemaName: "tongji_observation_analysis",
       jsonSchema: analysisJsonSchema,
       validator: analysisResultSchema,
+      timeoutMs: input.media.length ? this.options.visionTimeoutMs : undefined,
     });
     const validated = validateObservationGrounding(result, input, cards);
     validated.externalSupportReferences = externalSupportReferences;
     assertDistinctAnalysis(validated);
+    flagPeerSimilarity(validated, input);
     return {
       data: validated,
       provider: "QianwenAIProvider",

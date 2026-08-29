@@ -13,6 +13,7 @@ import {
   extractDocumentText,
   generateBlankObservationTemplate,
   generateCurriculumDocument,
+  generateObservationArchiveDocument,
   generateObservationDocument,
   observationDocumentFormat,
 } from "../documents.js";
@@ -28,6 +29,7 @@ const aiProvider = createAIProvider({
   textModel: config.QWEN_TEXT_MODEL,
   visionModel: config.QWEN_VISION_MODEL,
   timeoutMs: config.QWEN_TIMEOUT_MS,
+  visionTimeoutMs: config.QWEN_VISION_TIMEOUT_MS,
   webSearchEnabled: config.qwenWebSearchEnabled,
   fallbackToSimulated: config.aiFallbackToSimulated,
 });
@@ -48,6 +50,14 @@ const frameworkDimensions = {
 } as const;
 
 const safeFileName = (value: string) => value.replace(/[\\/:*?"<>|\u0000-\u001f]/g, "_").slice(0, 120);
+const curriculumResourceAssetType = z.enum(["plan", "materials", "booklet", "supplement"]);
+const curriculumResourceFormats = new Map([
+  ["application/vnd.openxmlformats-officedocument.wordprocessingml.document", "docx"],
+  ["application/msword", "doc"],
+  ["application/pdf", "pdf"],
+  ["image/jpeg", "jpg"],
+  ["image/png", "png"],
+]);
 
 async function createDirectDocumentExport(auth: Awaited<ReturnType<typeof authenticate>>, input: {
   classroomId: string;
@@ -119,6 +129,83 @@ export async function evolutionRoutes(app: FastifyInstance) {
     return reply
       .header("Content-Type", documentMimeTypes.docx)
       .header("Content-Disposition", `attachment; filename*=UTF-8''${encodeURIComponent("同迹游戏观察记录表模板.docx")}`)
+      .send(buffer);
+  });
+
+  app.get("/api/observation-archive/document", async (request, reply) => {
+    const auth = await authenticate(request);
+    const query = z.object({
+      classroomId: uuid,
+      year: z.coerce.number().int().min(2000).max(2100).optional(),
+      month: z.coerce.number().int().min(1).max(12).optional(),
+    }).refine((value) => !value.month || value.year, { message: "按月归档时必须同时提供年份", path: ["year"] }).parse(request.query);
+    const schema = serviceClient.schema(config.SUPABASE_SCHEMA);
+    const { data: classroom, error: classroomError } = await auth.data.from("classrooms").select("id, name, academic_year, semester").eq("id", query.classroomId).maybeSingle();
+    if (classroomError) throw new ApiError(500, "OBSERVATION_ARCHIVE_CLASS_FAILED", "观察档案班级读取失败");
+    if (!classroom) throw new ApiError(404, "CLASSROOM_NOT_FOUND", "班级不存在或无权访问");
+    let observationBuilder = auth.data.from("observations").select("*").eq("classroom_id", query.classroomId).order("occurred_at", { ascending: true });
+    if (query.year) {
+      const startMonth = query.month ?? 1;
+      const endYear = query.month === 12 || !query.month ? query.year + 1 : query.year;
+      const endMonth = query.month ? (query.month === 12 ? 1 : query.month + 1) : 1;
+      const start = new Date(`${query.year}-${String(startMonth).padStart(2, "0")}-01T00:00:00+08:00`);
+      const end = new Date(`${endYear}-${String(endMonth).padStart(2, "0")}-01T00:00:00+08:00`);
+      observationBuilder = observationBuilder.gte("occurred_at", start.toISOString()).lt("occurred_at", end.toISOString());
+    }
+    const { data: observations, error: observationError } = await observationBuilder;
+    if (observationError) throw new ApiError(500, "OBSERVATION_ARCHIVE_READ_FAILED", "班级观察档案读取失败");
+    if (!observations?.length) throw new ApiError(404, "OBSERVATION_ARCHIVE_EMPTY", "当前筛选范围内没有观察记录");
+    const observationIds = observations.map((item) => item.id);
+    const [{ data: tenant }, { data: subjects }, { data: evidence }, { data: analyses }] = await Promise.all([
+      schema.from("tenants").select("name").eq("id", auth.tenantId).single(),
+      schema.from("observation_subjects").select("*").in("observation_id", observationIds).order("role"),
+      schema.from("evidence_assets").select("observation_id, file_name, evidence_type").in("observation_id", observationIds).eq("upload_status", "ready"),
+      schema.from("analysis_runs").select("*").in("observation_id", observationIds).eq("decision", "adopted").order("generated_at", { ascending: false }),
+    ]);
+    const childIds = [...new Set((subjects ?? []).map((item) => item.child_id))];
+    const observerIds = [...new Set(observations.flatMap((item) => item.observer_ids ?? []))];
+    const analysisIds = (analyses ?? []).map((item) => item.id);
+    const [{ data: children }, { data: profiles }, { data: reviews }] = await Promise.all([
+      childIds.length ? schema.from("children").select("id, display_name").in("id", childIds) : Promise.resolve({ data: [], error: null }),
+      observerIds.length ? schema.from("profiles").select("user_id, display_name").in("user_id", observerIds) : Promise.resolve({ data: [], error: null }),
+      analysisIds.length ? schema.from("analysis_claim_reviews").select("*").in("analysis_run_id", analysisIds) : Promise.resolve({ data: [], error: null }),
+    ]);
+    const childMap = new Map((children ?? []).map((item) => [item.id, item.display_name]));
+    const profileMap = new Map((profiles ?? []).map((item) => [item.user_id, item.display_name]));
+    const records = observations.map((observation) => {
+      const observationSubjects = (subjects ?? []).filter((item) => item.observation_id === observation.id);
+      const latestByChild = new Map<string, any>();
+      for (const analysis of (analyses ?? []).filter((item) => item.observation_id === observation.id)) {
+        if (!latestByChild.has(analysis.child_id)) latestByChild.set(analysis.child_id, analysis);
+      }
+      const effectiveAnalyses = observationSubjects.flatMap((subject) => {
+        const analysis = latestByChild.get(subject.child_id);
+        if (!analysis) return [];
+        return [{
+          childId: subject.child_id,
+          childName: childMap.get(subject.child_id) ?? "园内幼儿",
+          result: effectiveAnalysisResult(analysis.structured_result, (reviews ?? []).filter((review) => review.analysis_run_id === analysis.id)),
+        }];
+      });
+      return {
+        variant: effectiveAnalyses.length ? "professional" as const : "teacher" as const,
+        schoolName: tenant?.name ?? "幼儿园",
+        classroomName: classroom.name,
+        observerNames: [...new Set([observation.observer_name_snapshot, ...(observation.observer_ids ?? []).map((id: string) => profileMap.get(id))].filter(Boolean))] as string[],
+        observation,
+        subjects: observationSubjects.map((subject) => ({ displayName: childMap.get(subject.child_id) ?? "园内幼儿", role: subject.role, contextualFeature: subject.contextual_feature })),
+        evidence: (evidence ?? []).filter((item) => item.observation_id === observation.id),
+        analyses: effectiveAnalyses,
+      };
+    });
+    const semesterLabel = classroom.semester === "spring" ? "下学期" : classroom.semester === "autumn" ? "上学期" : classroom.semester;
+    const calendarLabel = query.year ? `${query.year}年${query.month ? `${query.month}月` : ""}` : "全部时间";
+    const archiveLabel = `${classroom.academic_year}学年${semesterLabel} · ${classroom.name} · ${calendarLabel}`;
+    const buffer = await generateObservationArchiveDocument({ schoolName: tenant?.name ?? "幼儿园", archiveLabel, records });
+    await audit(auth, "observation_archive.downloaded", "classroom", classroom.id, { count: records.length, year: query.year ?? null, month: query.month ?? null });
+    return reply
+      .header("Content-Type", documentMimeTypes.docx)
+      .header("Content-Disposition", `attachment; filename*=UTF-8''${encodeURIComponent(`${classroom.name}-${calendarLabel}-观察档案.docx`)}`)
       .send(buffer);
   });
 
@@ -519,6 +606,147 @@ export async function evolutionRoutes(app: FastifyInstance) {
     if (error || !data) throw new ApiError(404, "PROFESSIONAL_MEMORY_UPDATE_FAILED", "园所专业经验不存在或状态更新失败");
     await audit(auth, `professional_memory.${input.status}`, "professional_memory", id, { qualityScore: input.qualityScore ?? data.quality_score });
     return { item: data };
+  });
+
+  app.get("/api/curriculum-resource-packages", async (request) => {
+    const auth = await authenticate(request);
+    const query = z.object({ status: z.enum(["draft", "pending", "active", "rejected", "disabled"]).optional() }).parse(request.query);
+    let builder = auth.data.from("curriculum_resource_packages").select("*").order("created_at", { ascending: false });
+    if (query.status) builder = builder.eq("status", query.status);
+    const { data: packages, error } = await builder;
+    if (error) throw new ApiError(500, "CURRICULUM_RESOURCE_LIST_FAILED", "游戏课程资源包读取失败");
+    const packageIds = (packages ?? []).map((item) => item.id);
+    const creatorIds = [...new Set((packages ?? []).map((item) => item.created_by))];
+    const [{ data: assets, error: assetError }, { data: creators, error: creatorError }] = await Promise.all([
+      packageIds.length ? auth.data.from("curriculum_resource_assets").select("*").in("package_id", packageIds).order("created_at") : Promise.resolve({ data: [], error: null }),
+      creatorIds.length ? serviceClient.schema(config.SUPABASE_SCHEMA).from("profiles").select("user_id, display_name").eq("tenant_id", auth.tenantId).in("user_id", creatorIds) : Promise.resolve({ data: [], error: null }),
+    ]);
+    if (assetError || creatorError) throw new ApiError(500, "CURRICULUM_RESOURCE_DETAIL_FAILED", "游戏课程资源文件或提交人读取失败");
+    const creatorMap = new Map((creators ?? []).map((item) => [item.user_id, item.display_name]));
+    return { items: (packages ?? []).map((item) => ({ ...item, creator_name: creatorMap.get(item.created_by) ?? "园内教师", assets: (assets ?? []).filter((asset) => asset.package_id === item.id) })) };
+  });
+
+  app.post("/api/curriculum-resource-packages", async (request, reply) => {
+    const auth = await authenticate(request);
+    const input = z.object({
+      title: z.string().trim().min(2).max(160), summary: z.string().trim().min(2).max(3000),
+      applicableGrades: z.array(z.enum(["small", "middle", "large"])).max(3).default([]),
+      themes: z.array(z.string().trim().min(1).max(80)).max(20).default([]),
+    }).parse(request.body);
+    const { data, error } = await auth.data.from("curriculum_resource_packages").insert({
+      tenant_id: auth.tenantId, title: input.title, summary: input.summary,
+      applicable_grades: input.applicableGrades, themes: input.themes,
+      status: "draft", created_by: auth.userId,
+    }).select().single();
+    if (error) throw new ApiError(500, "CURRICULUM_RESOURCE_CREATE_FAILED", "游戏课程资源包创建失败");
+    await audit(auth, "curriculum_resource.created", "curriculum_resource_package", data.id, { title: data.title });
+    return reply.status(201).send({ item: data });
+  });
+
+  app.post("/api/curriculum-resource-packages/:id/assets", { bodyLimit: 30 * 1024 * 1024 }, async (request, reply) => {
+    const auth = await authenticate(request);
+    const { id } = z.object({ id: uuid }).parse(request.params);
+    const query = z.object({ assetType: curriculumResourceAssetType, fileName: z.string().trim().min(1).max(180), mimeType: z.string().trim().min(1).max(160) }).parse(request.query);
+    if (!Buffer.isBuffer(request.body) || request.body.length === 0) throw new ApiError(422, "EMPTY_RESOURCE_UPLOAD", "课程资源文件为空");
+    if (request.body.length > 30 * 1024 * 1024) throw new ApiError(422, "RESOURCE_FILE_TOO_LARGE", "单个课程资源文件不能超过30MB");
+    const extension = curriculumResourceFormats.get(query.mimeType);
+    if (!extension) throw new ApiError(422, "RESOURCE_FORMAT_UNSUPPORTED", "课程资源仅支持DOC、DOCX、PDF、JPG和PNG");
+    if (query.assetType === "plan" && !["doc", "docx"].includes(extension)) throw new ApiError(422, "RESOURCE_PLAN_FORMAT_INVALID", "游戏课程计划必须上传DOC或DOCX文件");
+    if (["materials", "booklet"].includes(query.assetType) && extension !== "pdf") throw new ApiError(422, "RESOURCE_PDF_REQUIRED", "游戏课程材料和手册必须上传PDF文件");
+    const { data: resourcePackage, error: packageError } = await auth.data.from("curriculum_resource_packages").select("*").eq("id", id).maybeSingle();
+    if (packageError) throw new ApiError(500, "CURRICULUM_RESOURCE_READ_FAILED", "游戏课程资源包读取失败");
+    if (!resourcePackage || resourcePackage.created_by !== auth.userId || !["draft", "rejected"].includes(resourcePackage.status)) throw new ApiError(409, "CURRICULUM_RESOURCE_NOT_EDITABLE", "资源包不存在、无权编辑或已进入审核");
+    if (query.assetType !== "supplement") {
+      const { data: existing } = await auth.data.from("curriculum_resource_assets").select("id, storage_path").eq("package_id", id).eq("asset_type", query.assetType).maybeSingle();
+      if (existing && resourcePackage.status !== "rejected") throw new ApiError(409, "CURRICULUM_RESOURCE_ASSET_EXISTS", "该必填文件已经上传");
+      if (existing) {
+        const { error: removeError } = await mediaStorage.remove(existing.storage_path);
+        if (removeError) throw new ApiError(503, "CURRICULUM_RESOURCE_REPLACE_FAILED", "原课程资源文件暂时无法替换，请稍后重试");
+        const { error: metadataDeleteError } = await auth.data.from("curriculum_resource_assets").delete().eq("id", existing.id);
+        if (metadataDeleteError) throw new ApiError(500, "CURRICULUM_RESOURCE_REPLACE_FAILED", "原课程资源文件信息清理失败");
+      }
+    }
+    const path = `${auth.tenantId}/resources/${id}/${randomUUID()}.${extension}`;
+    const { error: uploadError } = await mediaStorage.upload(path, request.body, { contentType: query.mimeType, cacheControl: "3600", upsert: false });
+    if (uploadError) throw new ApiError(503, "CURRICULUM_RESOURCE_STORAGE_FAILED", "课程资源文件写入失败，请稍后重试");
+    const { data, error } = await auth.data.from("curriculum_resource_assets").insert({
+      tenant_id: auth.tenantId, package_id: id, asset_type: query.assetType,
+      file_name: query.fileName, mime_type: query.mimeType, size_bytes: request.body.length,
+      storage_path: path, created_by: auth.userId,
+    }).select().single();
+    if (error) throw new ApiError(500, "CURRICULUM_RESOURCE_ASSET_SAVE_FAILED", "课程资源文件信息保存失败");
+    await audit(auth, "curriculum_resource.asset_uploaded", "curriculum_resource_package", id, { assetType: query.assetType, fileName: query.fileName });
+    return reply.status(201).send({ item: data });
+  });
+
+  app.post("/api/curriculum-resource-packages/:id/submit", async (request) => {
+    const auth = await authenticate(request);
+    const { id } = z.object({ id: uuid }).parse(request.params);
+    const { data: resourcePackage, error: packageError } = await auth.data.from("curriculum_resource_packages").select("*").eq("id", id).maybeSingle();
+    if (packageError) throw new ApiError(500, "CURRICULUM_RESOURCE_READ_FAILED", "游戏课程资源包读取失败");
+    if (!resourcePackage || resourcePackage.created_by !== auth.userId || !["draft", "rejected"].includes(resourcePackage.status)) throw new ApiError(409, "CURRICULUM_RESOURCE_NOT_SUBMITTABLE", "资源包不存在、无权提交或已进入审核");
+    const { data: assets, error: assetError } = await auth.data.from("curriculum_resource_assets").select("asset_type").eq("package_id", id);
+    if (assetError) throw new ApiError(500, "CURRICULUM_RESOURCE_ASSETS_FAILED", "课程资源文件目录读取失败");
+    const types = new Set((assets ?? []).map((item) => item.asset_type));
+    const missing = [{ code: "plan", label: "游戏课程计划" }, { code: "materials", label: "游戏课程材料PDF" }, { code: "booklet", label: "游戏课程手册PDF" }].filter((item) => !types.has(item.code));
+    if (missing.length) throw new ApiError(422, "CURRICULUM_RESOURCE_INCOMPLETE", `提交前请补充：${missing.map((item) => item.label).join("、")}`);
+    const { data, error } = await serviceClient.schema(config.SUPABASE_SCHEMA).from("curriculum_resource_packages").update({ status: "pending", review_comment: null, reviewed_by: null, reviewed_at: null }).eq("id", id).eq("tenant_id", auth.tenantId).eq("created_by", auth.userId).in("status", ["draft", "rejected"]).select().single();
+    if (error) throw new ApiError(500, "CURRICULUM_RESOURCE_SUBMIT_FAILED", "课程资源包提交审核失败");
+    await audit(auth, "curriculum_resource.submitted", "curriculum_resource_package", id, {});
+    return { item: data };
+  });
+
+  app.patch("/api/curriculum-resource-packages/:id/review", async (request) => {
+    const auth = await authenticate(request);
+    requireResearcher(auth);
+    const { id } = z.object({ id: uuid }).parse(request.params);
+    const input = z.object({ decision: z.enum(["active", "rejected"]), comment: z.string().trim().max(2000).default("") }).superRefine((value, context) => {
+      if (value.decision === "rejected" && value.comment.length < 2) context.addIssue({ code: "custom", path: ["comment"], message: "退回资源包时请填写修改说明" });
+    }).parse(request.body);
+    const schema = serviceClient.schema(config.SUPABASE_SCHEMA);
+    const { data: resourcePackage, error: packageError } = await schema.from("curriculum_resource_packages").select("*").eq("id", id).eq("tenant_id", auth.tenantId).eq("status", "pending").maybeSingle();
+    if (packageError) throw new ApiError(500, "CURRICULUM_RESOURCE_READ_FAILED", "游戏课程资源包读取失败");
+    if (!resourcePackage) throw new ApiError(404, "CURRICULUM_RESOURCE_NOT_PENDING", "待审核资源包不存在或状态已变化");
+    const { data: assets, error: assetError } = await schema.from("curriculum_resource_assets").select("*").eq("package_id", id).order("created_at");
+    if (assetError) throw new ApiError(500, "CURRICULUM_RESOURCE_ASSETS_FAILED", "课程资源文件目录读取失败");
+    if (input.decision === "active") {
+      const extractedParts: string[] = [];
+      for (const asset of assets ?? []) {
+        const { data: buffer } = await mediaStorage.download(asset.storage_path);
+        if (!buffer) continue;
+        try {
+          const extracted = await extractDocumentText(buffer, asset.mime_type, asset.file_name);
+          if (extracted) extractedParts.push(`${asset.file_name}\n${extracted.slice(0, 16000)}`);
+        } catch {
+          // Supplemental images and unsupported legacy files remain downloadable but are not indexed as text.
+        }
+      }
+      await schema.from("professional_memories").upsert({
+        tenant_id: auth.tenantId, memory_type: "school_knowledge", source_resource_type: "curriculum_resource_package", source_resource_id: id,
+        title: resourcePackage.title, summary: resourcePackage.summary,
+        retrieval_text: [resourcePackage.summary, ...extractedParts].join("\n\n").slice(0, 48000),
+        applicability: { packageId: id, grades: resourcePackage.applicable_grades, themes: resourcePackage.themes },
+        evidence_refs: (assets ?? []).map((asset) => ({ assetId: asset.id, assetType: asset.asset_type, fileName: asset.file_name })),
+        quality_score: 0.8, status: "active", approved_by: auth.userId, approved_at: new Date().toISOString(), created_by: resourcePackage.created_by,
+      }, { onConflict: "tenant_id,memory_type,source_resource_type,source_resource_id" });
+    } else {
+      await schema.from("professional_memories").update({ status: "disabled", approved_by: null, approved_at: null }).eq("tenant_id", auth.tenantId).eq("source_resource_type", "curriculum_resource_package").eq("source_resource_id", id);
+    }
+    const { data, error } = await schema.from("curriculum_resource_packages").update({ status: input.decision, review_comment: input.comment || (input.decision === "active" ? "教研审核通过" : null), reviewed_by: auth.userId, reviewed_at: new Date().toISOString() }).eq("id", id).eq("tenant_id", auth.tenantId).eq("status", "pending").select().single();
+    if (error) throw new ApiError(500, "CURRICULUM_RESOURCE_REVIEW_FAILED", "课程资源包审核保存失败");
+    await audit(auth, `curriculum_resource.${input.decision}`, "curriculum_resource_package", id, { comment: input.comment });
+    return { item: data };
+  });
+
+  app.get("/api/curriculum-resource-assets/:id/download", async (request, reply) => {
+    const auth = await authenticate(request);
+    const { id } = z.object({ id: uuid }).parse(request.params);
+    const { data: asset, error } = await auth.data.from("curriculum_resource_assets").select("*").eq("id", id).maybeSingle();
+    if (error) throw new ApiError(500, "CURRICULUM_RESOURCE_ASSET_READ_FAILED", "课程资源文件读取失败");
+    if (!asset) throw new ApiError(404, "CURRICULUM_RESOURCE_ASSET_NOT_FOUND", "课程资源文件不存在或无权访问");
+    const { data: buffer, error: downloadError } = await mediaStorage.download(asset.storage_path);
+    if (downloadError || !buffer) throw new ApiError(503, "CURRICULUM_RESOURCE_DOWNLOAD_FAILED", "课程资源文件暂时无法下载");
+    return reply.header("Cache-Control", "private, no-store").header("Content-Type", asset.mime_type).header("Content-Disposition", `attachment; filename*=UTF-8''${encodeURIComponent(asset.file_name)}`).send(buffer);
   });
 
   app.post("/api/curriculum-clues/from-evidence", async (request, reply) => {

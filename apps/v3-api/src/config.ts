@@ -32,6 +32,7 @@ const envSchema = z.object({
   QWEN_TEXT_MODEL: z.string().trim().min(1).default("qwen3.7-plus-2026-05-26"),
   QWEN_VISION_MODEL: z.string().trim().min(1).default("qwen3.7-plus-2026-05-26"),
   QWEN_TIMEOUT_MS: z.coerce.number().int().min(5000).max(300000).default(120000),
+  QWEN_VISION_TIMEOUT_MS: z.coerce.number().int().min(30000).max(600000).default(240000),
   QWEN_MEDIA_ANALYSIS_ENABLED: z.enum(["true", "false"]).default("false"),
   QWEN_WEB_SEARCH_ENABLED: z.enum(["true", "false"]).default("true"),
   QWEN_MAX_MEDIA: z.coerce.number().int().min(0).max(3).default(2),

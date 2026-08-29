@@ -23,6 +23,8 @@ import type {
   RemoteCurriculumClue,
   RemoteCurriculumTemplate,
   RemoteCurriculumWorkspace,
+  RemoteCurriculumResourcePackage,
+  RemoteCurriculumResourceAsset,
   RemoteProfessionalMemory,
   RemoteResponsePlan,
   RemoteUser,
@@ -152,8 +154,21 @@ export const remoteApi = {
       method: "POST",
       body: body(value),
     }),
-  observations: () =>
-    request<{ items: RemoteObservation[] }>("/api/observations"),
+  observations: (filters: { classroomId?: string; academicYear?: string; semester?: string; year?: number; month?: number } = {}) => {
+    const params = new URLSearchParams();
+    if (filters.classroomId) params.set("classroomId", filters.classroomId);
+    if (filters.academicYear) params.set("academicYear", filters.academicYear);
+    if (filters.semester) params.set("semester", filters.semester);
+    if (filters.year) params.set("year", String(filters.year));
+    if (filters.month) params.set("month", String(filters.month));
+    return request<{ items: RemoteObservation[] }>(`/api/observations${params.size ? `?${params}` : ""}`);
+  },
+  downloadObservationArchive: (filters: { classroomId: string; year?: number; month?: number }) => {
+    const params = new URLSearchParams({ classroomId: filters.classroomId });
+    if (filters.year) params.set("year", String(filters.year));
+    if (filters.month) params.set("month", String(filters.month));
+    return download(`/api/observation-archive/document?${params}`, "同迹班级观察档案.docx");
+  },
   observation: (id: string) =>
     request<{
       item: RemoteObservation;
@@ -366,6 +381,18 @@ export const remoteApi = {
     request<{ items: RemoteProfessionalMemory[] }>(`/api/professional-memories${status ? `?status=${status}` : ""}`),
   updateProfessionalMemory: (id: string, value: { status: "active" | "disabled"; qualityScore?: number }) =>
     request<{ item: RemoteProfessionalMemory }>(`/api/professional-memories/${id}`, { method: "PATCH", body: body(value) }),
+  curriculumResourcePackages: () => request<{ items: RemoteCurriculumResourcePackage[] }>("/api/curriculum-resource-packages"),
+  createCurriculumResourcePackage: (value: { title: string; summary: string; applicableGrades: string[]; themes: string[] }) =>
+    request<{ item: RemoteCurriculumResourcePackage }>("/api/curriculum-resource-packages", { method: "POST", body: body(value) }),
+  uploadCurriculumResourceAsset: (packageId: string, assetType: RemoteCurriculumResourceAsset["asset_type"], file: File) => {
+    const extension = file.name.toLowerCase().split(".").pop();
+    const inferredMime = ({ doc: "application/msword", docx: "application/vnd.openxmlformats-officedocument.wordprocessingml.document", pdf: "application/pdf", jpg: "image/jpeg", jpeg: "image/jpeg", png: "image/png" } as Record<string, string>)[extension ?? ""];
+    const params = new URLSearchParams({ assetType, fileName: file.name, mimeType: file.type || inferredMime || "application/octet-stream" });
+    return request<{ item: RemoteCurriculumResourceAsset }>(`/api/curriculum-resource-packages/${packageId}/assets?${params}`, { method: "POST", headers: { "Content-Type": "application/octet-stream" }, body: file });
+  },
+  submitCurriculumResourcePackage: (id: string) => request<{ item: RemoteCurriculumResourcePackage }>(`/api/curriculum-resource-packages/${id}/submit`, { method: "POST" }),
+  reviewCurriculumResourcePackage: (id: string, value: { decision: "active" | "rejected"; comment?: string }) => request<{ item: RemoteCurriculumResourcePackage }>(`/api/curriculum-resource-packages/${id}/review`, { method: "PATCH", body: body(value) }),
+  downloadCurriculumResourceAsset: (id: string, fileName: string) => download(`/api/curriculum-resource-assets/${id}/download`, fileName),
   analysisFrameworks: () => request<{ items: RemoteAnalysisFramework[] }>("/api/analysis-frameworks"),
   createAnalysisFramework: (value: { frameworkType: RemoteAnalysisFramework["framework_type"]; code: string; name: string; description: string; dimensions: RemoteAnalysisFramework["dimensions"]; isDefault: boolean }) =>
     request<{ item: RemoteAnalysisFramework }>("/api/analysis-frameworks", { method: "POST", body: body(value) }),

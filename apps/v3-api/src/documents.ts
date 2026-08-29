@@ -152,6 +152,12 @@ export interface ObservationDocumentData {
   analyses?: Array<{ childId: string; childName: string; result: Record<string, any> }>;
 }
 
+export interface ObservationArchiveDocumentData {
+  schoolName: string;
+  archiveLabel: string;
+  records: ObservationDocumentData[];
+}
+
 function professionalAnalysisSections(analysis: Record<string, any>) {
   return [
     heading("AI观察：客观整理", HeadingLevel.HEADING_3),
@@ -183,7 +189,7 @@ function professionalAnalysisSections(analysis: Record<string, any>) {
   ];
 }
 
-export async function generateObservationDocument(input: ObservationDocumentData) {
+function observationDocumentChildren(input: ObservationDocumentData) {
   const { observation } = input;
   const subjectRows = [
     new TableRow({ children: ["幼儿", "角色", "本次情境特征"].map((text) => new TableCell({ children: [paragraph(text, true)] })) }),
@@ -228,7 +234,31 @@ export async function generateObservationDocument(input: ObservationDocumentData
     }
   }
   children.push(paragraph("说明：本文档只包含教师已确认内容；AI建议不替代教师专业判断。"));
+  return children;
+}
+
+export async function generateObservationDocument(input: ObservationDocumentData) {
+  const children = observationDocumentChildren(input);
   return Packer.toBuffer(baseDocument(`同迹·游戏观察记录（${input.variant === "professional" ? "专业版" : "教师原稿版"}）`, children));
+}
+
+export async function generateObservationArchiveDocument(input: ObservationArchiveDocumentData) {
+  const children: Array<Paragraph | Table> = [
+    label("园所", input.schoolName),
+    label("档案范围", input.archiveLabel),
+    label("记录数量", `${input.records.length}条`),
+    paragraph("本档案按观察发生时间顺序汇总；专业分析仅包含已经由教师确认采用的内容。"),
+  ];
+  input.records.forEach((record, index) => {
+    children.push(new Paragraph({
+      pageBreakBefore: index > 0,
+      heading: HeadingLevel.HEADING_1,
+      spacing: { before: 280, after: 140 },
+      children: [new TextRun({ text: `${index + 1}. ${record.observation.title}`, bold: true, font, color: "315C45" })],
+    }));
+    children.push(...observationDocumentChildren(record));
+  });
+  return Packer.toBuffer(baseDocument("同迹·班级游戏观察档案", children));
 }
 
 export interface CurriculumDocumentData {

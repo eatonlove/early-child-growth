@@ -42,6 +42,7 @@ const aiProvider = createAIProvider({
   textModel: config.QWEN_TEXT_MODEL,
   visionModel: config.QWEN_VISION_MODEL,
   timeoutMs: config.QWEN_TIMEOUT_MS,
+  visionTimeoutMs: config.QWEN_VISION_TIMEOUT_MS,
   webSearchEnabled: config.qwenWebSearchEnabled,
   fallbackToSimulated: config.aiFallbackToSimulated,
 });

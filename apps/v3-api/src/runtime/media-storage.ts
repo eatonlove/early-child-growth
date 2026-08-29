@@ -1,5 +1,5 @@
 import { createHmac, randomUUID, timingSafeEqual } from "node:crypto";
-import { mkdir, readFile, readdir, stat, writeFile } from "node:fs/promises";
+import { mkdir, readFile, readdir, stat, unlink, writeFile } from "node:fs/promises";
 import { dirname, extname, resolve, sep } from "node:path";
 import { config } from "../config.js";
 import { publicSupabaseUrl, serviceClient } from "../supabase.js";
@@ -18,6 +18,7 @@ interface MediaStorage {
   createSignedUploadUrl(path: string): Promise<{ data: { path: string; token: string } | null; error: StorageError | null }>;
   list(folder: string, options: { search?: string; limit?: number }): Promise<{ data: Array<{ name: string }> | null; error: StorageError | null }>;
   upload(path: string, body: Buffer, options: UploadOptions): Promise<{ error: StorageError | null }>;
+  remove(path: string): Promise<{ error: StorageError | null }>;
   download(path: string): Promise<{ data: Buffer | null; error: StorageError | null }>;
   createSignedUrl(path: string, expiresIn: number): Promise<{ data: { signedUrl: string } | null; error: StorageError | null }>;
   readSigned(path: string, expires: number, signature: string): Promise<Buffer | null>;
@@ -51,6 +52,11 @@ class SupabaseMediaStorage implements MediaStorage {
     } catch (reason) {
       return { data: null, error: { message: reason instanceof Error ? reason.message : "Storage download failed" } };
     }
+  }
+
+  async remove(path: string) {
+    const { error } = await this.bucket().remove([path]);
+    return { error };
   }
 
   async createSignedUrl(path: string, expiresIn: number) {
@@ -112,6 +118,16 @@ class LocalMediaStorage implements MediaStorage {
       return { data: await readFile(this.filePath(path)), error: null };
     } catch (error) {
       return { data: null, error: { message: error instanceof Error ? error.message : "Local media download failed" } };
+    }
+  }
+
+  async remove(path: string) {
+    try {
+      await unlink(this.filePath(path));
+      return { error: null };
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === "ENOENT") return { error: null };
+      return { error: { message: error instanceof Error ? error.message : "Local media delete failed" } };
     }
   }
 

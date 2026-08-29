@@ -3,6 +3,7 @@ import type { FastifyInstance } from "fastify";
 import { z } from "zod";
 import type { KnowledgeRow, MediaForAnalysis, ProfessionalMemoryForAnalysis } from "../ai/contracts.js";
 import { createAIProvider } from "../ai/provider.js";
+import { QwenRequestError } from "../ai/qianwen-client.js";
 import { resolveTenantPrompt } from "../ai/prompt-config.js";
 import { effectiveAnalysisResult, flattenAnalysisClaims, legacyClaimDecision, claimDecisions } from "../analysis-claims.js";
 import { config } from "../config.js";
@@ -64,6 +65,7 @@ const aiProvider = createAIProvider({
   textModel: config.QWEN_TEXT_MODEL,
   visionModel: config.QWEN_VISION_MODEL,
   timeoutMs: config.QWEN_TIMEOUT_MS,
+  visionTimeoutMs: config.QWEN_VISION_TIMEOUT_MS,
   webSearchEnabled: config.qwenWebSearchEnabled,
   fallbackToSimulated: config.aiFallbackToSimulated,
 });
@@ -91,7 +93,13 @@ async function queueAnalysisMemory(auth: Awaited<ReturnType<typeof authenticate>
 export async function observationRoutes(app: FastifyInstance) {
   app.get("/api/observations", async (request) => {
     const auth = await authenticate(request);
-    const query = z.object({ classroomId: uuid.optional(), childId: uuid.optional(), status: z.string().optional() }).parse(request.query);
+    const query = z.object({
+      classroomId: uuid.optional(), childId: uuid.optional(), status: z.string().optional(),
+      academicYear: z.string().trim().min(4).max(20).optional(),
+      semester: z.string().trim().min(1).max(40).optional(),
+      year: z.coerce.number().int().min(2000).max(2100).optional(),
+      month: z.coerce.number().int().min(1).max(12).optional(),
+    }).refine((value) => !value.month || value.year, { message: "按月筛选时必须同时提供年份", path: ["year"] }).parse(request.query);
     let observationIds: string[] | null = null;
     if (query.childId) {
       const { data: subjectRows, error: subjectError } = await auth.data.from("observation_subjects").select("observation_id").eq("child_id", query.childId);
@@ -99,10 +107,30 @@ export async function observationRoutes(app: FastifyInstance) {
       observationIds = (subjectRows ?? []).map((item) => item.observation_id);
       if (!observationIds.length) return { items: [] };
     }
+    let classroomIds: string[] | null = null;
+    if (query.academicYear || query.semester) {
+      let classroomBuilder = auth.data.from("classrooms").select("id");
+      if (query.academicYear) classroomBuilder = classroomBuilder.eq("academic_year", query.academicYear);
+      if (query.semester) classroomBuilder = classroomBuilder.eq("semester", query.semester);
+      const { data: classRows, error: classError } = await classroomBuilder;
+      if (classError) throw new ApiError(500, "OBSERVATION_CLASS_FILTER_FAILED", "观察档案班级范围读取失败");
+      classroomIds = (classRows ?? []).map((item) => item.id);
+      if (query.classroomId && !classroomIds.includes(query.classroomId)) return { items: [] };
+      if (!query.classroomId && !classroomIds.length) return { items: [] };
+    }
     let builder = auth.data.from("observations").select("*").order("occurred_at", { ascending: false });
     if (query.classroomId) builder = builder.eq("classroom_id", query.classroomId);
+    else if (classroomIds) builder = builder.in("classroom_id", classroomIds);
     if (observationIds) builder = builder.in("id", observationIds);
     if (query.status) builder = builder.eq("status", query.status);
+    if (query.year) {
+      const startMonth = query.month ?? 1;
+      const endYear = query.month === 12 || !query.month ? query.year + 1 : query.year;
+      const endMonth = query.month ? (query.month === 12 ? 1 : query.month + 1) : 1;
+      const start = new Date(`${query.year}-${String(startMonth).padStart(2, "0")}-01T00:00:00+08:00`);
+      const end = new Date(`${endYear}-${String(endMonth).padStart(2, "0")}-01T00:00:00+08:00`);
+      builder = builder.gte("occurred_at", start.toISOString()).lt("occurred_at", end.toISOString());
+    }
     const { data, error } = await builder;
     if (error) throw new ApiError(500, "OBSERVATION_LIST_FAILED", "观察记录读取失败");
     return { items: data ?? [] };
@@ -482,7 +510,11 @@ export async function observationRoutes(app: FastifyInstance) {
             const rightChild = right.applicability?.childId === child.id ? 1 : 0;
             const leftClass = left.applicability?.classroomId === observation.classroom_id ? 1 : 0;
             const rightClass = right.applicability?.classroomId === observation.classroom_id ? 1 : 0;
-            return (rightChild * 2 + rightClass + Number(right.quality_score)) - (leftChild * 2 + leftClass + Number(left.quality_score));
+            const leftTheme = Array.isArray(left.applicability?.themes) && left.applicability.themes.some((theme: string) => observation.theme.includes(theme) || theme.includes(observation.theme)) ? 1 : 0;
+            const rightTheme = Array.isArray(right.applicability?.themes) && right.applicability.themes.some((theme: string) => observation.theme.includes(theme) || theme.includes(observation.theme)) ? 1 : 0;
+            const leftGrade = Array.isArray(left.applicability?.grades) && left.applicability.grades.includes(classroom.grade) ? 1 : 0;
+            const rightGrade = Array.isArray(right.applicability?.grades) && right.applicability.grades.includes(classroom.grade) ? 1 : 0;
+            return (rightChild * 3 + rightClass * 2 + rightTheme * 2 + rightGrade + Number(right.quality_score)) - (leftChild * 3 + leftClass * 2 + leftTheme * 2 + leftGrade + Number(left.quality_score));
           })
           .slice(0, 8)
           .map((item: any) => ({ id: item.id, memoryType: item.memory_type, summary: item.summary, retrievalText: item.retrieval_text, applicability: item.applicability ?? {}, qualityScore: Number(item.quality_score) }));
@@ -553,6 +585,9 @@ export async function observationRoutes(app: FastifyInstance) {
       await cleanupCreatedAnalyses();
       if (reason instanceof ApiError) throw reason;
       request.log.error({ err: reason, observationId: id }, "multi-subject AI analysis failed");
+      if (reason instanceof QwenRequestError && reason.message === "千问请求超时") {
+        throw new ApiError(504, "AI_ANALYSIS_TIMEOUT", "本次图片或视频分析耗时较长，观察记录已保留，请稍后重试");
+      }
       throw new ApiError(502, "AI_ANALYSIS_FAILED", "AI分析暂时不可用，请稍后重试");
     }
     const { error: statusError } = await serviceClient

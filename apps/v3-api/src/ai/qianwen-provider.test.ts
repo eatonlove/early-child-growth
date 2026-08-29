@@ -146,6 +146,7 @@ describe("QianwenAIProvider", () => {
         { id: "evidence-2", evidenceType: "photo", mimeType: "image/jpeg", signedUrl: "https://storage.example/signed-photo" },
       ],
       history: [],
+      peerAnalysisSummaries: [{ subjectRole: "participant", subjectContext: "负责搬运积木", currentExperience: "能够调整积木位置。", responseTitles: ["继续搭建"] }],
     });
 
     expect(generated.provider).toBe("QianwenAIProvider");
@@ -156,7 +157,7 @@ describe("QianwenAIProvider", () => {
     expect(requestBody).toContain("video_url");
     expect(requestBody).toContain("image_url");
     expect(requestBody).not.toContain("不应发送的姓名");
-    expect(generated.promptVersion).toBe("observation-analysis.qwen.v6");
+    expect(generated.promptVersion).toBe("observation-analysis.qwen.v7");
 
     const apiRequest = JSON.parse(requestBody);
     expect(apiRequest.messages[0].content).toContain("逐幼儿循证分析助手");
@@ -173,6 +174,8 @@ describe("QianwenAIProvider", () => {
       evidenceAnchors: ["视频00:04-00:38黄色上衣幼儿", "图片左侧黄色上衣幼儿"],
     });
     expect(prompt.observation.observationFocus).toEqual(["材料与工具", "问题解决"]);
+    expect(prompt.individualizationRequirements.responseSpecificity).toContain("写明材料名称及一个可改变变量");
+    expect(prompt.alreadyGeneratedPeerAnalyses).toHaveLength(1);
   });
 
   it("adds an individual-attribution warning when group media has no target-child anchor", async () => {
@@ -214,6 +217,58 @@ describe("QianwenAIProvider", () => {
     });
 
     expect(generated.data.warnings).toContain("本次包含群体媒体但未提供目标幼儿的个体特征或画面定位锚点；无法明确归属的群体行为不得作为该幼儿事实。");
+  });
+
+  it("removes knowledge references outside the allowlist and keeps an audit warning", async () => {
+    const unknownCode = "SCI-M-UNKNOWN";
+    const boundaryResponse = {
+      ...response,
+      interpretations: [
+        ...response.interpretations,
+        { ...response.interpretations[0], indicatorCode: unknownCode },
+      ],
+      developmentReferences: [
+        ...response.developmentReferences,
+        { ...response.developmentReferences[0], indicatorCode: unknownCode },
+      ],
+      domainExperiences: response.domainExperiences.map((item, index) => index === 0
+        ? { ...item, indicatorCodes: [...item.indicatorCodes, unknownCode] }
+        : item),
+    };
+    const fetcher = vi.fn(async () => new Response(JSON.stringify({
+      choices: [{ message: { content: JSON.stringify(boundaryResponse) } }],
+    }), { status: 200, headers: { "Content-Type": "application/json" } }));
+    const provider = new QianwenAIProvider({
+      apiKey: "sk-test-only",
+      baseUrl: "https://dashscope.aliyuncs.com/compatible-mode/v1",
+      textModel: "qwen3.7-plus",
+      visionModel: "qwen3.7-plus",
+      timeoutMs: 5000,
+      visionTimeoutMs: 10000,
+    }, fetcher as typeof fetch);
+
+    const generated = await provider.analyzeObservation({
+      observation: {
+        teacher_observation: "幼儿移动桥墩后再次测试桥面。",
+        child_quote: null,
+        teacher_identification: "正在比较支撑位置。",
+        teacher_response: { category: "material", strategy: "提供不同支撑物", nextObservationFocus: "观察是否继续比较" },
+        scene: "建构区",
+        theme: "桥梁建构",
+        organization_stage: "process",
+      },
+      child: { id: "child-1", display_name: "演示幼儿", birth_month: "2022-05" },
+      classroom: { id: "class-1", grade: "middle" },
+      knowledge: [card],
+      evidence: [{ id: "evidence-1", evidence_type: "photo", mime_type: "image/jpeg" }],
+      media: [],
+      history: [],
+    });
+
+    expect(generated.data.interpretations.map((item) => item.indicatorCode)).not.toContain(unknownCode);
+    expect(generated.data.developmentReferences.map((item) => item.indicatorCode)).not.toContain(unknownCode);
+    expect(generated.data.domainExperiences.flatMap((item) => item.indicatorCodes)).not.toContain(unknownCode);
+    expect(generated.data.warnings.join(" ")).toContain("知识库外指标引用已自动移除");
   });
 
   it("canonicalizes evidence aliases for a text-only observation", async () => {

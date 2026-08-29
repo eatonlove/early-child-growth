@@ -35,6 +35,34 @@ describe("QwenClient", () => {
     expect(request.enable_thinking).toBe(false);
   });
 
+  it("uses a per-request timeout and does not retry an expensive timed-out request", async () => {
+    const fetcher = vi.fn(async (_url: string | URL | Request, init?: RequestInit) => new Promise<Response>((_resolve, reject) => {
+      init?.signal?.addEventListener("abort", () => reject(init.signal?.reason), { once: true });
+    }));
+    const client = new QwenClient({
+      apiKey: "sk-test-only",
+      baseUrl: "https://dashscope.aliyuncs.com/compatible-mode/v1",
+      timeoutMs: 5000,
+      retries: 2,
+      fetcher: fetcher as typeof fetch,
+    });
+
+    await expect(client.structuredCompletion({
+      model: "qwen3.7-plus",
+      messages: [{ role: "user", content: "生成JSON" }],
+      schemaName: "timeout_schema",
+      jsonSchema: {
+        type: "object",
+        additionalProperties: false,
+        required: ["answer"],
+        properties: { answer: { type: "string" } },
+      },
+      validator: z.object({ answer: z.string() }).strict(),
+      timeoutMs: 10,
+    })).rejects.toThrow("千问请求超时");
+    expect(fetcher).toHaveBeenCalledTimes(1);
+  });
+
   it("unwraps a JSON object serialized as a string by multimodal responses", async () => {
     const content = JSON.stringify(JSON.stringify({ answer: "视频证据草稿" }));
     const fetcher = vi.fn(async () => new Response(JSON.stringify({

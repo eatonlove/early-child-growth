@@ -234,6 +234,7 @@ export function RemoteDashboardPage({ user }: { user: RemoteUser }) {
         <div className="home-glass-content">
           <header className="home-hero-copy">
             <div>
+              <span className="home-school-name">{user.tenantName}</span>
               <h1><strong>同迹</strong><span>｜</span>每一次，从老师的观察开始</h1>
               <p>观察&nbsp;&nbsp;·&nbsp;&nbsp;识别&nbsp;&nbsp;·&nbsp;&nbsp;应答&nbsp;&nbsp;·&nbsp;&nbsp;拓展 <span>｜</span> 观察游戏情况，识别儿童经验，应答下一步支持</p>
             </div>
