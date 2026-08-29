@@ -124,7 +124,10 @@ describe("QwenClient", () => {
     const fetcher = vi.fn(async () => new Response(JSON.stringify({
       choices: [{ message: { content: JSON.stringify({
         facts: ["幼儿把两块木板并排放置"],
-        responsePlans: [{ experienceSupport: { suggestedQuestions: [] } }],
+        responsePlans: [{
+          materialSupport: { materials: [] },
+          experienceSupport: { suggestedQuestions: [] },
+        }],
       }) } }],
     }), { status: 200, headers: { "Content-Type": "application/json" } }));
     const client = new QwenClient({
@@ -137,6 +140,11 @@ describe("QwenClient", () => {
     const validator = z.object({
       facts: z.array(z.string()).min(1),
       responsePlans: z.array(z.object({
+        materialSupport: z.object({
+          materials: z.array(z.object({
+            name: z.string(), quantity: z.string(), variable: z.string(),
+          }).strict()).min(1),
+        }).strict(),
         experienceSupport: z.object({ suggestedQuestions: z.array(z.string()).min(1) }).strict(),
       }).strict()).min(1),
     }).strict();
@@ -153,6 +161,11 @@ describe("QwenClient", () => {
     expect(result.responsePlans[0]?.experienceSupport.suggestedQuestions).toEqual([
       "你接下来想先试哪一种办法？为什么？",
     ]);
+    expect(result.responsePlans[0]?.materialSupport.materials).toEqual([{
+      name: "沿用当前游戏材料",
+      quantity: "按现场需要",
+      variable: "保持幼儿自主选择，一次只调整一个可比较变量",
+    }]);
   });
 
   it("rejects Token Plan keys for backend automation", () => {

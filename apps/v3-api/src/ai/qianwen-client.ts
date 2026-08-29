@@ -89,6 +89,19 @@ function repairNonEvidentiaryDefaults(value: unknown) {
   if (!Array.isArray(responsePlans)) return value;
   for (const plan of responsePlans) {
     if (!plan || typeof plan !== "object") continue;
+    const materialSupport = (plan as { materialSupport?: unknown }).materialSupport;
+    if (materialSupport && typeof materialSupport === "object" && !Array.isArray(materialSupport)) {
+      const materials = (materialSupport as { materials?: unknown }).materials;
+      if (Array.isArray(materials) && materials.length === 0) {
+        // A non-material intervention can legitimately need no new object. Keep the
+        // standard plan shape explicit without asserting anything about the child.
+        (materialSupport as { materials: Array<{ name: string; quantity: string; variable: string }> }).materials = [{
+          name: "沿用当前游戏材料",
+          quantity: "按现场需要",
+          variable: "保持幼儿自主选择，一次只调整一个可比较变量",
+        }];
+      }
+    }
     const experienceSupport = (plan as { experienceSupport?: unknown }).experienceSupport;
     if (!experienceSupport || typeof experienceSupport !== "object" || Array.isArray(experienceSupport)) continue;
     const suggestedQuestions = (experienceSupport as { suggestedQuestions?: unknown }).suggestedQuestions;
