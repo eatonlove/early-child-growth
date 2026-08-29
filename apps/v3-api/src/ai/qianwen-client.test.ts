@@ -168,6 +168,38 @@ describe("QwenClient", () => {
     }]);
   });
 
+  it("regenerates once when strict business-schema validation fails", async () => {
+    let callCount = 0;
+    const fetcher = vi.fn(async (_url: string | URL | Request, _init?: RequestInit) => {
+      callCount += 1;
+      const content = callCount === 1 ? { answer: [] } : { answer: "结构修正完成" };
+      return new Response(JSON.stringify({ choices: [{ message: { content: JSON.stringify(content) } }] }), {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      });
+    });
+    const client = new QwenClient({
+      apiKey: "sk-test-only",
+      baseUrl: "https://dashscope.aliyuncs.com/compatible-mode/v1",
+      timeoutMs: 5000,
+      retries: 0,
+      fetcher: fetcher as typeof fetch,
+    });
+
+    const result = await client.structuredCompletion({
+      model: "qwen3.7-plus",
+      messages: [{ role: "user", content: "生成严格JSON" }],
+      schemaName: "schema_retry_test",
+      jsonSchema: {},
+      validator: z.object({ answer: z.string().min(1) }).strict(),
+    });
+
+    expect(result).toEqual({ answer: "结构修正完成" });
+    expect(fetcher).toHaveBeenCalledTimes(2);
+    const retryRequest = JSON.parse(String(fetcher.mock.calls[1]?.[1]?.body));
+    expect(retryRequest.messages.at(-1).content).toContain("严格业务Schema校验");
+  });
+
   it("rejects Token Plan keys for backend automation", () => {
     expect(() => new QwenClient({
       apiKey: "sk-sp-test-only",

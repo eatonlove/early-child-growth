@@ -129,18 +129,35 @@ export class QwenClient {
   }
 
   async structuredCompletion<T>(input: StructuredCompletionInput<T>): Promise<T> {
-    let lastError: unknown;
-    for (let attempt = 0; attempt <= this.retries; attempt += 1) {
+    let transientRetries = 0;
+    let schemaCorrectionUsed = false;
+    let activeInput = input;
+    while (true) {
       try {
-        return await this.request(input);
+        return await this.request(activeInput);
       } catch (error) {
-        lastError = error;
+        const schemaViolation = error instanceof QwenRequestError
+          && error.message.startsWith("千问结构化输出未通过业务校验");
+        if (schemaViolation && !schemaCorrectionUsed) {
+          schemaCorrectionUsed = true;
+          activeInput = {
+            ...input,
+            messages: [
+              ...input.messages,
+              {
+                role: "user",
+                content: `上一份JSON未通过严格业务Schema校验（${error.message}）。请丢弃上一份结果，严格按既定JSON Schema重新生成完整对象，不得增加字段、改变字段类型或返回空的必填数组。`,
+              },
+            ],
+          };
+          continue;
+        }
         const retryable = error instanceof QwenRequestError && error.retryable;
-        if (!retryable || attempt === this.retries) break;
-        await wait(400 * (2 ** attempt));
+        if (!retryable || transientRetries >= this.retries) throw error;
+        await wait(400 * (2 ** transientRetries));
+        transientRetries += 1;
       }
     }
-    throw lastError;
   }
 
   private async request<T>(input: StructuredCompletionInput<T>): Promise<T> {
