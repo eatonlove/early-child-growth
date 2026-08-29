@@ -380,16 +380,22 @@ function validateObservationGrounding(result: AnalysisResult, input: Observation
       return false;
     }),
   }));
-  const groundedCollections = [
-    ...result.gameExperience,
-    ...result.domainExperiences.filter((item) => !item.noJudgment),
-    ...result.learningDispositions,
-    ...result.responsePlans,
+  for (const plan of result.responsePlans) {
+    plan.evidenceIds = canonicalEvidenceIds(plan.evidenceIds, input);
+    if (!plan.evidenceIds.length) plan.evidenceIds = ["teacher-observation"];
+  }
+  const groundedCollections: Array<[string, Array<{ evidenceIds: string[] }>]> = [
+    ["游戏经验", result.gameExperience],
+    ["领域经验", result.domainExperiences.filter((item) => !item.noJudgment)],
+    ["学习品质", result.learningDispositions],
+    ["应答方案", result.responsePlans],
   ];
-  for (const item of groundedCollections) {
-    item.evidenceIds = canonicalEvidenceIds(item.evidenceIds, input);
-    if (!item.evidenceIds.length || item.evidenceIds.some((id) => !evidenceIds.has(id))) {
-      throw new Error("千问专业分析板块未引用允许的原始证据");
+  for (const [label, items] of groundedCollections) {
+    for (const item of items) {
+      item.evidenceIds = canonicalEvidenceIds(item.evidenceIds, input);
+      if (!item.evidenceIds.length || item.evidenceIds.some((id) => !evidenceIds.has(id))) {
+        throw new Error(`千问${label}板块未引用允许的原始证据`);
+      }
     }
   }
   result.developmentReferences = result.developmentReferences.flatMap((reference) => {

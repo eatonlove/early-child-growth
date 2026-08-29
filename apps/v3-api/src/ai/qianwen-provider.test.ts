@@ -109,9 +109,13 @@ describe("QianwenAIProvider", () => {
 
   it("applies the individual observation standard to text, image and video evidence without sending the child's identity", async () => {
     let requestBody = "";
+    const responseWithoutPlanEvidence = {
+      ...response,
+      responsePlans: response.responsePlans.map((plan) => ({ ...plan, evidenceIds: [] })),
+    };
     const fetcher = vi.fn(async (_url: string | URL | Request, init?: RequestInit) => {
       requestBody = String(init?.body ?? "");
-      return new Response(JSON.stringify({ choices: [{ message: { content: JSON.stringify(response) } }] }), {
+      return new Response(JSON.stringify({ choices: [{ message: { content: JSON.stringify(responseWithoutPlanEvidence) } }] }), {
         status: 200,
         headers: { "Content-Type": "application/json" },
       });
@@ -159,6 +163,7 @@ describe("QianwenAIProvider", () => {
     expect(generated.mediaAnalyzed).toBe(true);
     expect(generated.data.teacherComparison.teacherIdentification).toBe("幼儿开始比较材料与稳定性的关系。");
     expect(generated.data.teacherComparison.teacherResponse).toEqual(teacherResponse);
+    expect(generated.data.responsePlans.every((plan) => plan.evidenceIds.includes("teacher-observation"))).toBe(true);
     expect(generated.data.developmentReferences[0]).toMatchObject({ title: card.title, domain: card.domain, ageBand: card.age_band });
     expect(requestBody).toContain("video_url");
     expect(requestBody).toContain("image_url");
