@@ -5,6 +5,7 @@ import {
   IMMUTABLE_AI_SAFETY_PROMPT,
   QianwenAIProvider,
   aiPromptDefinitions,
+  assertNoForbiddenJudgment,
 } from "./qianwen-provider.js";
 import { buildScenarioAnalysis } from "./scenario-provider.js";
 
@@ -84,6 +85,11 @@ const response = {
 };
 
 describe("QianwenAIProvider", () => {
+  it("allows evidence-boundary language but rejects an actual child label", () => {
+    expect(() => assertNoForbiddenJudgment({ caution: "单次证据不足，不能据此判断幼儿是否达标。" })).not.toThrow();
+    expect(() => assertNoForbiddenJudgment({ conclusion: "该幼儿已经达标。" })).toThrow("幼儿标签化风险守卫：达标");
+    expect(() => assertNoForbiddenJudgment({ conclusion: "该幼儿能力差，需要重点纠正。" })).toThrow("幼儿标签化风险守卫：能力差");
+  });
   it("registers every configurable AI scene with a distinct code default", () => {
     expect(aiPromptDefinitions()).toHaveLength(10);
     expect(Object.keys(AI_PROMPT_DEFINITIONS)).toEqual([

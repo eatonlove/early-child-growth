@@ -228,10 +228,36 @@ function configuredPrompt(input: { prompt?: ResolvedAIPrompt }, key: AIPromptKey
   };
 }
 
-const forbiddenJudgment = /(达标|不达标|优秀|落后|正常儿童|异常儿童|能力差|综合评分|综合得分|班级排名|诊断为)/;
+const forbiddenJudgment = /(不达标|达标|优秀|落后|正常儿童|异常儿童|能力差|综合评分|综合得分|班级排名|诊断为)/g;
+const boundaryLanguage = /(不能|无法|不应|不得|不可|不宜|不作|不做|不进行|不生成|不形成|不输出|不用于|不代表|不支持|不建议|不要|避免|禁止|无依据|证据不足|不足以|尚不足以)/;
 
-function assertNoForbiddenJudgment(value: unknown) {
-  if (forbiddenJudgment.test(JSON.stringify(value))) throw new Error("千问输出触发幼儿标签化风险守卫");
+function stringValues(value: unknown): string[] {
+  if (typeof value === "string") return [value];
+  if (Array.isArray(value)) return value.flatMap(stringValues);
+  if (value && typeof value === "object") return Object.values(value).flatMap(stringValues);
+  return [];
+}
+
+export function assertNoForbiddenJudgment(value: unknown) {
+  for (const text of stringValues(value)) {
+    forbiddenJudgment.lastIndex = 0;
+    for (const match of text.matchAll(forbiddenJudgment)) {
+      const index = match.index ?? 0;
+      const clauseStart = Math.max(
+        text.lastIndexOf("。", index - 1), text.lastIndexOf("！", index - 1),
+        text.lastIndexOf("？", index - 1), text.lastIndexOf("；", index - 1),
+        text.lastIndexOf("\n", index - 1),
+      ) + 1;
+      const followingStops = ["。", "！", "？", "；", "\n"]
+        .map((separator) => text.indexOf(separator, index + match[0].length))
+        .filter((position) => position >= 0);
+      const clauseEnd = followingStops.length ? Math.min(...followingStops) : text.length;
+      const clause = text.slice(clauseStart, clauseEnd);
+      if (!boundaryLanguage.test(clause)) {
+        throw new Error(`千问输出触发幼儿标签化风险守卫：${match[0]}`);
+      }
+    }
+  }
 }
 
 function textSimilarity(left: string, right: string) {
