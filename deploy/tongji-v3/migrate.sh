@@ -148,6 +148,18 @@ else
   echo "观察教师署名与班内编号约束已就绪，跳过8.28迁移。"
 fi
 
+curriculum_resource_packages_ready="$(docker exec "$DB_CONTAINER" psql -U postgres -d postgres -Atc \
+  "select to_regclass('tongji_v3.curriculum_resource_packages') is not null
+      and to_regclass('tongji_v3.curriculum_resource_assets') is not null;")"
+
+if [ "$curriculum_resource_packages_ready" != "t" ]; then
+  docker exec -i "$DB_CONTAINER" psql -U postgres -d postgres \
+    -v ON_ERROR_STOP=1 --single-transaction \
+    < "$ROOT_DIR/apps/v3-api/supabase/migrations/20260829160000_curriculum_resource_packages.sql"
+else
+  echo "园本游戏课程资源包结构已就绪，跳过8.29迁移。"
+fi
+
 docker exec -i "$DB_CONTAINER" psql -U postgres -d postgres \
   -v ON_ERROR_STOP=1 --single-transaction \
   < "$ROOT_DIR/apps/v3-api/supabase/migrations/20260828084501_reload_ai_prompt_config_schema.sql"
