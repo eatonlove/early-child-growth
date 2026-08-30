@@ -37,12 +37,15 @@ describe("production AI prompt API", () => {
     const fetcher = vi.fn(async (input: string | URL | Request, init?: RequestInit) => {
       const url = String(input);
       calls.push({ url, init });
+      if (url.endsWith("/ai-model-config")) return new Response(JSON.stringify({ item: { model: "qwen3.7-flash", revision: 1 } }), { status: 200 });
       if (url.endsWith("/reset")) return new Response(JSON.stringify({ item: prompt }), { status: 200 });
       if (init?.method === "PUT") return new Response(JSON.stringify({ item: { ...prompt, source: "custom", revision: 1 } }), { status: 200 });
       return new Response(JSON.stringify({ immutableSafetyPrompt: "固定安全边界", items: [prompt] }), { status: 200 });
     });
     vi.stubGlobal("fetch", fetcher);
 
+    await remoteApi.aiModelConfig();
+    await remoteApi.updateAIModelConfig({ model: "qwen3.7-flash", expectedRevision: 0 });
     await remoteApi.aiPrompts();
     await remoteApi.updateAIPrompt("observation_analysis", {
       systemPrompt: "园所自定义提示词".repeat(20),
@@ -52,13 +55,17 @@ describe("production AI prompt API", () => {
     await remoteApi.resetAIPrompt("observation_analysis", 1);
 
     expect(calls.map((call) => call.url)).toEqual([
+      "/api/ai-model-config",
+      "/api/ai-model-config",
       "/api/ai-prompts",
       "/api/ai-prompts/observation_analysis",
       "/api/ai-prompts/observation_analysis/reset",
     ]);
     expect(calls[1]?.init?.method).toBe("PUT");
-    expect(JSON.parse(String(calls[1]?.init?.body))).toMatchObject({ expectedRevision: 0, changeNote: "测试修改" });
-    expect(calls[2]?.init?.method).toBe("POST");
-    expect(JSON.parse(String(calls[2]?.init?.body))).toEqual({ expectedRevision: 1 });
+    expect(JSON.parse(String(calls[1]?.init?.body))).toEqual({ model: "qwen3.7-flash", expectedRevision: 0 });
+    expect(calls[3]?.init?.method).toBe("PUT");
+    expect(JSON.parse(String(calls[3]?.init?.body))).toMatchObject({ expectedRevision: 0, changeNote: "测试修改" });
+    expect(calls[4]?.init?.method).toBe("POST");
+    expect(JSON.parse(String(calls[4]?.init?.body))).toEqual({ expectedRevision: 1 });
   });
 });

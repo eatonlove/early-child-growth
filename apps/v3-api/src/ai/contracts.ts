@@ -75,6 +75,7 @@ export interface ResolvedAIPrompt {
   version: string;
   source: "default" | "custom";
   revision: number;
+  model?: string;
 }
 
 const shortText = z.string().trim().min(1).max(2000);

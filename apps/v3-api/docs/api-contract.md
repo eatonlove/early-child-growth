@@ -180,15 +180,28 @@
 
 `decision` 可取 `adopted | abandoned`。AI原文保存在 `analysis_runs.structured_result`，教师确认说明和AI修订版本独立留痕。只有教师确认采用的分析才进入成长轨迹、周期报告和课程线索；不采用的分析不会成为正式证据。
 
-## 6. AI 提示词配置
+## 6. AI 模型与提示词配置
 
-仅教研员可以查看和修改本园所的 AI 场景提示词。系统默认提示词保留在代码中，园所修改以租户覆盖配置保存，不影响其他园所。
+仅教研员可以查看和修改本园所的统一 AI 模型与各场景提示词。模型配置只有一项，观察、报告、课程等全部 AI 场景共用；系统默认提示词保留在代码中，园所修改以租户覆盖配置保存，不影响其他园所。
 
 | 方法 | 路径 | 权限 | 作用 |
 |---|---|---|---|
+| GET | `/ai-model-config` | 教研员 | 返回当前生效模型、服务端默认模型、可选模型和修订号 |
+| PUT | `/ai-model-config` | 教研员 | 保存全场景共用模型，下一次所有 AI 调用立即生效 |
 | GET | `/ai-prompts` | 教研员 | 返回全部场景、系统默认内容、园所自定义内容、生效版本和固定安全约束 |
 | PUT | `/ai-prompts/:key` | 教研员 | 保存园所自定义提示词，下一次对应 AI 调用立即生效 |
 | POST | `/ai-prompts/:key/reset` | 教研员 | 删除园所覆盖配置并恢复系统默认提示词 |
+
+统一模型保存请求同样使用乐观并发修订号：
+
+```json
+{
+  "model": "qwen3.7-flash",
+  "expectedRevision": 0
+}
+```
+
+模型切换只影响后续请求。每次生成结果仍保存实际使用的 `model`，历史分析、报告与课程草案不会自动重跑。
 
 当前场景编码：
 
@@ -287,3 +300,5 @@ curriculum_plan
 | `REPORT_EVIDENCE_INSUFFICIENT` | 指定周期没有教师已采用的正式证据 |
 | `FOLLOW_UP_EVIDENCE_REQUIRED` | 应答效果验证缺少幼儿后续反应 |
 | `AI_PROMPT_VERSION_CONFLICT` | 提示词已被其他教研员修改，需要刷新后重试 |
+| `AI_MODEL_VERSION_CONFLICT` | 统一模型已被其他教研员修改，需要刷新后重试 |
+| `AI_MODEL_NOT_SUPPORTED` | 提交的模型不在当前可选范围内 |

@@ -240,23 +240,23 @@ function SimpleAnalysisBoard({
       <div className="simple-analysis-core">
         <article className="analysis-core-card observation">
           <header><span>01</span><div><strong>观察</strong><small>客观白描</small></div></header>
-          <div className="teacher-source"><b>教师记录</b><p>{observation.teacher_observation}</p></div>
+          <details className="teacher-source"><summary><b>教师记录</b><span className="teacher-source-toggle"><span>展开教师原稿</span><span>收起教师原稿</span></span></summary><div className="teacher-source-content"><p>{observation.teacher_observation}</p></div></details>
           <div className="ai-result"><b>AI整理</b><p>{result.objectiveSummary}</p>{result.facts.slice(0, 4).map((item, index) => <small key={index}>• {item.content}</small>)}</div>
         </article>
         <article className="analysis-core-card identification">
           <header><span>02</span><div><strong>识别</strong><small>结合《指南》五大领域</small></div></header>
-          <div className="teacher-source"><b>教师识别</b><p>{observation.teacher_identification}</p></div>
+          <details className="teacher-source"><summary><b>教师识别</b><span className="teacher-source-toggle"><span>展开教师原稿</span><span>收起教师原稿</span></span></summary><div className="teacher-source-content"><p>{observation.teacher_identification}</p></div></details>
           <div className="ai-result"><b>AI识别</b><p>{result.currentExperience}</p><div className="evidence-identification-list">{result.developmentReferences.slice(0, 6).map((item) => { const interpretation = result.interpretations.find((entry) => entry.indicatorCode === item.indicatorCode); return <article key={item.indicatorCode}><header><Badge tone="blue">{item.domain}</Badge><strong>{item.indicatorCode} · {item.title}</strong><span>{item.ageBand} · {item.status}</span></header><p><b>行为证据：</b>{item.evidenceStatement}</p><p><b>可能经验：</b>{interpretation?.content || "结合当前情境形成的待验证经验线索"}</p><small>证据边界：{interpretation?.limitation || item.missingEvidence}</small></article>; })}</div>{result.developmentReferences.length === 0 && <small>本次没有足够的个体直接证据关联《指南》指标，不作领域判断。</small>}</div>
         </article>
         <article className="analysis-core-card response">
           <header><span>03</span><div><strong>应答</strong><small>下一步支持与提升</small></div></header>
-          <div className="teacher-source"><b>教师原始应答</b><p>{observation.teacher_response.strategy}</p></div>
+          <details className="teacher-source"><summary><b>教师原始应答</b><span className="teacher-source-toggle"><span>展开教师原稿</span><span>收起教师原稿</span></span></summary><div className="teacher-source-content"><p>{observation.teacher_response.strategy}</p></div></details>
           <div className="ai-result"><b>AI建议</b>{responseSummary.slice(0, 5).map((item) => <p key={item}>• {item}</p>)}<small>下一次观察：{result.nextObservation.join("；") || observation.teacher_response.nextObservationFocus}</small></div>
         </article>
       </div>
 
       <details className="analysis-expansion">
-        <summary><span>拓展</span><strong>查看游戏经验、五大领域、学习品质与后续可能</strong><small>这些内容用于拓宽教师思考，不替代观察、识别、应答主结论。</small></summary>
+        <summary><span className="analysis-expansion-kicker">拓展</span><span className="analysis-expansion-copy"><strong>查看游戏经验、五大领域、学习品质与后续可能</strong><small>这些内容用于拓宽教师思考，不替代观察、识别、应答主结论。</small></span><span className="analysis-expansion-toggle"><span>展开内容</span><span>收起内容</span></span></summary>
         <div className="analysis-expansion-grid">
           <section><h3>游戏经验</h3>{result.gameExperience.map((item) => <p key={item.dimension}><b>{item.dimension}</b>{item.possibleExperience}</p>)}</section>
           <section><h3>五大领域</h3>{result.domainExperiences.map((item) => <p key={item.domain}><b>{item.domain}</b>{item.noJudgment ? "本次证据不足，不作判断" : item.possibleExperience}</p>)}</section>
@@ -325,6 +325,11 @@ export function RemoteObservationV32Page({ user }: { user: RemoteUser }) {
     if (archiveFilter.year && date.getFullYear() !== Number(archiveFilter.year)) return false;
     return !archiveFilter.month || date.getMonth() + 1 === Number(archiveFilter.month);
   });
+  const archiveExportReason = !archiveFilter.classroomId
+    ? "请先选择一个具体班级，档案将按班级生成"
+    : visibleObservations.length === 0
+      ? "当前筛选范围没有可导出的观察记录"
+      : "";
   const load = async () => {
     const [classes, childRows, rows, importRows] = await Promise.all([remoteApi.classrooms(), remoteApi.children(), remoteApi.observations(), remoteApi.observationImports()]);
     setClassrooms(classes.items.filter((item) => item.status === "active")); setChildren(childRows.items); setObservations(rows.items); setImports(importRows.items);
@@ -356,7 +361,8 @@ export function RemoteObservationV32Page({ user }: { user: RemoteUser }) {
     return () => { cancelled = true; window.clearInterval(timer); };
   }, [detail?.analysisJob?.id, detail?.analysisJob?.status]);
   useEffect(() => {
-    if (!archiveClassrooms.some((item) => item.id === archiveFilter.classroomId)) setArchiveFilter((current) => ({ ...current, classroomId: "" }));
+    if (archiveClassrooms.some((item) => item.id === archiveFilter.classroomId)) return;
+    setArchiveFilter((current) => ({ ...current, classroomId: archiveClassrooms.length === 1 ? archiveClassrooms[0].id : "" }));
   }, [archiveFilter.academicYear, archiveFilter.semester, classrooms]);
   useEffect(() => {
     if (!visibleObservations.some((item) => item.id === selected)) setSelected(visibleObservations[0]?.id || "");
@@ -442,7 +448,7 @@ export function RemoteObservationV32Page({ user }: { user: RemoteUser }) {
         <label><span>班级</span><select value={archiveFilter.classroomId} onChange={(event) => setArchiveFilter({ ...archiveFilter, classroomId: event.target.value })}><option value="">全部可访问班级</option>{archiveClassrooms.map((item) => <option value={item.id} key={item.id}>{item.name} · {item.academic_year} · {item.semester}</option>)}</select></label>
         <label><span>自然年（可选）</span><input type="number" min="2000" max="2100" placeholder="如 2026" value={archiveFilter.year} onChange={(event) => setArchiveFilter({ ...archiveFilter, year: event.target.value, month: event.target.value ? archiveFilter.month : "" })} /></label>
         <label><span>月份（可选）</span><select disabled={!archiveFilter.year} value={archiveFilter.month} onChange={(event) => setArchiveFilter({ ...archiveFilter, month: event.target.value })}><option value="">全年</option>{Array.from({ length: 12 }, (_, index) => index + 1).map((item) => <option value={item} key={item}>{item}月</option>)}</select></label>
-        <div className="archive-filter-actions"><span>当前 {visibleObservations.length} 条</span><button className="btn btn-secondary" disabled={busy || !archiveFilter.classroomId || visibleObservations.length === 0} title={!archiveFilter.classroomId ? "请选择一个班级后导出" : ""} onClick={() => void withBusy(() => remoteApi.downloadObservationArchive({ classroomId: archiveFilter.classroomId, year: archiveFilter.year ? Number(archiveFilter.year) : undefined, month: archiveFilter.month ? Number(archiveFilter.month) : undefined }))}><Download />导出当前档案</button></div>
+        <div className="archive-filter-actions"><span>当前 {visibleObservations.length} 条</span><button className="btn btn-secondary" aria-describedby="archive-export-hint" disabled={busy || Boolean(archiveExportReason)} title={archiveExportReason} onClick={() => void withBusy(() => remoteApi.downloadObservationArchive({ classroomId: archiveFilter.classroomId, year: archiveFilter.year ? Number(archiveFilter.year) : undefined, month: archiveFilter.month ? Number(archiveFilter.month) : undefined }))}><Download />导出当前档案</button><small id="archive-export-hint" className={archiveExportReason ? "archive-export-hint unavailable" : "archive-export-hint"}>{archiveExportReason || "将导出当前班级及所选时间范围内的观察Word档案"}</small></div>
       </div>
     </Panel>
     {imports.length > 0 && <details className="observation-import-ledger"><summary><strong>模板导入进度</strong><span>最近{Math.min(imports.length, 8)}份</span></summary><div>{imports.slice(0, 8).map((item) => <article key={item.id}><div><strong>{item.source_file_name}</strong><small>{new Date(item.created_at).toLocaleString("zh-CN")}</small></div><Badge tone={tone(item.status)}>{importStatusLabel[item.status]}</Badge>{item.status === "needs_review" && <button className="btn btn-secondary" onClick={() => { setImportResult(item); const fields = item.extracted_fields; const matched = (fields.subjects ?? []).map((subject, index) => { const child = children.find((childItem) => childItem.classroom_id === item.classroom_id && childItem.display_name.trim() === subject.displayName.trim()); return child ? { childId: child.id, role: index === 0 ? "primary" as const : subject.role === "primary" ? "participant" as const : subject.role, contextualFeature: subject.contextualFeature, evidenceAnchors: [] as string[] } : null; }).filter((subject): subject is SubjectDraft => Boolean(subject)); setForm((current) => ({ ...current, classroomId: item.classroom_id, sourceImportId: item.id, observerName: fields.observerName || user.displayName, occurredAt: localDateTime(fields.occurredAtText || "") || current.occurredAt, scene: fields.scene || current.scene, theme: fields.theme || current.theme, organizationStage: fields.organizationStage || current.organizationStage, subjects: matched.length ? matched : current.subjects, unlistedParticipantCount: fields.unlistedParticipantCount ?? 0, groupContext: fields.groupContext || "", teacherObservation: fields.objectiveObservation || "", teacherIdentification: fields.teacherIdentification || "", responseStrategy: fields.teacherResponseDraft || "", nextObservationFocus: fields.nextObservationFocus || "" })); setEntry("web"); }}>继续校对</button>}{item.observation_id && <button className="btn btn-secondary" onClick={() => setSelected(item.observation_id!)}>查看观察</button>}{item.failure_reason && <small className="import-failure">{item.failure_reason}</small>}</article>)}</div></details>}

@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from "react";
 import {
   Bot,
   CircleAlert,
+  Cpu,
   History,
   RotateCcw,
   Save,
@@ -10,7 +11,7 @@ import {
 } from "lucide-react";
 import { Badge, LoadingState, PageHeader, Panel } from "../components/ui";
 import { RemoteApiError, remoteApi } from "./api";
-import type { RemoteAIPrompt, RemoteAIPromptKey } from "./types";
+import type { RemoteAIModelConfig, RemoteAIPrompt, RemoteAIPromptKey } from "./types";
 
 const errorMessage = (reason: unknown) =>
   reason instanceof RemoteApiError ? reason.message : "操作失败，请稍后重试";
@@ -25,6 +26,8 @@ const formatUpdatedAt = (value: string | null) => {
 
 export function RemoteAIPromptPage() {
   const [items, setItems] = useState<RemoteAIPrompt[]>([]);
+  const [modelConfig, setModelConfig] = useState<RemoteAIModelConfig | null>(null);
+  const [modelDraft, setModelDraft] = useState("");
   const [selectedKey, setSelectedKey] = useState<RemoteAIPromptKey | null>(null);
   const [immutableSafetyPrompt, setImmutableSafetyPrompt] = useState("");
   const [draft, setDraft] = useState("");
@@ -36,6 +39,7 @@ export function RemoteAIPromptPage() {
 
   const selected = items.find((item) => item.key === selectedKey) ?? null;
   const dirty = Boolean(selected && draft !== selected.effectivePrompt);
+  const modelDirty = Boolean(modelConfig && modelDraft !== modelConfig.model);
   const promptValid = draft.trim().length >= 100 && draft.trim().length <= 30000;
   const groups = useMemo(() => {
     const result = new Map<string, RemoteAIPrompt[]>();
@@ -47,9 +51,11 @@ export function RemoteAIPromptPage() {
     setLoading(true);
     setError("");
     try {
-      const result = await remoteApi.aiPrompts();
+      const [result, modelResult] = await Promise.all([remoteApi.aiPrompts(), remoteApi.aiModelConfig()]);
       setItems(result.items);
       setImmutableSafetyPrompt(result.immutableSafetyPrompt);
+      setModelConfig(modelResult.item);
+      setModelDraft(modelResult.item.model);
       const next = result.items.find((item) => item.key === preferredKey) ?? result.items[0] ?? null;
       setSelectedKey(next?.key ?? null);
       setDraft(next?.effectivePrompt ?? "");
@@ -101,6 +107,23 @@ export function RemoteAIPromptPage() {
     }
   };
 
+  const saveModel = async () => {
+    if (!modelConfig || !modelDirty) return;
+    setBusy(true);
+    setError("");
+    setSuccess("");
+    try {
+      const result = await remoteApi.updateAIModelConfig({ model: modelDraft, expectedRevision: modelConfig.revision });
+      setModelConfig(result.item);
+      setModelDraft(result.item.model);
+      setSuccess("统一模型已保存，下一次所有 AI 场景调用都会使用该模型；已有分析结果不会重跑。");
+    } catch (reason) {
+      setError(errorMessage(reason));
+    } finally {
+      setBusy(false);
+    }
+  };
+
   const reset = async () => {
     if (!selected || selected.source !== "custom") return;
     if (!window.confirm(`确定将“${selected.name}”恢复为系统默认提示词吗？`)) return;
@@ -131,6 +154,30 @@ export function RemoteAIPromptPage() {
 
       {error && <div className="prompt-alert prompt-alert-error" role="alert"><CircleAlert />{error}</div>}
       {success && <div className="prompt-alert prompt-alert-success" role="status"><Sparkles />{success}</div>}
+
+      {modelConfig && <Panel
+        className="prompt-model-panel"
+        title="统一模型配置"
+        subtitle="观察分析、文档解析、报告、课程与提示词修订共用这一项配置。额度不足时切换，保存后从下一次调用生效。"
+        action={<Badge tone={modelConfig.source === "tenant" ? "orange" : "gray"}>{modelConfig.source === "tenant" ? "园所配置" : "系统默认"}</Badge>}
+      >
+        <div className="prompt-model-grid">
+          <Cpu />
+          <label>
+            <span>千问模型</span>
+            <select aria-label="千问模型" value={modelDraft} onChange={(event) => setModelDraft(event.target.value)} disabled={busy}>
+              {modelConfig.options.map((option) => <option value={option.value} key={option.value}>{option.label}</option>)}
+            </select>
+          </label>
+          <div className="prompt-model-description">
+            <strong>{modelConfig.options.find((item) => item.value === modelDraft)?.description}</strong>
+            <small>当前默认：{modelConfig.defaultModel} · 最近修改：{modelConfig.updatedByName ?? "系统维护"} · {formatUpdatedAt(modelConfig.updatedAt)}</small>
+          </div>
+          <button className="btn btn-primary" type="button" onClick={() => void saveModel()} disabled={busy || !modelDirty}>
+            <Save />{busy ? "正在保存…" : "保存统一模型"}
+          </button>
+        </div>
+      </Panel>}
 
       <div className="prompt-safety-banner">
         <ShieldCheck />

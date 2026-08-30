@@ -340,6 +340,17 @@ export interface RemoteAIPrompt {
   updatedByName: string | null;
 }
 
+export interface RemoteAIModelConfig {
+  model: string;
+  defaultModel: string;
+  source: "environment" | "tenant";
+  revision: number;
+  updatedAt: string | null;
+  updatedBy: string | null;
+  updatedByName: string | null;
+  options: Array<{ value: string; label: string; description: string }>;
+}
+
 export interface RemoteKnowledgeCard {
   id: string;
   code: string;

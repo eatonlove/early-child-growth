@@ -164,9 +164,18 @@ describe("QianwenAIProvider", () => {
       ],
       history: [],
       peerAnalysisSummaries: [{ subjectRole: "participant", subjectContext: "负责搬运积木", currentExperience: "能够调整积木位置。", responseTitles: ["继续搭建"] }],
+      prompt: {
+        key: "observation_analysis",
+        systemPrompt: AI_PROMPT_DEFINITIONS.observation_analysis.defaultSystemPrompt,
+        version: AI_PROMPT_DEFINITIONS.observation_analysis.defaultVersion,
+        source: "default",
+        revision: 0,
+        model: "qwen3.7-flash",
+      },
     });
 
     expect(generated.provider).toBe("QianwenAIProvider");
+    expect(generated.model).toBe("qwen3.7-flash");
     expect(generated.mediaAnalyzed).toBe(true);
     expect(generated.data.teacherComparison.teacherIdentification).toBe("幼儿开始比较材料与稳定性的关系。");
     expect(generated.data.teacherComparison.teacherResponse).toEqual(teacherResponse);
@@ -181,6 +190,7 @@ describe("QianwenAIProvider", () => {
     expect(generated.promptVersion).toBe("observation-analysis.qwen.v7");
 
     const apiRequest = JSON.parse(requestBody);
+    expect(apiRequest.model).toBe("qwen3.7-flash");
     expect(apiRequest.messages[0].content).toContain("逐幼儿循证分析助手");
     expect(apiRequest.messages.at(-1).content).toContain("丢弃上一次草稿");
     expect(apiRequest.messages[0].content).toContain("图片只能证明一个可见瞬间");

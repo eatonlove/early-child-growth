@@ -1,8 +1,8 @@
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { remoteApi } from "./api";
 import { RemoteAIPromptPage } from "./prompt-pages";
-import type { RemoteAIPrompt } from "./types";
+import type { RemoteAIModelConfig, RemoteAIPrompt } from "./types";
 
 const defaultPrompt = "你是逐幼儿观察分析助手。请严格区分客观事实、专业解释和待验证假设，并依据当前年龄段知识卡提出可执行应答，不得补造任何未提供的行为或语言。".repeat(2);
 const item: RemoteAIPrompt = {
@@ -24,8 +24,24 @@ const item: RemoteAIPrompt = {
   updatedBy: null,
   updatedByName: null,
 };
+const modelConfig: RemoteAIModelConfig = {
+  model: "qwen3.7-plus-2026-05-26",
+  defaultModel: "qwen3.7-plus-2026-05-26",
+  source: "environment",
+  revision: 0,
+  updatedAt: null,
+  updatedBy: null,
+  updatedByName: null,
+  options: [
+    { value: "qwen3.7-plus-2026-05-26", label: "qwen3.7-plus-2026-05-26", description: "当前默认模型。" },
+    { value: "qwen3.7-flash", label: "qwen3.7-flash", description: "日常快速分析。" },
+  ],
+};
 
-afterEach(() => vi.restoreAllMocks());
+afterEach(() => {
+  cleanup();
+  vi.restoreAllMocks();
+});
 
 describe("researcher AI prompt page", () => {
   it("lists the scene, exposes immutable safety and saves a tenant revision", async () => {
@@ -33,6 +49,7 @@ describe("researcher AI prompt page", () => {
       immutableSafetyPrompt: "禁止诊断、排名、标签化和编造证据。",
       items: [item],
     });
+    vi.spyOn(remoteApi, "aiModelConfig").mockResolvedValue({ item: modelConfig });
     const update = vi.spyOn(remoteApi, "updateAIPrompt").mockResolvedValue({
       item: {
         ...item,
@@ -61,5 +78,27 @@ describe("researcher AI prompt page", () => {
       changeNote: "加强观察重点",
     }));
     expect(await screen.findByText(/下一次该场景调用 AI 时立即采用新版本/)).toBeInTheDocument();
+  });
+
+  it("saves one shared model selection for every AI scene", async () => {
+    vi.spyOn(remoteApi, "aiPrompts").mockResolvedValue({
+      immutableSafetyPrompt: "禁止诊断、排名、标签化和编造证据。",
+      items: [item],
+    });
+    vi.spyOn(remoteApi, "aiModelConfig").mockResolvedValue({ item: modelConfig });
+    const update = vi.spyOn(remoteApi, "updateAIModelConfig").mockResolvedValue({
+      item: { ...modelConfig, model: "qwen3.7-flash", source: "tenant", revision: 1, updatedByName: "教研员" },
+    });
+
+    render(<RemoteAIPromptPage />);
+
+    fireEvent.change(await screen.findByLabelText("千问模型"), { target: { value: "qwen3.7-flash" } });
+    fireEvent.click(screen.getByRole("button", { name: "保存统一模型" }));
+
+    await waitFor(() => expect(update).toHaveBeenCalledWith({
+      model: "qwen3.7-flash",
+      expectedRevision: 0,
+    }));
+    expect(await screen.findByText(/下一次所有 AI 场景调用都会使用该模型/)).toBeInTheDocument();
   });
 });

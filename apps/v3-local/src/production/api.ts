@@ -1,5 +1,6 @@
 import type {
   RemoteAccount,
+  RemoteAIModelConfig,
   RemoteAIPrompt,
   RemoteAIPromptKey,
   RemoteAnalysisFramework,
@@ -302,6 +303,13 @@ export const remoteApi = {
     request<{ ok: true }>(`/api/accounts/${userId}/password`, {
       method: "PATCH",
       body: body({ password }),
+    }),
+  aiModelConfig: () =>
+    request<{ item: RemoteAIModelConfig }>("/api/ai-model-config"),
+  updateAIModelConfig: (value: { model: string; expectedRevision: number }) =>
+    request<{ item: RemoteAIModelConfig }>("/api/ai-model-config", {
+      method: "PUT",
+      body: body(value),
     }),
   aiPrompts: () =>
     request<{ immutableSafetyPrompt: string; items: RemoteAIPrompt[] }>("/api/ai-prompts"),

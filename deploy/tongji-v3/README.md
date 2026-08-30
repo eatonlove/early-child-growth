@@ -50,6 +50,10 @@ apps/v3-api/supabase/migrations/20260827055219_expand_observation_analysis_curri
 apps/v3-api/supabase/migrations/20260827150000_allow_tongji_word_documents.sql
 apps/v3-api/supabase/migrations/20260828081822_ai_prompt_configs.sql
 apps/v3-api/supabase/migrations/20260828084501_reload_ai_prompt_config_schema.sql
+apps/v3-api/supabase/migrations/20260828163000_observation_import_and_classroom_identity.sql
+apps/v3-api/supabase/migrations/20260829160000_curriculum_resource_packages.sql
+apps/v3-api/supabase/migrations/20260829190000_async_analysis_and_media_optimization.sql
+apps/v3-api/supabase/migrations/20260830092020_tenant_ai_model_config.sql
 ```
 
 托管 Supabase：

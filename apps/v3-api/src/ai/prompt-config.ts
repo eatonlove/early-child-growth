@@ -7,6 +7,7 @@ import {
   type AIPromptKey,
 } from "./qianwen-provider.js";
 import { promptView, type AIPromptConfigRow } from "./prompt-registry.js";
+import { resolveTenantAIModel } from "./model-config.js";
 
 export { promptView, type AIPromptConfigRow, type AIPromptConfigView } from "./prompt-registry.js";
 
@@ -22,13 +23,16 @@ export async function listTenantPromptConfigs(tenantId: string) {
 }
 
 export async function resolveTenantPrompt(tenantId: string, key: AIPromptKey): Promise<ResolvedAIPrompt> {
-  const { data, error } = await serviceClient
-    .schema(config.SUPABASE_SCHEMA)
-    .from("ai_prompt_configs")
-    .select("id, prompt_key, custom_prompt, base_prompt_version, revision, change_note, created_by, updated_by, created_at, updated_at")
-    .eq("tenant_id", tenantId)
-    .eq("prompt_key", key)
-    .maybeSingle();
+  const [{ data, error }, model] = await Promise.all([
+    serviceClient
+      .schema(config.SUPABASE_SCHEMA)
+      .from("ai_prompt_configs")
+      .select("id, prompt_key, custom_prompt, base_prompt_version, revision, change_note, created_by, updated_by, created_at, updated_at")
+      .eq("tenant_id", tenantId)
+      .eq("prompt_key", key)
+      .maybeSingle(),
+    resolveTenantAIModel(tenantId),
+  ]);
   if (error) throw new Error(`AI提示词配置读取失败：${error.message}`);
   const view = promptView(key, data as AIPromptConfigRow | null);
   return {
@@ -37,6 +41,7 @@ export async function resolveTenantPrompt(tenantId: string, key: AIPromptKey): P
     version: view.effectiveVersion,
     source: view.source,
     revision: view.revision,
+    model,
   };
 }
 

@@ -130,6 +130,17 @@ else
   echo "园所级AI提示词配置结构已就绪，跳过提示词迁移。"
 fi
 
+ai_model_configs_ready="$(docker exec "$DB_CONTAINER" psql -U postgres -d postgres -Atc \
+  "select to_regclass('tongji_v3.ai_model_configs') is not null;")"
+
+if [ "$ai_model_configs_ready" != "t" ]; then
+  docker exec -i "$DB_CONTAINER" psql -U postgres -d postgres \
+    -v ON_ERROR_STOP=1 --single-transaction \
+    < "$ROOT_DIR/apps/v3-api/supabase/migrations/20260830092020_tenant_ai_model_config.sql"
+else
+  echo "园所级统一AI模型配置结构已就绪，跳过模型配置迁移。"
+fi
+
 observation_identity_ready="$(docker exec "$DB_CONTAINER" psql -U postgres -d postgres -Atc \
   "select exists(
      select 1

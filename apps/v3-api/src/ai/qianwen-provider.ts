@@ -500,7 +500,7 @@ export class QianwenAIProvider implements AIAnalysisProvider {
     if (!this.options.webSearchEnabled) return [];
     try {
       const result = await this.client.structuredCompletion<SupportResearch>({
-        model: this.options.textModel,
+        model: input.prompt?.model || this.options.textModel,
         messages: [
           {
             role: "system",
@@ -541,7 +541,7 @@ export class QianwenAIProvider implements AIAnalysisProvider {
       content.push({ type: "text", text: "上一项图片是待提取的观察记录表，只识别其中可见字段。" });
     }
     const result = await this.client.structuredCompletion<ObservationDocumentExtraction>({
-      model: input.mediaUrl ? this.options.visionModel : this.options.textModel,
+      model: input.prompt?.model || (input.mediaUrl ? this.options.visionModel : this.options.textModel),
       messages: [{ role: "system", content: prompt.systemPrompt }, { role: "user", content }],
       schemaName: "tongji_observation_document_extraction",
       jsonSchema: observationDocumentExtractionJsonSchema,
@@ -551,7 +551,7 @@ export class QianwenAIProvider implements AIAnalysisProvider {
     return {
       data: result,
       provider: "QianwenAIProvider",
-      model: input.mediaUrl ? this.options.visionModel : this.options.textModel,
+      model: input.prompt?.model || (input.mediaUrl ? this.options.visionModel : this.options.textModel),
       promptVersion: prompt.version,
       mediaAnalyzed: Boolean(input.mediaUrl),
       notice: "千问AI只完成观察表字段提取；教师确认前不会形成观察记录或发展结论。",
@@ -643,7 +643,7 @@ export class QianwenAIProvider implements AIAnalysisProvider {
       content.push({ type: "text", text: `上一项媒体的证据ID为 ${media.id}，只能按该ID引用。` });
     }
     const request = {
-      model: input.media.length ? this.options.visionModel : this.options.textModel,
+      model: input.prompt?.model || (input.media.length ? this.options.visionModel : this.options.textModel),
       messages: [
         { role: "system", content: prompt.systemPrompt },
         { role: "user", content },
@@ -692,7 +692,7 @@ export class QianwenAIProvider implements AIAnalysisProvider {
     return {
       data: validated,
       provider: "QianwenAIProvider",
-      model: input.media.length ? this.options.visionModel : this.options.textModel,
+      model: input.prompt?.model || (input.media.length ? this.options.visionModel : this.options.textModel),
       promptVersion: prompt.version,
       mediaAnalyzed: input.media.length > 0,
       notice: input.media.length
@@ -705,7 +705,7 @@ export class QianwenAIProvider implements AIAnalysisProvider {
     const prompt = configuredPrompt(input, "analysis_revision");
     const compatibleInput = { ...input, original: normalizeAnalysisResult(input.original) };
     const result = await this.client.structuredCompletion<AnalysisResult>({
-      model: this.options.textModel,
+      model: input.prompt?.model || this.options.textModel,
       messages: [
         { role: "system", content: prompt.systemPrompt },
         { role: "user", content: JSON.stringify(compatibleInput) },
@@ -718,7 +718,7 @@ export class QianwenAIProvider implements AIAnalysisProvider {
     return {
       data: result,
       provider: "QianwenAIProvider",
-      model: this.options.textModel,
+      model: input.prompt?.model || this.options.textModel,
       promptVersion: prompt.version,
       mediaAnalyzed: false,
       notice: "千问AI已结合教师意见生成新版本，原稿和教师意见均保留；新版本仍需教师确认。",
@@ -728,7 +728,7 @@ export class QianwenAIProvider implements AIAnalysisProvider {
   async generateReport(input: ReportGenerationInput): Promise<AIGeneration<ReportContent>> {
     const prompt = configuredPrompt(input, "individual_period_report");
     const result = await this.client.structuredCompletion<ReportContent>({
-      model: this.options.textModel,
+      model: input.prompt?.model || this.options.textModel,
       messages: [
         { role: "system", content: prompt.systemPrompt },
         { role: "user", content: JSON.stringify({
@@ -762,7 +762,7 @@ export class QianwenAIProvider implements AIAnalysisProvider {
     return {
       data: result,
       provider: "QianwenAIProvider",
-      model: this.options.textModel,
+      model: input.prompt?.model || this.options.textModel,
       promptVersion: prompt.version,
       mediaAnalyzed: false,
       notice: "千问AI仅汇总教师已采用的连续证据生成报告草稿，仍需教师审核发布。",
@@ -777,7 +777,7 @@ export class QianwenAIProvider implements AIAnalysisProvider {
       return subjectRefs.get(childId);
     };
     const result = await this.client.structuredCompletion<ClassroomReportContent>({
-      model: this.options.textModel,
+      model: input.prompt?.model || this.options.textModel,
       messages: [
         { role: "system", content: prompt.systemPrompt },
         { role: "user", content: JSON.stringify({
@@ -818,7 +818,7 @@ export class QianwenAIProvider implements AIAnalysisProvider {
     return {
       data: result,
       provider: "QianwenAIProvider",
-      model: this.options.textModel,
+      model: input.prompt?.model || this.options.textModel,
       promptVersion: prompt.version,
       mediaAnalyzed: false,
       notice: "千问AI仅提炼班级共同兴趣、持续问题和后续建议；覆盖指标由系统计算，报告仍需教师审核发布。",
@@ -830,7 +830,7 @@ export class QianwenAIProvider implements AIAnalysisProvider {
     if (input.reportType === "classroom") {
       const existing = input.existingContent as ClassroomReportContent;
       const result = await this.client.structuredCompletion<ClassroomReportContent>({
-        model: this.options.textModel,
+        model: input.prompt?.model || this.options.textModel,
         messages: [
           { role: "system", content: prompt.systemPrompt },
           { role: "user", content: JSON.stringify({ reportType: input.reportType, existingReport: existing, teacherInstruction: input.instruction }) },
@@ -851,11 +851,11 @@ export class QianwenAIProvider implements AIAnalysisProvider {
         audience: "classroom" as const,
       });
       assertNoForbiddenJudgment(result);
-      return { data: result, provider: "QianwenAIProvider", model: this.options.textModel, promptVersion: prompt.version, mediaAnalyzed: false, notice: "千问AI已按教师意见修订班级报告，固定证据数据保持不变。" };
+      return { data: result, provider: "QianwenAIProvider", model: input.prompt?.model || this.options.textModel, promptVersion: prompt.version, mediaAnalyzed: false, notice: "千问AI已按教师意见修订班级报告，固定证据数据保持不变。" };
     }
     const existing = input.existingContent as ReportContent;
     const result = await this.client.structuredCompletion<ReportContent>({
-      model: this.options.textModel,
+      model: input.prompt?.model || this.options.textModel,
       messages: [
         { role: "system", content: prompt.systemPrompt },
         { role: "user", content: JSON.stringify({ reportType: input.reportType, existingReport: existing, teacherInstruction: input.instruction }) },
@@ -867,13 +867,13 @@ export class QianwenAIProvider implements AIAnalysisProvider {
     result.title = existing.title;
     result.audience = input.reportType;
     assertNoForbiddenJudgment(result);
-    return { data: result, provider: "QianwenAIProvider", model: this.options.textModel, promptVersion: prompt.version, mediaAnalyzed: false, notice: "千问AI已按教师意见修订报告表达，原有证据边界保持不变。" };
+    return { data: result, provider: "QianwenAIProvider", model: input.prompt?.model || this.options.textModel, promptVersion: prompt.version, mediaAnalyzed: false, notice: "千问AI已按教师意见修订报告表达，原有证据边界保持不变。" };
   }
 
   async generateCurriculum(input: CurriculumGenerationInput): Promise<AIGeneration<CurriculumDraft>> {
     const prompt = configuredPrompt(input, "curriculum_draft");
     const result = await this.client.structuredCompletion<CurriculumDraft>({
-      model: this.options.textModel,
+      model: input.prompt?.model || this.options.textModel,
       messages: [
         { role: "system", content: prompt.systemPrompt },
         { role: "user", content: JSON.stringify({
@@ -899,7 +899,7 @@ export class QianwenAIProvider implements AIAnalysisProvider {
     return {
       data: result,
       provider: "QianwenAIProvider",
-      model: this.options.textModel,
+      model: input.prompt?.model || this.options.textModel,
       promptVersion: prompt.version,
       mediaAnalyzed: false,
       notice: "千问AI已基于多时间点证据生成可编辑课程草案，课程路径仍由教师和教研员共同调整。",
@@ -909,7 +909,7 @@ export class QianwenAIProvider implements AIAnalysisProvider {
   async generateActivityOptions(input: CurriculumActivityOptionsInput): Promise<AIGeneration<CurriculumActivityOptions>> {
     const prompt = configuredPrompt(input, "curriculum_activity_options");
     const result = await this.client.structuredCompletion<CurriculumActivityOptions>({
-      model: this.options.textModel,
+      model: input.prompt?.model || this.options.textModel,
       messages: [
         { role: "system", content: prompt.systemPrompt },
         { role: "user", content: JSON.stringify({
@@ -926,13 +926,13 @@ export class QianwenAIProvider implements AIAnalysisProvider {
       validator: curriculumActivityOptionsSchema,
     });
     assertNoForbiddenJudgment(result);
-    return { data: result, provider: "QianwenAIProvider", model: this.options.textModel, promptVersion: prompt.version, mediaAnalyzed: false, notice: "千问AI已生成4个“课程题目+建议理由”方向，教师选择后才能继续生成深度课程计划。" };
+    return { data: result, provider: "QianwenAIProvider", model: input.prompt?.model || this.options.textModel, promptVersion: prompt.version, mediaAnalyzed: false, notice: "千问AI已生成4个“课程题目+建议理由”方向，教师选择后才能继续生成深度课程计划。" };
   }
 
   async generateCurriculumPlan(input: CurriculumPlanGenerationInput): Promise<AIGeneration<CurriculumPlanContent>> {
     const prompt = configuredPrompt(input, "curriculum_plan");
     const result = await this.client.structuredCompletion<CurriculumPlanContent>({
-      model: this.options.textModel,
+      model: input.prompt?.model || this.options.textModel,
       messages: [
         { role: "system", content: prompt.systemPrompt },
         { role: "user", content: JSON.stringify({
@@ -953,14 +953,14 @@ export class QianwenAIProvider implements AIAnalysisProvider {
     });
     result.themeOrigin.evidenceReferences = input.evidenceObservationIds;
     assertNoForbiddenJudgment(result);
-    return { data: result, provider: "QianwenAIProvider", model: this.options.textModel, promptVersion: prompt.version, mediaAnalyzed: false, notice: "千问AI已按园本模板生成课程地图；教师审核后方可进入四区七步N循环实施。" };
+    return { data: result, provider: "QianwenAIProvider", model: input.prompt?.model || this.options.textModel, promptVersion: prompt.version, mediaAnalyzed: false, notice: "千问AI已按园本模板生成课程地图；教师审核后方可进入四区七步N循环实施。" };
   }
 
   async clusterInterests(input: InterestClusteringInput): Promise<AIGeneration<InterestClusterResult>> {
     const prompt = configuredPrompt(input, "curriculum_interest_clustering");
     const allowedIds = new Set(input.observations.map((item) => item.id));
     const result = await this.client.structuredCompletion<InterestClusterResult>({
-      model: this.options.textModel,
+      model: input.prompt?.model || this.options.textModel,
       messages: [
         { role: "system", content: prompt.systemPrompt },
         { role: "user", content: JSON.stringify({ observations: input.observations }) },
@@ -987,7 +987,7 @@ export class QianwenAIProvider implements AIAnalysisProvider {
     return {
       data: result,
       provider: "QianwenAIProvider",
-      model: this.options.textModel,
+      model: input.prompt?.model || this.options.textModel,
       promptVersion: prompt.version,
       mediaAnalyzed: false,
       notice: "千问AI已按主题、场景和教师识别进行语义兴趣聚类，课程线索仍需教研审核。",

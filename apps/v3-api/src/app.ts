@@ -5,6 +5,7 @@ import Fastify from "fastify";
 import { config } from "./config.js";
 import { ApiError, registerErrorHandler } from "./http.js";
 import { authRoutes } from "./routes/auth.js";
+import { aiModelConfigRoutes } from "./routes/ai-model-config.js";
 import { aiPromptRoutes } from "./routes/ai-prompts.js";
 import { governanceRoutes } from "./routes/governance.js";
 import { evolutionRoutes } from "./routes/evolution.js";
@@ -66,6 +67,7 @@ export async function buildApp() {
     return reply.header("Cache-Control", "private, no-store").type(localMediaContentType(query.path)).send(body);
   });
   await authRoutes(app);
+  await aiModelConfigRoutes(app);
   await aiPromptRoutes(app);
   await managementRoutes(app);
   await observationRoutes(app);

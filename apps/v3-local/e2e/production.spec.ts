@@ -109,6 +109,21 @@ const aiPrompt = {
   updatedBy: null,
   updatedByName: null,
 };
+const aiModelConfig = {
+  model: "qwen3.7-plus-2026-05-26",
+  defaultModel: "qwen3.7-plus-2026-05-26",
+  source: "environment",
+  revision: 0,
+  updatedAt: null,
+  updatedBy: null,
+  updatedByName: null,
+  options: [
+    { value: "qwen3.7-plus-2026-05-26", label: "qwen3.7-plus-2026-05-26", description: "当前默认模型。" },
+    { value: "qwen3.7-flash-2026-07-15", label: "qwen3.7-flash-2026-07-15", description: "固定快速版本。" },
+    { value: "qwen3.7-flash", label: "qwen3.7-flash", description: "滚动快速版本。" },
+    { value: "qwen3.7-max-2026-06-08", label: "qwen3.7-max-2026-06-08", description: "固定高能力版本。" },
+  ],
+};
 
 async function mockApi(page: Page, role: "teacher" | "researcher", withAnalysis = false, withClassroomReport = false, withActiveAnalysisJob = false) {
   const analysisJob = {
@@ -138,6 +153,7 @@ async function mockApi(page: Page, role: "teacher" | "researcher", withAnalysis 
       : path === "/api/observation-templates" ? { items: [{ id: "33333333-3333-4333-8333-333333333333", code: "BUILDING", name: "建构游戏标准观察表", grade: null, scenes: ["建构区"], focus_options: ["材料选择与使用"], fields: ["连续动作"], version: 1 }] }
       : path === "/api/knowledge" ? { items: [], version: "guide-cn-2012.v1.0.0" }
       : path === "/api/accounts" ? { items: [{ user_id: "teacher-id", username: "teacher", display_name: "陈老师", role: "teacher", status: "active", classroom_ids: [classroom.id] }] }
+      : path === "/api/ai-model-config" ? { item: aiModelConfig }
       : path === "/api/ai-prompts" ? { immutableSafetyPrompt: "禁止诊断、排名、标签化和编造证据。", items: [aiPrompt] }
       : path === "/api/quality-reviews" ? { items: [] }
       : path === "/api/export-requests" ? { items: [] }
@@ -247,6 +263,12 @@ test("0830建议页面采用单列、折叠和精确主题筛选", async ({ page
   const aiPositions = await aiRows.evaluateAll((elements) => elements.map((element) => ({ x: element.getBoundingClientRect().x, y: element.getBoundingClientRect().y })));
   expect(new Set(aiPositions.map((item) => Math.round(item.x))).size).toBe(1);
   expect(aiPositions[1].y).toBeGreaterThan(aiPositions[0].y);
+  await expect(page.locator(".teacher-source")).toHaveCount(3);
+  await expect(page.locator(".teacher-source[open]")).toHaveCount(0);
+  await expect(page.getByText("展开内容", { exact: true })).toBeVisible();
+  await page.getByText("展开内容", { exact: true }).click();
+  await expect(page.getByText("收起内容", { exact: true })).toBeVisible();
+  await expect(page.getByRole("button", { name: "导出当前档案" })).toBeEnabled();
 
   await page.goto("/growth");
   await expect(page.getByRole("heading", { name: "机器人搭建与加固" })).toBeVisible();
@@ -326,6 +348,8 @@ test("生产教研员端可查看并编辑全部AI场景提示词", async ({ pag
   await page.getByRole("button", { name: /提示词配置/ }).click();
   await expect(page.getByRole("heading", { name: "提示词配置" })).toBeVisible();
   await expect(page.getByText("安全与循证底线不可修改")).toBeVisible();
+  await expect(page.getByRole("heading", { name: "统一模型配置" })).toBeVisible();
+  await expect(page.getByLabel("千问模型")).toHaveValue("qwen3.7-plus-2026-05-26");
   await expect(page.getByRole("heading", { name: "逐幼儿观察分析" })).toBeVisible();
   await expect(page.getByLabel(/园所场景提示词/)).toHaveValue(/逐幼儿循证分析助手/);
 });

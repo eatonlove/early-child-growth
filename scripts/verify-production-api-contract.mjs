@@ -3,7 +3,7 @@ import path from "node:path";
 import process from "node:process";
 
 const root = process.cwd();
-const routeFiles = ["auth.ts", "management.ts", "observations.ts", "knowledge.ts", "governance.ts", "outcomes.ts", "evolution.ts", "ai-prompts.ts"];
+const routeFiles = ["auth.ts", "management.ts", "observations.ts", "knowledge.ts", "governance.ts", "outcomes.ts", "evolution.ts", "ai-model-config.ts", "ai-prompts.ts"];
 const backendSource = (
   await Promise.all([
     ...routeFiles.map((file) => readFile(path.join(root, "apps/v3-api/src/routes", file), "utf8")),
@@ -63,6 +63,8 @@ const contract = [
   ["POST", "/api/accounts", true],
   ["PATCH", "/api/accounts/:userId/status", true],
   ["PATCH", "/api/accounts/:userId/password", true],
+  ["GET", "/api/ai-model-config", true],
+  ["PUT", "/api/ai-model-config", true],
   ["GET", "/api/ai-prompts", true],
   ["PUT", "/api/ai-prompts/:key", true],
   ["POST", "/api/ai-prompts/:key/reset", true],
