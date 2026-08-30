@@ -121,9 +121,7 @@ describe("QianwenAIProvider", () => {
     const fetcher = vi.fn(async (_url: string | URL | Request, init?: RequestInit) => {
       requestCount += 1;
       requestBody = String(init?.body ?? "");
-      const result = requestCount === 1
-        ? { ...responseWithoutPlanEvidence, currentExperience: "该幼儿在本次活动中表现落后。" }
-        : responseWithoutPlanEvidence;
+      const result = { ...responseWithoutPlanEvidence, currentExperience: "该幼儿在本次活动中表现落后。" };
       return new Response(JSON.stringify({ choices: [{ message: { content: JSON.stringify(result) } }] }), {
         status: 200,
         headers: { "Content-Type": "application/json" },
@@ -173,6 +171,8 @@ describe("QianwenAIProvider", () => {
     expect(generated.data.teacherComparison.teacherIdentification).toBe("幼儿开始比较材料与稳定性的关系。");
     expect(generated.data.teacherComparison.teacherResponse).toEqual(teacherResponse);
     expect(fetcher).toHaveBeenCalledTimes(2);
+    expect(generated.data.currentExperience).toContain("不作横向比较");
+    expect(generated.data.warnings.join(" ")).toContain("已安全移除");
     expect(generated.data.responsePlans.every((plan) => plan.evidenceIds.includes("teacher-observation"))).toBe(true);
     expect(generated.data.developmentReferences[0]).toMatchObject({ title: card.title, domain: card.domain, ageBand: card.age_band });
     expect(requestBody).toContain("video_url");

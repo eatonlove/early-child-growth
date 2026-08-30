@@ -240,10 +240,9 @@ function stringValues(value: unknown): string[] {
   return [];
 }
 
-export function assertNoForbiddenJudgment(value: unknown) {
-  for (const text of stringValues(value)) {
-    forbiddenJudgment.lastIndex = 0;
-    for (const match of text.matchAll(forbiddenJudgment)) {
+function unsafeJudgment(text: string) {
+  forbiddenJudgment.lastIndex = 0;
+  for (const match of text.matchAll(forbiddenJudgment)) {
       const index = match.index ?? 0;
       const clauseStart = Math.max(
         text.lastIndexOf("。", index - 1), text.lastIndexOf("！", index - 1),
@@ -258,10 +257,34 @@ export function assertNoForbiddenJudgment(value: unknown) {
       const isolatedLabel = clause.trim().replace(/[“”'"、，：:（）()]/g, "") === match[0];
       const unsafe = unconditionalJudgments.has(match[0]) || childLabelContext.test(clause) || isolatedLabel;
       if (!boundaryLanguage.test(clause) && unsafe) {
-        throw new Error(`千问输出触发幼儿标签化风险守卫：${match[0]}`);
+        return match[0];
       }
-    }
   }
+  return null;
+}
+
+export function assertNoForbiddenJudgment(value: unknown) {
+  for (const text of stringValues(value)) {
+    const unsafe = unsafeJudgment(text);
+    if (unsafe) throw new Error(`千问输出触发幼儿标签化风险守卫：${unsafe}`);
+  }
+}
+
+function sanitizeForbiddenJudgments<T>(value: T) {
+  let count = 0;
+  const walk = (item: unknown): unknown => {
+    if (typeof item === "string") {
+      if (!unsafeJudgment(item)) return item;
+      count += 1;
+      return "现有证据只支持描述本次行为线索，不作横向比较或稳定发展判断。";
+    }
+    if (Array.isArray(item)) return item.map(walk);
+    if (item && typeof item === "object") {
+      return Object.fromEntries(Object.entries(item).map(([key, nested]) => [key, walk(nested)]));
+    }
+    return item;
+  };
+  return { value: walk(value) as T, count };
 }
 
 function textSimilarity(left: string, right: string) {
@@ -632,6 +655,7 @@ export class QianwenAIProvider implements AIAnalysisProvider {
     } satisfies Parameters<QwenClient["structuredCompletion"]>[0];
     let result = await this.client.structuredCompletion<AnalysisResult>(request);
     let validated: AnalysisResult;
+    let sanitizedJudgmentCount = 0;
     try {
       validated = validateObservationGrounding(result, input, cards);
     } catch {
@@ -645,7 +669,22 @@ export class QianwenAIProvider implements AIAnalysisProvider {
           },
         ],
       });
-      validated = validateObservationGrounding(result, input, cards);
+      try {
+        validated = validateObservationGrounding(result, input, cards);
+      } catch (secondReason) {
+        const labelViolation = secondReason instanceof Error
+          && secondReason.message.startsWith("千问输出触发幼儿标签化风险守卫");
+        if (!labelViolation) throw secondReason;
+        const sanitized = sanitizeForbiddenJudgments(result);
+        sanitizedJudgmentCount = sanitized.count;
+        validated = validateObservationGrounding(sanitized.value, input, cards);
+      }
+    }
+    if (sanitizedJudgmentCount) {
+      validated.warnings = [...new Set([
+        `模型生成的${sanitizedJudgmentCount}处标签化或横向评价措辞已安全移除，请教师重点复核相关板块。`,
+        ...validated.warnings,
+      ])].slice(0, 8);
     }
     validated.externalSupportReferences = externalSupportReferences;
     assertDistinctAnalysis(validated);
