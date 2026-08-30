@@ -141,6 +141,23 @@ else
   echo "园所级统一AI模型配置结构已就绪，跳过模型配置迁移。"
 fi
 
+observation_focus_category_ready="$(docker exec "$DB_CONTAINER" psql -U postgres -d postgres -Atc \
+  "select exists(
+     select 1
+     from information_schema.columns
+     where table_schema = 'tongji_v3'
+       and table_name = 'observations'
+       and column_name = 'observation_focus_category'
+   );")"
+
+if [ "$observation_focus_category_ready" != "t" ]; then
+  docker exec -i "$DB_CONTAINER" psql -U postgres -d postgres \
+    -v ON_ERROR_STOP=1 --single-transaction \
+    < "$ROOT_DIR/apps/v3-api/supabase/migrations/20260830144512_add_observation_focus_category.sql"
+else
+  echo "观察聚焦单选字段已就绪，跳过8.30迁移。"
+fi
+
 observation_identity_ready="$(docker exec "$DB_CONTAINER" psql -U postgres -d postgres -Atc \
   "select exists(
      select 1

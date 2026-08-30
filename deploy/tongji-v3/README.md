@@ -54,6 +54,7 @@ apps/v3-api/supabase/migrations/20260828163000_observation_import_and_classroom_
 apps/v3-api/supabase/migrations/20260829160000_curriculum_resource_packages.sql
 apps/v3-api/supabase/migrations/20260829190000_async_analysis_and_media_optimization.sql
 apps/v3-api/supabase/migrations/20260830092020_tenant_ai_model_config.sql
+apps/v3-api/supabase/migrations/20260830144512_add_observation_focus_category.sql
 ```
 
 托管 Supabase：
