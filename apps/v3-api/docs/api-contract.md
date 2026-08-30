@@ -301,4 +301,6 @@ curriculum_plan
 | `FOLLOW_UP_EVIDENCE_REQUIRED` | 应答效果验证缺少幼儿后续反应 |
 | `AI_PROMPT_VERSION_CONFLICT` | 提示词已被其他教研员修改，需要刷新后重试 |
 | `AI_MODEL_VERSION_CONFLICT` | 统一模型已被其他教研员修改，需要刷新后重试 |
-| `AI_MODEL_NOT_SUPPORTED` | 提交的模型不在当前可选范围内 |
+| `AI_MODEL_INVALID` | 模型 ID 格式无效；仅支持3-160位字母、数字及 `. _ : / -` |
+
+统一模型配置接口会返回常用模型建议，但建议列表不是白名单。教研员可直接输入千问控制台提供的模型 ID；系统保存格式有效的 ID，并在下一次 AI 调用时由服务商验证模型权限、额度和可用性。

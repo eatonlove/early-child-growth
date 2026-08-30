@@ -2,7 +2,7 @@ import type { FastifyInstance } from "fastify";
 import { z } from "zod";
 import {
   aiModelConfigView,
-  isSelectableAIModel,
+  isValidAIModelKey,
   readTenantAIModelConfig,
   type AIModelConfigRow,
 } from "../ai/model-config.js";
@@ -44,8 +44,8 @@ export async function aiModelConfigRoutes(app: FastifyInstance) {
     const auth = await authenticate(request);
     requireResearcher(auth);
     const input = updateInput.parse(request.body);
-    if (!isSelectableAIModel(input.model)) {
-      throw new ApiError(400, "AI_MODEL_NOT_SUPPORTED", "该模型不在当前可选范围内");
+    if (!isValidAIModelKey(input.model)) {
+      throw new ApiError(400, "AI_MODEL_INVALID", "模型ID格式不正确，请输入3-160位字母、数字或 . _ : / -");
     }
     const schema = serviceClient.schema(config.SUPABASE_SCHEMA);
     const current = await readTenantAIModelConfig(auth.tenantId).catch((reason) => {

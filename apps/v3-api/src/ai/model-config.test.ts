@@ -6,7 +6,7 @@ vi.hoisted(() => {
   process.env.SUPABASE_SERVICE_ROLE_KEY = "test-service-role-key-1234567890";
 });
 
-import { aiModelConfigView, aiModelOptions, isSelectableAIModel, type AIModelConfigRow } from "./model-config.js";
+import { aiModelConfigView, aiModelOptions, isValidAIModelKey, type AIModelConfigRow } from "./model-config.js";
 import { config } from "../config.js";
 
 const row: AIModelConfigRow = {
@@ -29,11 +29,14 @@ describe("tenant-wide AI model configuration", () => {
     expect(view.options.some((item) => item.value === view.model)).toBe(true);
   });
 
-  it("exposes one tenant selection and only accepts listed models", () => {
+  it("exposes suggested models and accepts valid custom model IDs", () => {
     const view = aiModelConfigView(row);
     expect(view).toMatchObject({ model: "qwen3.7-flash", source: "tenant", revision: 2 });
-    expect(isSelectableAIModel("qwen3.7-flash-2026-07-15")).toBe(true);
-    expect(isSelectableAIModel("unknown-model")).toBe(false);
+    expect(isValidAIModelKey("qwen3.7-flash-2026-07-15")).toBe(true);
+    expect(isValidAIModelKey("qwen3.7-plus-2026-08-30-custom")).toBe(true);
+    expect(isValidAIModelKey("vendor/qwen:latest")).toBe(true);
+    expect(isValidAIModelKey("bad model")).toBe(false);
+    expect(isValidAIModelKey("中文模型")).toBe(false);
     expect(new Set(aiModelOptions().map((item) => item.value)).size).toBe(aiModelOptions().length);
   });
 });

@@ -24,6 +24,8 @@ const formatUpdatedAt = (value: string | null) => {
   }).format(new Date(value));
 };
 
+const modelKeyPattern = /^[A-Za-z0-9][A-Za-z0-9._:/-]{2,159}$/;
+
 export function RemoteAIPromptPage() {
   const [items, setItems] = useState<RemoteAIPrompt[]>([]);
   const [modelConfig, setModelConfig] = useState<RemoteAIModelConfig | null>(null);
@@ -39,7 +41,10 @@ export function RemoteAIPromptPage() {
 
   const selected = items.find((item) => item.key === selectedKey) ?? null;
   const dirty = Boolean(selected && draft !== selected.effectivePrompt);
-  const modelDirty = Boolean(modelConfig && modelDraft !== modelConfig.model);
+  const normalizedModelDraft = modelDraft.trim();
+  const modelDirty = Boolean(modelConfig && normalizedModelDraft !== modelConfig.model);
+  const modelValid = modelKeyPattern.test(normalizedModelDraft);
+  const selectedModelOption = modelConfig?.options.find((item) => item.value === normalizedModelDraft);
   const promptValid = draft.trim().length >= 100 && draft.trim().length <= 30000;
   const groups = useMemo(() => {
     const result = new Map<string, RemoteAIPrompt[]>();
@@ -108,12 +113,12 @@ export function RemoteAIPromptPage() {
   };
 
   const saveModel = async () => {
-    if (!modelConfig || !modelDirty) return;
+    if (!modelConfig || !modelDirty || !modelValid) return;
     setBusy(true);
     setError("");
     setSuccess("");
     try {
-      const result = await remoteApi.updateAIModelConfig({ model: modelDraft, expectedRevision: modelConfig.revision });
+      const result = await remoteApi.updateAIModelConfig({ model: normalizedModelDraft, expectedRevision: modelConfig.revision });
       setModelConfig(result.item);
       setModelDraft(result.item.model);
       setSuccess("统一模型已保存，下一次所有 AI 场景调用都会使用该模型；已有分析结果不会重跑。");
@@ -164,16 +169,31 @@ export function RemoteAIPromptPage() {
         <div className="prompt-model-grid">
           <Cpu />
           <label>
-            <span>千问模型</span>
-            <select aria-label="千问模型" value={modelDraft} onChange={(event) => setModelDraft(event.target.value)} disabled={busy}>
+            <span>千问模型 ID</span>
+            <input
+              aria-label="千问模型 ID"
+              aria-invalid={!modelValid}
+              aria-describedby="ai-model-input-hint"
+              autoComplete="off"
+              list="qwen-model-options"
+              placeholder="选择预设或直接输入模型 ID"
+              spellCheck={false}
+              value={modelDraft}
+              onChange={(event) => setModelDraft(event.target.value)}
+              disabled={busy}
+            />
+            <datalist id="qwen-model-options">
               {modelConfig.options.map((option) => <option value={option.value} key={option.value}>{option.label}</option>)}
-            </select>
+            </datalist>
+            <small id="ai-model-input-hint" className={modelValid ? "prompt-model-input-hint" : "prompt-model-input-hint invalid"}>
+              可从建议列表选择，也可直接输入；支持字母、数字及 . _ : / -，长度3-160位。
+            </small>
           </label>
           <div className="prompt-model-description">
-            <strong>{modelConfig.options.find((item) => item.value === modelDraft)?.description}</strong>
+            <strong>{selectedModelOption?.description ?? "自定义模型 ID。请确认当前千问密钥已开通该模型；可用性将在下一次 AI 调用时验证。"}</strong>
             <small>当前默认：{modelConfig.defaultModel} · 最近修改：{modelConfig.updatedByName ?? "系统维护"} · {formatUpdatedAt(modelConfig.updatedAt)}</small>
           </div>
-          <button className="btn btn-primary" type="button" onClick={() => void saveModel()} disabled={busy || !modelDirty}>
+          <button className="btn btn-primary" type="button" onClick={() => void saveModel()} disabled={busy || !modelDirty || !modelValid}>
             <Save />{busy ? "正在保存…" : "保存统一模型"}
           </button>
         </div>

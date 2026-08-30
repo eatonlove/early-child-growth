@@ -81,22 +81,23 @@ describe("researcher AI prompt page", () => {
   });
 
   it("saves one shared model selection for every AI scene", async () => {
+    const customModel = "qwen3.7-plus-2026-08-30-custom";
     vi.spyOn(remoteApi, "aiPrompts").mockResolvedValue({
       immutableSafetyPrompt: "禁止诊断、排名、标签化和编造证据。",
       items: [item],
     });
     vi.spyOn(remoteApi, "aiModelConfig").mockResolvedValue({ item: modelConfig });
     const update = vi.spyOn(remoteApi, "updateAIModelConfig").mockResolvedValue({
-      item: { ...modelConfig, model: "qwen3.7-flash", source: "tenant", revision: 1, updatedByName: "教研员" },
+      item: { ...modelConfig, model: customModel, source: "tenant", revision: 1, updatedByName: "教研员" },
     });
 
     render(<RemoteAIPromptPage />);
 
-    fireEvent.change(await screen.findByLabelText("千问模型"), { target: { value: "qwen3.7-flash" } });
+    fireEvent.change(await screen.findByLabelText("千问模型 ID"), { target: { value: ` ${customModel} ` } });
     fireEvent.click(screen.getByRole("button", { name: "保存统一模型" }));
 
     await waitFor(() => expect(update).toHaveBeenCalledWith({
-      model: "qwen3.7-flash",
+      model: customModel,
       expectedRevision: 0,
     }));
     expect(await screen.findByText(/下一次所有 AI 场景调用都会使用该模型/)).toBeInTheDocument();

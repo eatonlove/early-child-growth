@@ -40,8 +40,8 @@ export function aiModelOptions() {
   return options;
 }
 
-export function isSelectableAIModel(value: string) {
-  return aiModelOptions().some((item) => item.value === value);
+export function isValidAIModelKey(value: string) {
+  return /^[A-Za-z0-9][A-Za-z0-9._:/-]{2,159}$/.test(value);
 }
 
 export function aiModelConfigView(row?: AIModelConfigRow | null): AIModelConfigView {

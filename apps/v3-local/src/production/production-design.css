@@ -861,7 +861,9 @@
 .prompt-model-grid > svg { align-self: center; width: 27px; height: 27px; color: #765d8c; }
 .prompt-model-grid label { display: grid; gap: 6px; }
 .prompt-model-grid label > span { color: var(--tj-muted); font-size: 10px; font-weight: 800; }
-.prompt-model-grid select { width: 100%; }
+.prompt-model-grid input { width: 100%; }
+.prompt-model-input-hint { color: var(--tj-muted); font-size: 9px; line-height: 1.45; }
+.prompt-model-input-hint.invalid { color: #a74a45; }
 .prompt-model-description { display: grid; gap: 5px; min-width: 0; padding-bottom: 3px; }
 .prompt-model-description strong { font-size: 10px; line-height: 1.55; }
 .prompt-model-description small { overflow-wrap: anywhere; color: var(--tj-muted); font-size: 9px; line-height: 1.5; }

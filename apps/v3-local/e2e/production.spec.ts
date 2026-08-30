@@ -349,7 +349,10 @@ test("生产教研员端可查看并编辑全部AI场景提示词", async ({ pag
   await expect(page.getByRole("heading", { name: "提示词配置" })).toBeVisible();
   await expect(page.getByText("安全与循证底线不可修改")).toBeVisible();
   await expect(page.getByRole("heading", { name: "统一模型配置" })).toBeVisible();
-  await expect(page.getByLabel("千问模型")).toHaveValue("qwen3.7-plus-2026-05-26");
+  const modelInput = page.getByLabel("千问模型 ID");
+  await expect(modelInput).toHaveValue("qwen3.7-plus-2026-05-26");
+  await modelInput.fill("qwen3.7-plus-2026-08-30-custom");
+  await expect(page.getByRole("button", { name: "保存统一模型" })).toBeEnabled();
   await expect(page.getByRole("heading", { name: "逐幼儿观察分析" })).toBeVisible();
   await expect(page.getByLabel(/园所场景提示词/)).toHaveValue(/逐幼儿循证分析助手/);
 });
