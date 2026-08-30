@@ -415,15 +415,29 @@ function validateObservationGrounding(result: AnalysisResult, input: Observation
     result.historicalComparison.stablePatterns = [];
     result.historicalComparison.caution = "当前没有更早的已采用观察，不能形成跨时间成长判断。";
   }
-  for (const change of result.historicalComparison.changes) {
-    if (change.previousEvidenceIds.some((id) => !id.startsWith("observation:") || !evidenceIds.has(id))
-      || change.currentEvidenceIds.some((id) => id.startsWith("observation:") || !evidenceIds.has(id))) {
-      throw new Error("千问成长变化引用了未提供的历史或当前证据");
+  const historicalAliases = new Map(input.history.map((item) => [item.id, `observation:${item.id}`]));
+  const canonicalHistoricalIds = (ids: string[]) => [...new Set(ids
+    .map((id) => historicalAliases.get(id.trim()) ?? id.trim())
+    .filter((id) => id.startsWith("observation:") && evidenceIds.has(id)))];
+  let removedHistoricalComparisons = 0;
+  result.historicalComparison.changes = result.historicalComparison.changes.flatMap((change) => {
+    const previousEvidenceIds = canonicalHistoricalIds(change.previousEvidenceIds);
+    const currentEvidenceIds = canonicalEvidenceIds(change.currentEvidenceIds, input)
+      .filter((id) => !id.startsWith("observation:") && evidenceIds.has(id));
+    if (!previousEvidenceIds.length || !currentEvidenceIds.length) {
+      removedHistoricalComparisons += 1;
+      return [];
     }
-  }
-  for (const pattern of result.historicalComparison.stablePatterns) {
-    if (pattern.evidenceIds.some((id) => !id.startsWith("observation:") || !evidenceIds.has(id))) throw new Error("千问稳定线索引用了未提供的历史证据");
-  }
+    return [{ ...change, previousEvidenceIds, currentEvidenceIds }];
+  });
+  result.historicalComparison.stablePatterns = result.historicalComparison.stablePatterns.flatMap((pattern) => {
+    const historicalEvidenceIds = canonicalHistoricalIds(pattern.evidenceIds);
+    if (historicalEvidenceIds.length < 2) {
+      removedHistoricalComparisons += 1;
+      return [];
+    }
+    return [{ ...pattern, evidenceIds: historicalEvidenceIds }];
+  });
   result.historicalComparison.evidenceCount = input.history.length;
   result.historicalComparison.timePointCount = new Set(input.history.map((item) => item.occurred_at.slice(0, 10))).size;
   result.teacherComparison.teacherIdentification = input.observation.teacher_identification;
@@ -439,6 +453,7 @@ function validateObservationGrounding(result: AnalysisResult, input: Observation
     "本结果为千问AI建议稿，必须由教师审核后才能进入成长轨迹或报告。",
     "单次观察只能形成待验证假设，不生成排名、评分或诊断性结论。",
     ...(removedIndicatorCodes.size ? [`模型生成的${removedIndicatorCodes.size}个知识库外指标引用已自动移除，未进入证据链。`] : []),
+    ...(removedHistoricalComparisons ? [`模型生成的${removedHistoricalComparisons}条无有效历史回链的成长比较已自动移除，请继续积累连续证据。`] : []),
     ...(attributionWarning ? [attributionWarning] : []),
     ...result.warnings,
   ])].slice(0, 8);

@@ -504,11 +504,15 @@ describe("QianwenAIProvider", () => {
         changes: [{
           dimension: "问题解决策略",
           content: "与上次相比，本次出现再次测试的线索。",
-          previousEvidenceIds: [`observation:${historyId}`],
+          previousEvidenceIds: [historyId],
           currentEvidenceIds: ["teacher-observation"],
           confidence: 0.7,
         }],
-        stablePatterns: [],
+        stablePatterns: [{
+          content: "模型声称形成了稳定模式，但没有两条合法历史回链。",
+          evidenceIds: [historyId, "observation:22222222-2222-4222-8222-222222222222"],
+          confidence: 0.7,
+        }],
         caution: "仍需更多时间点。",
       },
     };
@@ -539,6 +543,9 @@ describe("QianwenAIProvider", () => {
       }],
     });
     expect(generated.data.historicalComparison).toMatchObject({ evidenceCount: 1, timePointCount: 1 });
+    expect(generated.data.historicalComparison.changes[0]?.previousEvidenceIds).toEqual([`observation:${historyId}`]);
+    expect(generated.data.historicalComparison.stablePatterns).toEqual([]);
+    expect(generated.data.warnings.join(" ")).toContain("无有效历史回链");
     expect(requestBody).toContain(`observation:${historyId}`);
   });
 });
