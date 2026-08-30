@@ -645,7 +645,14 @@
 }
 .simple-ai-heading h2 { margin: 10px 0 5px; font-size: 21px; }
 .simple-ai-heading p { max-width: 800px; margin: 0; color: var(--tj-muted); }
-.simple-analysis-core { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 14px; }
+.observation-record-list { display: grid; grid-template-columns: 1fr; gap: 14px; }
+.observation-record-item { min-height: 0 !important; border: 0 !important; box-shadow: none !important; }
+.observation-record-item.observation { background: #eaf3f6 !important; }
+.observation-record-item.identification { background: #f0f2e5 !important; }
+.observation-record-item.response { background: #fff0d6 !important; }
+.observation-record-item p { margin: 12px 0; font-size: 13px; line-height: 1.8; }
+.observation-record-item small { color: var(--tj-muted); font-size: 10px; line-height: 1.6; }
+.simple-analysis-core { display: grid; grid-template-columns: 1fr; gap: 14px; }
 .ai-progress-panel { border-color: #d8c9e2 !important; background: linear-gradient(120deg, #f5eff8, #fffaf4) !important; }
 .ai-progress-heading { display: flex; align-items: center; justify-content: space-between; gap: 16px; }
 .ai-progress-heading > div { display: flex; align-items: center; gap: 12px; }
@@ -723,6 +730,24 @@
 .growth-page .detail-stack > .panel { position: relative; margin-left: 36px; }
 .growth-page .detail-stack > .panel::before { content: ""; position: absolute; top: 28px; left: -27px; width: 12px; height: 12px; border: 4px solid var(--tj-app-bg); border-radius: 50%; background: var(--tj-orange); }
 .growth-page .support-head { align-items: center; margin-top: 12px; padding: 14px; }
+.growth-filters { display: flex; align-items: end; gap: 10px; }
+.growth-filters label { display: grid; gap: 5px; min-width: 170px; }
+.growth-filters label > span { color: var(--tj-muted); font-size: 10px; font-weight: 700; }
+.growth-filters select { min-height: 42px; }
+.growth-record-panel { padding: 0 !important; overflow: hidden; }
+.growth-record > summary { position: relative; display: grid; gap: 11px; padding: 20px 22px; cursor: pointer; list-style: none; }
+.growth-record > summary::-webkit-details-marker { display: none; }
+.growth-record-heading { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; }
+.growth-record-heading h2 { margin: 8px 0 4px; font-size: 20px; }
+.growth-record-heading p { margin: 0; color: var(--tj-muted); font-size: 11px; }
+.growth-record-preview { min-width: 0; margin: 0 115px 0 0; overflow: hidden; color: var(--tj-muted); font-size: 12px; line-height: 1.7; text-overflow: ellipsis; white-space: nowrap; }
+.growth-record-preview b { margin-right: 9px; color: var(--tj-ink); }
+.growth-toggle-label { position: absolute; right: 22px; bottom: 20px; color: #76553e; font-size: 11px; font-weight: 800; }
+.growth-toggle-label::after { content: "展开详情"; }
+.growth-record[open] .growth-toggle-label::after { content: "收起详情"; }
+.growth-record-content { display: grid; gap: 14px; padding: 0 22px 22px; border-top: 1px solid #eadfd2; }
+.growth-analysis-list { grid-template-columns: 1fr !important; gap: 10px; padding-top: 18px; }
+.growth-analysis-list > article { grid-template-columns: 92px minmax(0, 1fr) !important; }
 .report-toolbar { display: flex; align-items: center; justify-content: space-between; gap: 14px; margin-bottom: 16px; }
 .report-work-actions { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 8px; }
 .reports-page .report-layout { grid-template-columns: 290px minmax(0, 1fr); gap: 18px; }
@@ -751,9 +776,11 @@
 .evo-page .curriculum-paper { min-width: 0; }
 .evo-page .curriculum-paper > header { display: flex; justify-content: space-between; gap: 20px; padding: 24px; }
 .evo-page .curriculum-paper .page-action-row { align-content: flex-start; }
-.experience-page .evo-memory-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+.experience-content-stack { display: grid; gap: 20px; min-width: 0; }
+.experience-page .evo-memory-grid { grid-template-columns: 1fr; gap: 16px; }
 .experience-page .evo-memory-grid .panel { min-width: 0; }
-.curriculum-resource-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 13px; }
+.experience-page .evo-framework-list { grid-template-columns: 1fr; gap: 16px; }
+.curriculum-resource-grid { display: grid; grid-template-columns: 1fr; gap: 16px; }
 .curriculum-resource-grid > .empty-state { grid-column: 1 / -1; }
 .curriculum-resource-card { min-width: 0; padding: 17px; border: 1px solid #e2d5c7; border-radius: 17px; background: #fffdf9; }
 .curriculum-resource-card.active { border-color: #cdddcf; background: #f9fcf7; }
@@ -994,13 +1021,14 @@
   .evo-response-grid,
   .evo-course-options,
   .evo-course-content { grid-template-columns: 1fr; }
-  .simple-analysis-core { grid-template-columns: repeat(3, minmax(320px, 1fr)); overflow-x: auto; padding-bottom: 8px; scroll-snap-type: x proximity; }
-  .analysis-core-card { scroll-snap-align: start; }
+  .simple-analysis-core { grid-template-columns: 1fr; overflow: visible; }
   .archive-filter-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .archive-filter-actions { grid-column: 1 / -1; grid-template-columns: 1fr auto; align-items: center; justify-items: start; }
   .simple-response-list article { align-items: flex-start; flex-direction: column; }
   .simple-response-list article .btn { width: 100%; }
   .growth-page .metrics-row { grid-template-columns: 1fr; }
+  .growth-filters { align-items: stretch; flex-direction: column; width: 100%; }
+  .growth-filters label { min-width: 0; }
   .reports-page .report-layout,
   .evo-page .master-detail { grid-template-columns: 1fr; }
   .reports-page .report-list { position: static; max-height: 320px; }
@@ -1078,6 +1106,10 @@
   .growth-page .detail-stack::before { left: 10px; }
   .growth-page .detail-stack > .panel { margin-left: 22px; }
   .growth-page .detail-stack > .panel::before { left: -20px; }
+  .growth-record-heading { flex-direction: column; }
+  .growth-record-preview { margin-right: 0; padding-right: 0; }
+  .growth-toggle-label { position: static; justify-self: end; }
+  .growth-analysis-list > article { grid-template-columns: 1fr !important; }
   .home-menu-button span { display: none; }
   .home-role { display: none; }
   .home-cycle { font-size: 11px; }

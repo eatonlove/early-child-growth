@@ -25,6 +25,42 @@ const analysis = {
   claim_reviews: [{ id: "77777777-7777-4777-8777-777777777777", analysis_run_id: "55555555-5555-4555-8555-555555555555", claim_key: "objective-summary", claim_type: "objective_summary", original_content: { content: "幼儿移动桥墩并再次测试桥面。", evidenceIds: ["teacher-observation"] }, reviewed_content: null, decision: "pending", review_note: null, reviewed_by: null, reviewed_at: null }],
 };
 
+const robotObservation = {
+  ...observation,
+  id: "12121212-1212-4212-8212-121212121212",
+  title: "机器人搭建与加固",
+  theme: "机器人搭建",
+  status: "adopted",
+};
+const bubbleObservation = {
+  ...observation,
+  id: "13131313-1313-4313-8313-131313131313",
+  title: "泡泡大小比较",
+  theme: "泡泡探秘",
+  status: "adopted",
+};
+const growthResult = {
+  child,
+  timeline: [
+    {
+      observation: robotObservation,
+      analysis: { ...analysis, observation_id: robotObservation.id, decision: "adopted" },
+      supports: [{ id: "14141414-1414-4414-8414-141414141414", child_id: child.id, observation_id: robotObservation.id, category: "material", rationale: "支持比较不同连接材料", strategy: "补充不同宽度连接片", next_observation_focus: "观察是否主动比较稳定性", child_response: "幼儿更换连接片后再次测试。", effectiveness: "supported", status: "verified", created_at: "2026-08-25T09:00:00+08:00" }],
+    },
+    { observation: bubbleObservation, analysis: null, supports: [] },
+  ],
+  coverage: { observations: 2, scenes: ["建构区"], themes: ["机器人搭建", "泡泡探秘"], verifiedSupports: 1 },
+};
+
+const memoryFrameworks = [
+  { id: "15151515-1515-4515-8515-151515151515", framework_type: "game_experience", code: "GAME", name: "游戏经验七维框架", version: 2, description: "依据真实游戏行为提炼经验。", dimensions: [{ label: "计划与意图", evidenceReminder: "回到行为证据" }], is_default: true },
+  { id: "16161616-1616-4616-8616-161616161616", framework_type: "learning_disposition", code: "DISPOSITION", name: "学习品质六维框架", version: 1, description: "依据真实游戏情境描述学习品质。", dimensions: [{ label: "好奇与探究", evidenceReminder: "回到行为证据" }], is_default: true },
+];
+const professionalMemories = [
+  { id: "17171717-1717-4717-8717-171717171717", memory_type: "support", title: "材料比较支持经验", summary: "通过改变连接材料支持幼儿继续验证。", retrieval_text: "连接材料、稳定性、比较", source_resource_type: "observation", source_resource_id: robotObservation.id, status: "active" },
+  { id: "18181818-1818-4818-8818-181818181818", memory_type: "curriculum", title: "机器人持续探究经验", summary: "从连续观察中提炼课程线索。", retrieval_text: "机器人、结构、持续探究", source_resource_type: "curriculum", source_resource_id: "curriculum-1", status: "active" },
+];
+
 const classroomReport = {
   id: "88888888-8888-4888-8888-888888888888",
   classroom_id: classroom.id,
@@ -106,10 +142,13 @@ async function mockApi(page: Page, role: "teacher" | "researcher", withAnalysis 
       : path === "/api/quality-reviews" ? { items: [] }
       : path === "/api/export-requests" ? { items: [] }
       : path === "/api/research-activities" ? { items: [] }
-      : path === `/api/children/${child.id}/growth` ? { child, timeline: [], coverage: { observations: 0, scenes: [], themes: [], verifiedSupports: 0 } }
+      : path === `/api/children/${child.id}/growth` ? growthResult
       : path === "/api/reports" ? { items: withClassroomReport ? [classroomReport] : [] }
       : path === "/api/curriculum-clues" ? { items: [] }
       : path === "/api/curriculum-templates" ? { items: [{ id: "cccccccc-cccc-4ccc-8ccc-cccccccccccc", code: "co-growth-course", name: "同生课程模板", version: 1, description: "连续证据课程模板", structure: {}, is_default: true, status: "active" }] }
+      : path === "/api/professional-memories" ? { items: professionalMemories }
+      : path === "/api/curriculum-resource-packages" ? { items: [] }
+      : path === "/api/analysis-frameworks" ? { items: memoryFrameworks }
       : { code: "NOT_MOCKED", message: path };
     await route.fulfill({
       status: 200,
@@ -192,6 +231,47 @@ test("AI结果展示连续观察、指南证据链与教师最终确认", async 
   await expect(page.getByText(/仍需跨时间复察/)).toBeVisible();
   await expect(page.getByRole("heading", { name: "教师确认" })).toBeVisible();
   await expect(page.getByRole("button", { name: "确认并采用" })).toBeVisible();
+});
+
+test("0830建议页面采用单列、折叠和精确主题筛选", async ({ page }) => {
+  await mockApi(page, "teacher", true);
+  await page.goto("/observations");
+  await page.getByRole("button", { name: /桥梁再次加固/ }).click();
+  const teacherRows = page.locator(".observation-record-item");
+  await expect(teacherRows).toHaveCount(3);
+  const teacherPositions = await teacherRows.evaluateAll((elements) => elements.map((element) => ({ x: element.getBoundingClientRect().x, y: element.getBoundingClientRect().y })));
+  expect(new Set(teacherPositions.map((item) => Math.round(item.x))).size).toBe(1);
+  expect(teacherPositions[1].y).toBeGreaterThan(teacherPositions[0].y);
+  const aiRows = page.locator(".analysis-core-card");
+  await expect(aiRows).toHaveCount(3);
+  const aiPositions = await aiRows.evaluateAll((elements) => elements.map((element) => ({ x: element.getBoundingClientRect().x, y: element.getBoundingClientRect().y })));
+  expect(new Set(aiPositions.map((item) => Math.round(item.x))).size).toBe(1);
+  expect(aiPositions[1].y).toBeGreaterThan(aiPositions[0].y);
+
+  await page.goto("/growth");
+  await expect(page.getByRole("heading", { name: "机器人搭建与加固" })).toBeVisible();
+  const allRecords = page.locator(".growth-record");
+  await expect(allRecords).toHaveCount(2);
+  await expect(allRecords.first()).not.toHaveAttribute("open", "");
+  await page.getByLabel("游戏主题").selectOption("机器人搭建");
+  await expect(page.getByRole("heading", { name: "机器人搭建与加固" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "泡泡大小比较" })).toHaveCount(0);
+  await expect(page.locator(".growth-record")).toHaveCount(1);
+  await page.locator(".growth-record summary").click();
+  await expect(page.locator(".growth-record")).toHaveAttribute("open", "");
+  await expect(page.locator(".growth-analysis-list > article")).toHaveCount(3);
+
+  await page.goto("/memories");
+  const frameworkRows = page.locator(".evo-framework-list article");
+  await expect(frameworkRows).toHaveCount(2);
+  const frameworkPositions = await frameworkRows.evaluateAll((elements) => elements.map((element) => ({ x: element.getBoundingClientRect().x, y: element.getBoundingClientRect().y })));
+  expect(new Set(frameworkPositions.map((item) => Math.round(item.x))).size).toBe(1);
+  expect(frameworkPositions[1].y).toBeGreaterThan(frameworkPositions[0].y);
+  const memoryRows = page.locator(".evo-memory-grid > .panel");
+  await expect(memoryRows).toHaveCount(2);
+  const memoryPositions = await memoryRows.evaluateAll((elements) => elements.map((element) => ({ x: element.getBoundingClientRect().x, y: element.getBoundingClientRect().y })));
+  expect(new Set(memoryPositions.map((item) => Math.round(item.x))).size).toBe(1);
+  expect(memoryPositions[1].y).toBeGreaterThan(memoryPositions[0].y);
 });
 
 test("后台AI任务离开或刷新观察页面后仍可恢复真实进度", async ({ page }) => {

@@ -67,6 +67,12 @@ const gradeLabel = {
   large: "大班 5-6岁",
 } as const;
 const roleLabel = { teacher: "教师", researcher: "教研员" } as const;
+
+export function filterGrowthTimelineByTheme(timeline: RemoteGrowthResult["timeline"], theme: string) {
+  if (!theme) return timeline;
+  return timeline.filter((item) => item.observation.theme === theme);
+}
+
 const statusLabel: Record<string, string> = {
   active: "启用",
   disabled: "已停用",
@@ -2397,12 +2403,16 @@ export function RemoteResearchPage({ user }: { user: RemoteUser }) {
 export function RemoteGrowthPage() {
   const [children, setChildren] = useState<RemoteChild[]>([]);
   const [selectedId, setSelectedId] = useState("");
+  const [themeFilter, setThemeFilter] = useState("");
   const [growth, setGrowth] = useState<RemoteGrowthResult | null>(null);
   const [followUp, setFollowUp] = useState<RemoteSupportAction | null>(null);
   const [followUpForm, setFollowUpForm] = useState({ childResponse: "", effectiveness: "continue" });
   const [busy, setBusy] = useState(false);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
+  const themeOptions = growth?.coverage.themes.filter(Boolean) ?? [];
+  const visibleTimeline = useMemo(() => filterGrowthTimelineByTheme(growth?.timeline ?? [], themeFilter), [growth, themeFilter]);
+  const visibleVerifiedSupports = useMemo(() => visibleTimeline.reduce((count, item) => count + item.supports.filter((support) => support.status === "verified" || support.status === "closed").length, 0), [visibleTimeline]);
   useEffect(() => {
     remoteApi.children().then((result) => {
       const active = result.items.filter((item) => item.status === "active");
@@ -2436,11 +2446,16 @@ export function RemoteGrowthPage() {
     catch (reason) { setError(showError(reason)); } finally { setBusy(false); }
   };
   return <div className="page remote-page growth-page">
-    <PageHeader eyebrow="成长与应答追踪" title="成长轨迹与应答追踪" description="只纳入教师明确采用的AI建议和后续证据；应答必须实施、复察，才能讨论支持效果。" actions={<select className="child-select" value={selectedId} onChange={(event) => setSelectedId(event.target.value)}>{children.map((child) => <option value={child.id} key={child.id}>{child.display_name}</option>)}</select>} />
+    <PageHeader eyebrow="成长与应答追踪" title="成长轨迹与应答追踪" description="只纳入教师明确采用的AI建议和后续证据；应答必须实施、复察，才能讨论支持效果。" actions={<div className="growth-filters"><label><span>幼儿</span><select className="child-select" value={selectedId} onChange={(event) => { setSelectedId(event.target.value); setThemeFilter(""); }}>{children.map((child) => <option value={child.id} key={child.id}>{child.display_name}</option>)}</select></label><label><span>游戏主题</span><select value={themeFilter} onChange={(event) => setThemeFilter(event.target.value)}><option value="">全部游戏主题</option>{themeOptions.map((theme) => <option value={theme} key={theme}>{theme}</option>)}</select></label></div>} />
     {error && <div className="remote-error"><CircleAlert />{error}</div>}
     {loading ? <LoadingState label="正在整理成长轨迹…" /> : !growth ? <EmptyState title="暂无成长证据" description="完成观察并采用AI建议后，时间轴会显示在这里。" /> : <>
-      <div className="metrics-row"><Metric icon={<Activity />} value={growth.coverage.observations} label="已采用观察" detail={`${growth.coverage.scenes.length}类游戏场景`} /><Metric icon={<Sprout />} value={growth.coverage.themes.length} label="持续兴趣" detail={growth.coverage.themes.join("、") || "待积累"} tone="blue" /><Metric icon={<CheckCircle2 />} value={growth.coverage.verifiedSupports} label="已验证应答" detail="有复察证据" tone="green" /></div>
-      <div className="detail-stack">{growth.timeline.map((item) => <Panel key={item.observation.id}><div className="remote-detail-head"><div><Badge tone="green">{stageLabel[item.observation.organization_stage]}</Badge><h2>{item.observation.title}</h2><p>{new Date(item.observation.occurred_at).toLocaleDateString("zh-CN")} · {item.observation.scene} · {item.observation.theme}</p></div><Badge tone="blue">教师已采用</Badge></div><div className="remote-analysis-layers"><article className="fact"><span>事实</span><p>{item.analysis?.structured_result.objectiveSummary ?? item.observation.teacher_observation}</p></article><article className="interpret"><span>识别</span><p>{item.analysis?.structured_result.currentExperience ?? item.observation.teacher_identification}</p></article><article className="hypothesis"><span>下一次观察</span><p>{item.analysis?.structured_result.nextObservation.join("；") || item.observation.teacher_response.nextObservationFocus}</p></article></div>{item.supports.map((support) => <div className="support-head" key={support.id}><div><Badge tone={tone(support.status)}>{statusLabel[support.status]}</Badge><h3>{responseLabel[support.category]}：{support.strategy}</h3><p>{support.next_observation_focus}{support.child_response ? ` · 后续反应：${support.child_response}` : ""}</p></div>{support.status !== "closed" && <button className="btn btn-secondary" disabled={busy} onClick={() => void advanceSupport(support)}>{support.status === "planned" ? "记录已实施" : support.status === "implemented" ? "进入复察" : support.status === "follow_up" ? "填写复察证据" : "关闭行动"}</button>}</div>)}</Panel>)}</div>
+      <div className="metrics-row"><Metric icon={<Activity />} value={visibleTimeline.length} label={themeFilter ? "主题内观察" : "已采用观察"} detail={themeFilter || `${growth.coverage.scenes.length}类游戏场景`} /><Metric icon={<Sprout />} value={themeFilter ? 1 : growth.coverage.themes.length} label="持续兴趣" detail={themeFilter || growth.coverage.themes.join("、") || "待积累"} tone="blue" /><Metric icon={<CheckCircle2 />} value={themeFilter ? visibleVerifiedSupports : growth.coverage.verifiedSupports} label="已验证应答" detail="有复察证据" tone="green" /></div>
+      {visibleTimeline.length === 0 ? <EmptyState title="该主题暂无成长记录" description="切换游戏主题，或继续积累并采用相关观察证据。" /> : <div className="detail-stack">{visibleTimeline.map((item) => {
+        const observationSummary = item.analysis?.structured_result.objectiveSummary ?? item.observation.teacher_observation;
+        const identificationSummary = item.analysis?.structured_result.currentExperience ?? item.observation.teacher_identification;
+        const nextObservation = item.analysis?.structured_result.nextObservation.join("；") || item.observation.teacher_response.nextObservationFocus;
+        return <Panel key={item.observation.id} className="growth-record-panel"><details className="growth-record"><summary><div className="growth-record-heading"><div><Badge tone="green">{stageLabel[item.observation.organization_stage]}</Badge><h2>{item.observation.title}</h2><p>{new Date(item.observation.occurred_at).toLocaleDateString("zh-CN")} · {item.observation.scene} · {item.observation.theme}</p></div><Badge tone="blue">教师已采用</Badge></div><p className="growth-record-preview"><b>观察摘要</b>{observationSummary}</p><span className="growth-toggle-label" aria-hidden="true" /></summary><div className="growth-record-content"><div className="remote-analysis-layers growth-analysis-list"><article className="fact"><span>事实</span><p>{observationSummary}</p></article><article className="interpret"><span>识别</span><p>{identificationSummary}</p></article><article className="hypothesis"><span>下一次观察</span><p>{nextObservation}</p></article></div>{item.supports.map((support) => <div className="support-head" key={support.id}><div><Badge tone={tone(support.status)}>{statusLabel[support.status]}</Badge><h3>{responseLabel[support.category]}：{support.strategy}</h3><p>{support.next_observation_focus}{support.child_response ? ` · 后续反应：${support.child_response}` : ""}</p></div>{support.status !== "closed" && <button className="btn btn-secondary" disabled={busy} onClick={() => void advanceSupport(support)}>{support.status === "planned" ? "记录已实施" : support.status === "implemented" ? "进入复察" : support.status === "follow_up" ? "填写复察证据" : "关闭行动"}</button>}</div>)}</div></details></Panel>;
+      })}</div>}
     </>}
     {followUp && <Modal title="记录复察证据" description="效果判断必须依据支持后幼儿实际发生的行为。" onClose={() => setFollowUp(null)}><form className="remote-form" onSubmit={verify}><label className="full-field"><span>幼儿后续反应</span><textarea required minLength={5} rows={5} value={followUpForm.childResponse} onChange={(event) => setFollowUpForm({ ...followUpForm, childResponse: event.target.value })} /></label><label><span>效果判断</span><select value={followUpForm.effectiveness} onChange={(event) => setFollowUpForm({ ...followUpForm, effectiveness: event.target.value })}><option value="supported">已有支持证据</option><option value="continue">继续验证</option><option value="insufficient">支持不足</option></select></label><button className="btn btn-primary" disabled={busy} type="submit"><Save />保存复察</button></form></Modal>}
   </div>;
