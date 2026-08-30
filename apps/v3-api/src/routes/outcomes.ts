@@ -6,7 +6,9 @@ import { classroomReportContentSchema, reportContentSchema } from "../ai/contrac
 import { effectiveAnalysisResult } from "../analysis-claims.js";
 import { classroomReportEvidenceCoverage, classroomReportMetrics } from "../classroom-report.js";
 import { config } from "../config.js";
+import { buildClassroomDevelopmentProfile, buildIndividualDevelopmentProfile } from "../development-profile.js";
 import { ApiError, audit, authenticate } from "../http.js";
+import { buildInterestInsights } from "../interest-insights.js";
 import { chinaCalendarDate, reportEvidenceCoverage } from "../report-evidence.js";
 import { serviceClient } from "../supabase.js";
 
@@ -129,17 +131,23 @@ export async function outcomeRoutes(app: FastifyInstance) {
     const { data: subjectRows, error: subjectError } = await auth.data.from("observation_subjects").select("observation_id").eq("child_id", id);
     if (subjectError) throw new ApiError(500, "GROWTH_SUBJECT_READ_FAILED", "幼儿观察关联读取失败");
     const observationIds = (subjectRows ?? []).map((item) => item.observation_id);
-    const [{ data: observations, error: observationError }, { data: analyses, error: analysisError }, { data: supports, error: supportError }] = await Promise.all([
+    const [{ data: observations, error: observationError }, { data: analyses, error: analysisError }, { data: supports, error: supportError }, { data: classroomObservations, error: classroomObservationError }] = await Promise.all([
       observationIds.length ? auth.data.from("observations").select("*").in("id", observationIds).eq("status", "adopted").order("occurred_at") : Promise.resolve({ data: [], error: null }),
       auth.data.from("analysis_runs").select("*").eq("child_id", id).eq("decision", "adopted").order("generated_at"),
       auth.data.from("support_actions").select("*").eq("child_id", id).order("created_at"),
+      auth.data.from("observations").select("id, child_id, scene, theme, occurred_at").eq("classroom_id", child.classroom_id).eq("status", "adopted").order("occurred_at"),
     ]);
-    if (observationError || analysisError || supportError) throw new ApiError(500, "GROWTH_READ_FAILED", "成长轨迹读取失败");
+    if (observationError || analysisError || supportError || classroomObservationError) throw new ApiError(500, "GROWTH_READ_FAILED", "成长轨迹读取失败");
     const analysisIds = (analyses ?? []).map((item) => item.id);
     const { data: claimReviews, error: reviewError } = analysisIds.length
       ? await auth.data.from("analysis_claim_reviews").select("*").in("analysis_run_id", analysisIds)
       : { data: [], error: null };
     if (reviewError) throw new ApiError(500, "GROWTH_REVIEW_READ_FAILED", "成长轨迹正式审核结论读取失败");
+    const classroomObservationIds = (classroomObservations ?? []).map((item) => item.id);
+    const { data: classroomSubjects, error: classroomSubjectError } = classroomObservationIds.length
+      ? await auth.data.from("observation_subjects").select("observation_id, child_id").in("observation_id", classroomObservationIds)
+      : { data: [], error: null };
+    if (classroomSubjectError) throw new ApiError(500, "GROWTH_CLASSROOM_INTEREST_FAILED", "班级共同兴趣证据读取失败");
     const analysisMap = new Map((analyses ?? []).map((item) => [item.observation_id, {
       ...item,
       structured_result: effectiveAnalysisResult(item.structured_result, (claimReviews ?? []).filter((review) => review.analysis_run_id === item.id)),
@@ -158,6 +166,10 @@ export async function outcomeRoutes(app: FastifyInstance) {
         themes: mostFrequent((observations ?? []).map((item) => item.theme)),
         verifiedSupports: (supports ?? []).filter((item) => ["verified", "closed"].includes(item.status)).length,
       },
+      interestInsights: buildInterestInsights((classroomObservations ?? []).map((observation) => ({
+        ...observation,
+        participant_child_ids: (classroomSubjects ?? []).filter((subject) => subject.observation_id === observation.id).map((subject) => subject.child_id),
+      })), id),
     };
   });
 
@@ -240,10 +252,10 @@ export async function outcomeRoutes(app: FastifyInstance) {
           periodEnd: input.periodEnd,
           observations: reportObservations,
           analyses: effectiveAnalyses,
-        supports: usedSupports,
-        metrics,
-        prompt: await resolveTenantPrompt(auth.tenantId, "classroom_period_report"),
-      });
+          supports: usedSupports,
+          metrics,
+          prompt: await resolveTenantPrompt(auth.tenantId, "classroom_period_report"),
+        });
       } catch {
         throw new ApiError(502, "AI_CLASSROOM_REPORT_FAILED", "AI班级报告生成暂时不可用，请稍后重试");
       }
@@ -252,6 +264,11 @@ export async function outcomeRoutes(app: FastifyInstance) {
       }
       const content = {
         ...generated.data,
+        developmentProfile: buildClassroomDevelopmentProfile({
+          childIds: (children ?? []).map((item) => item.id),
+          observations: adoptedObservations,
+          analyses: effectiveAnalyses,
+        }),
         aiMeta: {
           provider: generated.provider,
           model: generated.model,
@@ -339,6 +356,7 @@ export async function outcomeRoutes(app: FastifyInstance) {
     }
     const content = {
       ...generated.data,
+      developmentProfile: buildIndividualDevelopmentProfile(observations ?? [], effectiveAnalyses),
       aiMeta: {
         provider: generated.provider,
         model: generated.model,
@@ -400,6 +418,7 @@ export async function outcomeRoutes(app: FastifyInstance) {
     if (currentError) throw new ApiError(500, "REPORT_READ_FAILED", "报告读取失败");
     if (!current) throw new ApiError(404, "REPORT_NOT_FOUND", "报告不存在或无权访问");
     const existing = { ...(current.content ?? {}) } as Record<string, unknown>;
+    const developmentProfile = existing.developmentProfile;
     delete existing.aiMeta;
     delete existing.teacherEditedAt;
     const existingContent = current.report_type === "classroom"
@@ -419,6 +438,7 @@ export async function outcomeRoutes(app: FastifyInstance) {
     const { data, error } = await auth.data.from("period_reports").update({
       content: {
         ...generated.data,
+        ...(developmentProfile ? { developmentProfile } : {}),
         aiMeta: {
           provider: generated.provider,
           model: generated.model,
@@ -631,5 +651,36 @@ export async function outcomeRoutes(app: FastifyInstance) {
     if (error) throw new ApiError(500, "CURRICULUM_UPDATE_FAILED", "课程草案更新失败");
     await audit(auth, "curriculum.updated", "curriculum_clue", id, { status: data.status, version: data.plan?.version });
     return { item: data };
+  });
+
+  app.delete("/api/curriculum-clues/:id", async (request, reply) => {
+    const auth = await authenticate(request);
+    const { id } = z.object({ id: uuid }).parse(request.params);
+    const { data: current, error: currentError } = await auth.data.from("curriculum_clues")
+      .select("id, title, classroom_id, evidence_observation_ids")
+      .eq("id", id)
+      .maybeSingle();
+    if (currentError) throw new ApiError(500, "CURRICULUM_CLUE_READ_FAILED", "课程线索读取失败");
+    if (!current) throw new ApiError(404, "CURRICULUM_CLUE_NOT_FOUND", "课程线索不存在或无权访问");
+    const schema = serviceClient.schema(config.SUPABASE_SCHEMA);
+    const [{ count: optionCount, error: optionError }, { data: plans, error: planError }] = await Promise.all([
+      schema.from("curriculum_activity_options").select("id", { count: "exact", head: true }).eq("tenant_id", auth.tenantId).eq("curriculum_clue_id", id),
+      schema.from("curriculum_plans").select("id").eq("tenant_id", auth.tenantId).eq("curriculum_clue_id", id),
+    ]);
+    if (optionError || planError) throw new ApiError(500, "CURRICULUM_DELETE_CONTEXT_FAILED", "课程派生内容读取失败");
+    const planIds = (plans ?? []).map((item) => item.id);
+    const { count: cycleCount, error: cycleError } = planIds.length
+      ? await schema.from("curriculum_cycles").select("id", { count: "exact", head: true }).eq("tenant_id", auth.tenantId).in("curriculum_plan_id", planIds)
+      : { count: 0, error: null };
+    if (cycleError) throw new ApiError(500, "CURRICULUM_DELETE_CONTEXT_FAILED", "课程循环记录读取失败");
+    const { error } = await schema.from("curriculum_clues").delete().eq("id", id).eq("tenant_id", auth.tenantId);
+    if (error) throw new ApiError(500, "CURRICULUM_DELETE_FAILED", "课程线索删除失败");
+    await audit(auth, "curriculum.deleted", "curriculum_clue", id, {
+      title: current.title,
+      classroomId: current.classroom_id,
+      deletedDerived: { options: optionCount ?? 0, plans: planIds.length, cycles: cycleCount ?? 0 },
+      preservedObservationIds: current.evidence_observation_ids ?? [],
+    });
+    return reply.status(204).send();
   });
 }

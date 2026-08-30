@@ -261,8 +261,8 @@ export const supportResearchJsonSchema = {
       type: "array", maxItems: 6,
       items: {
         type: "object", additionalProperties: false,
-        required: ["title", "url", "source", "appliedSuggestion"],
-        properties: { title: string(300), url: string(1000), source: string(200), appliedSuggestion: string(1200) },
+        required: ["url", "appliedSuggestion"],
+        properties: { url: string(1000), appliedSuggestion: string(1200) },
       },
     },
   },
@@ -270,11 +270,12 @@ export const supportResearchJsonSchema = {
 
 export const observationDocumentExtractionJsonSchema = {
   type: "object", additionalProperties: false,
-  required: ["observerName", "occurredAtText", "scene", "theme", "organizationStage", "subjects", "unlistedParticipantCount", "groupContext", "objectiveObservation", "teacherIdentification", "teacherResponseDraft", "nextObservationFocus", "fieldConfidence", "warnings"],
+  required: ["observerName", "occurredAtText", "scene", "theme", "organizationStage", "observationFocusCategory", "subjects", "unlistedParticipantCount", "groupContext", "objectiveObservation", "teacherIdentification", "teacherResponseDraft", "nextObservationFocus", "fieldConfidence", "warnings"],
   properties: {
     observerName: { type: "string", maxLength: 80 }, occurredAtText: { type: "string", maxLength: 120 },
     scene: { type: "string", maxLength: 120 }, theme: { type: "string", maxLength: 160 },
     organizationStage: { type: "string", enum: ["plan", "introduction", "process", "sharing", "evaluation"] },
+    observationFocusCategory: { type: ["string", "null"], enum: ["materials_tools", "cognition_experience", "social_experience", null] },
     subjects: {
       type: "array", maxItems: 30,
       items: {

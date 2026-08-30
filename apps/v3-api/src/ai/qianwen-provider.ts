@@ -36,6 +36,7 @@ import { analysisJsonSchema, classroomReportJsonSchema, curriculumActivityOption
 import { QwenClient, type QwenContentPart } from "./qianwen-client.js";
 import { normalizeAnalysisResult } from "./analysis-compatibility.js";
 import { rankKnowledgeCards } from "./scenario-provider.js";
+import { mergeVerifiedSources, searchAcademicSources, verifiedWebSources } from "./support-sources.js";
 
 export interface QianwenProviderOptions {
   apiKey: string;
@@ -92,7 +93,7 @@ const observationSystemPrompt = `你是幼儿园“观察·识别·应答·拓�
 16. 不得补写未发生的行为、原话、次数、时长或因果关系；不得输出达标/不达标、优秀/落后、正常/异常、聪明/能力差等标签。输出3个responsePlans、1-2个observationCut和2-5个observationFocus，并完全符合JSON Schema，不要输出Markdown。`;
 
 const documentExtractionSystemPrompt = `你是幼儿园观察记录表字段提取助手。你只负责从教师上传的文档或图片中提取已有内容，不分析幼儿发展，不补写事实。
-优先匹配输入提供的当前班级幼儿姓名；重名、不确定姓名和日期必须降低fieldConfidence并加入warnings。幼儿特征只能提取本次情境描述，不得生成性格标签。没有找到的字段输出空字符串，不得猜测。输出必须完全符合JSON Schema，不要输出Markdown。`;
+优先匹配输入提供的当前班级幼儿姓名；重名、不确定姓名和日期必须降低fieldConfidence并加入warnings。幼儿特征只能提取本次情境描述，不得生成性格标签。若表格明确勾选或写明“材料与工具、认知与经验、交往与经验”，分别映射为materials_tools、cognition_experience、social_experience；未明确出现时observationFocusCategory必须为null。没有找到的其他文本字段输出空字符串，不得猜测。输出必须完全符合JSON Schema，不要输出Markdown。`;
 
 const analysisRevisionSystemPrompt = `你是幼儿游戏循证分析修订助手。输入包含一份AI原稿和教师对专业板块的意见。教师意见优先，但不得据此补造原始观察中不存在的事实。
 保留原稿证据ID、知识编码和风险边界；拒绝的板块不得换一种说法偷偷保留。输出仍是教师审核草稿，必须符合完整JSON Schema，不得输出Markdown。`;
@@ -486,8 +487,10 @@ function validateObservationGrounding(result: AnalysisResult, input: Observation
 
 export class QianwenAIProvider implements AIAnalysisProvider {
   private readonly client: QwenClient;
+  private readonly fetcher: typeof fetch;
 
   constructor(private readonly options: QianwenProviderOptions, fetcher?: typeof fetch) {
+    this.fetcher = fetcher ?? fetch;
     this.client = new QwenClient({
       apiKey: options.apiKey,
       baseUrl: options.baseUrl,
@@ -499,12 +502,24 @@ export class QianwenAIProvider implements AIAnalysisProvider {
   private async researchSupport(input: ObservationAnalysisInput, cards: KnowledgeRow[]) {
     if (!this.options.webSearchEnabled) return [];
     try {
+      const model = input.prompt?.model || this.options.textModel;
+      const anonymizedQuery = `幼儿园 游戏支持 ${input.classroom.grade} ${input.observation.scene} ${input.observation.theme} ${(input.observation.observation_focus ?? []).join(" ")} ${cards.slice(0, 4).map((card) => card.title).join(" ")}`;
+      const [webResult, academicResult] = await Promise.all([
+        this.client.searchWithSources({
+          model,
+          systemPrompt: "只检索公开可访问的学前教育政策、研究机构与安全实践资料，不推断任何幼儿身份。",
+          query: `${anonymizedQuery}\n请优先查找有明确机构、作者或出版信息的可靠来源。`,
+        }).catch(() => ({ content: "", sources: [] })),
+        searchAcademicSources(`early childhood play education ${input.observation.theme}`, this.fetcher).catch(() => []),
+      ]);
+      const candidates = mergeVerifiedSources(academicResult, verifiedWebSources(webResult.sources)).slice(0, 12);
+      if (!candidates.length) return [];
       const result = await this.client.structuredCompletion<SupportResearch>({
         model: input.prompt?.model || this.options.textModel,
         messages: [
           {
             role: "system",
-            content: "你是幼儿园游戏支持资源检索助手。只检索可公开访问的教育、科学或安全实践资料，返回可执行但不替代教师判断的活动、材料或经验支持。输入已经去除幼儿身份，不得反向推测身份。每条必须提供真实可访问的网址；找不到可靠来源时返回空数组。输出必须符合JSON Schema。",
+            content: "你是幼儿园游戏支持资源筛选助手。只能从输入verifiedCandidates中选择网址，并为所选资料写出可执行、克制、不替代教师判断的应用建议。不得改写网址、编造作者、题名或来源；不适用时返回空数组。输出必须符合JSON Schema。",
           },
           {
             role: "user",
@@ -514,17 +529,25 @@ export class QianwenAIProvider implements AIAnalysisProvider {
               theme: input.observation.theme,
               observationFocus: input.observation.observation_focus ?? [],
               knowledgeTopics: cards.slice(0, 6).map((card) => ({ domain: card.domain, title: card.title })),
-              request: "检索适合幼儿园真实环境的低成本活动步骤、具体材料工具及安全使用方法。不得包含幼儿姓名、原话或个体判断。",
+              verifiedCandidates: candidates,
+              request: "从候选来源中选择至多6项，说明可如何转化为低成本活动步骤、具体材料工具或安全使用方法。不得包含幼儿姓名、原话或个体判断。",
             }),
           },
         ],
         schemaName: "tongji_support_web_research",
         jsonSchema: supportResearchJsonSchema,
         validator: supportResearchSchema,
-        enableSearch: true,
-        searchOptions: { search_strategy: "turbo" },
       });
-      return result.references;
+      const byUrl = new Map(candidates.map((item) => [new URL(item.url).toString(), item]));
+      return result.references.flatMap((reference) => {
+        let source;
+        try {
+          source = byUrl.get(new URL(reference.url).toString());
+        } catch {
+          return [];
+        }
+        return source ? [{ ...source, appliedSuggestion: reference.appliedSuggestion }] : [];
+      });
     } catch {
       return [];
     }
@@ -589,6 +612,7 @@ export class QianwenAIProvider implements AIAnalysisProvider {
         scene: input.observation.scene,
         theme: input.observation.theme,
         organizationStage: input.observation.organization_stage,
+        observationFocusCategory: input.observation.observation_focus_category ?? null,
         observationFocus: input.observation.observation_focus ?? [],
         teacherObservation: input.observation.teacher_observation,
         childQuote: input.observation.child_quote || null,

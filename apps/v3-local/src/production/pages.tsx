@@ -41,6 +41,7 @@ import {
   Panel,
 } from "../components/ui";
 import { useNavigate } from "../router";
+import { Bar, BarChart, CartesianGrid, Legend, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
 import { remoteApi, RemoteApiError } from "./api";
 import type {
   RemoteAccount,
@@ -58,6 +59,8 @@ import type {
   RemoteGrowthResult,
   RemotePeriodReport,
   RemoteCurriculumClue,
+  RemoteClassroomDevelopmentProfile,
+  RemoteIndividualDevelopmentProfile,
   RemoteUser,
 } from "./types";
 
@@ -2401,10 +2404,14 @@ export function RemoteResearchPage({ user }: { user: RemoteUser }) {
 }
 
 export function RemoteGrowthPage() {
+  const navigate = useNavigate();
+  const [classrooms, setClassrooms] = useState<RemoteClassroom[]>([]);
   const [children, setChildren] = useState<RemoteChild[]>([]);
+  const [classroomId, setClassroomId] = useState("");
   const [selectedId, setSelectedId] = useState("");
   const [themeFilter, setThemeFilter] = useState("");
   const [growth, setGrowth] = useState<RemoteGrowthResult | null>(null);
+  const [growthDetail, setGrowthDetail] = useState<RemoteGrowthResult["timeline"][number] | null>(null);
   const [followUp, setFollowUp] = useState<RemoteSupportAction | null>(null);
   const [followUpForm, setFollowUpForm] = useState({ childResponse: "", effectiveness: "continue" });
   const [busy, setBusy] = useState(false);
@@ -2413,17 +2420,25 @@ export function RemoteGrowthPage() {
   const themeOptions = growth?.coverage.themes.filter(Boolean) ?? [];
   const visibleTimeline = useMemo(() => filterGrowthTimelineByTheme(growth?.timeline ?? [], themeFilter), [growth, themeFilter]);
   const visibleVerifiedSupports = useMemo(() => visibleTimeline.reduce((count, item) => count + item.supports.filter((support) => support.status === "verified" || support.status === "closed").length, 0), [visibleTimeline]);
+  const visibleChildren = children.filter((child) => child.classroom_id === classroomId);
   useEffect(() => {
-    remoteApi.children().then((result) => {
-      const active = result.items.filter((item) => item.status === "active");
+    Promise.all([remoteApi.classrooms(), remoteApi.children()]).then(([classResult, childResult]) => {
+      const activeClasses = classResult.items.filter((item) => item.status === "active");
+      const active = childResult.items.filter((item) => item.status === "active");
+      setClassrooms(activeClasses);
       setChildren(active);
-      setSelectedId(active[0]?.id || "");
+      setClassroomId(activeClasses[0]?.id || "");
       if (!active.length) setLoading(false);
     }).catch((reason) => {
       setError(showError(reason));
       setLoading(false);
     });
   }, []);
+  useEffect(() => {
+    const first = children.find((child) => child.classroom_id === classroomId);
+    if (!children.some((child) => child.id === selectedId && child.classroom_id === classroomId)) setSelectedId(first?.id || "");
+    setThemeFilter("");
+  }, [classroomId, children]);
   const loadGrowth = async (childId: string) => {
     if (!childId) { setGrowth(null); return; }
     setLoading(true);
@@ -2445,18 +2460,19 @@ export function RemoteGrowthPage() {
     try { await remoteApi.updateSupportAction(followUp.id, { status: "verified", ...followUpForm }); setFollowUp(null); setFollowUpForm({ childResponse: "", effectiveness: "continue" }); await loadGrowth(selectedId); }
     catch (reason) { setError(showError(reason)); } finally { setBusy(false); }
   };
+  const detailObservationSummary = growthDetail?.analysis?.structured_result.objectiveSummary ?? growthDetail?.observation.teacher_observation;
+  const detailIdentificationSummary = growthDetail?.analysis?.structured_result.currentExperience ?? growthDetail?.observation.teacher_identification;
+  const detailNextObservation = growthDetail?.analysis?.structured_result.nextObservation.join("；") || growthDetail?.observation.teacher_response.nextObservationFocus;
   return <div className="page remote-page growth-page">
-    <PageHeader eyebrow="成长与应答追踪" title="成长轨迹与应答追踪" description="只纳入教师明确采用的AI建议和后续证据；应答必须实施、复察，才能讨论支持效果。" actions={<div className="growth-filters"><label><span>幼儿</span><select className="child-select" value={selectedId} onChange={(event) => { setSelectedId(event.target.value); setThemeFilter(""); }}>{children.map((child) => <option value={child.id} key={child.id}>{child.display_name}</option>)}</select></label><label><span>游戏主题</span><select value={themeFilter} onChange={(event) => setThemeFilter(event.target.value)}><option value="">全部游戏主题</option>{themeOptions.map((theme) => <option value={theme} key={theme}>{theme}</option>)}</select></label></div>} />
+    <PageHeader eyebrow="成长与应答追踪" title="成长轨迹与应答追踪" description="只纳入教师确认采用的证据。主题名称用于检索，持续兴趣必须至少跨2个日期重复出现。" actions={<div className="growth-filters"><label><span>班级</span><select value={classroomId} onChange={(event) => setClassroomId(event.target.value)}>{classrooms.map((item) => <option value={item.id} key={item.id}>{item.name}</option>)}</select></label><label><span>幼儿</span><select className="child-select" value={selectedId} onChange={(event) => { setSelectedId(event.target.value); setThemeFilter(""); }}>{visibleChildren.map((child) => <option value={child.id} key={child.id}>{child.display_name}</option>)}</select></label></div>} />
     {error && <div className="remote-error"><CircleAlert />{error}</div>}
     {loading ? <LoadingState label="正在整理成长轨迹…" /> : !growth ? <EmptyState title="暂无成长证据" description="完成观察并采用AI建议后，时间轴会显示在这里。" /> : <>
-      <div className="metrics-row"><Metric icon={<Activity />} value={visibleTimeline.length} label={themeFilter ? "主题内观察" : "已采用观察"} detail={themeFilter || `${growth.coverage.scenes.length}类游戏场景`} /><Metric icon={<Sprout />} value={themeFilter ? 1 : growth.coverage.themes.length} label="持续兴趣" detail={themeFilter || growth.coverage.themes.join("、") || "待积累"} tone="blue" /><Metric icon={<CheckCircle2 />} value={themeFilter ? visibleVerifiedSupports : growth.coverage.verifiedSupports} label="已验证应答" detail="有复察证据" tone="green" /></div>
-      {visibleTimeline.length === 0 ? <EmptyState title="该主题暂无成长记录" description="切换游戏主题，或继续积累并采用相关观察证据。" /> : <div className="detail-stack">{visibleTimeline.map((item) => {
-        const observationSummary = item.analysis?.structured_result.objectiveSummary ?? item.observation.teacher_observation;
-        const identificationSummary = item.analysis?.structured_result.currentExperience ?? item.observation.teacher_identification;
-        const nextObservation = item.analysis?.structured_result.nextObservation.join("；") || item.observation.teacher_response.nextObservationFocus;
-        return <Panel key={item.observation.id} className="growth-record-panel"><details className="growth-record"><summary><div className="growth-record-heading"><div><Badge tone="green">{stageLabel[item.observation.organization_stage]}</Badge><h2>{item.observation.title}</h2><p>{new Date(item.observation.occurred_at).toLocaleDateString("zh-CN")} · {item.observation.scene} · {item.observation.theme}</p></div><Badge tone="blue">教师已采用</Badge></div><p className="growth-record-preview"><b>观察摘要</b>{observationSummary}</p><span className="growth-toggle-label" aria-hidden="true" /></summary><div className="growth-record-content"><div className="remote-analysis-layers growth-analysis-list"><article className="fact"><span>事实</span><p>{observationSummary}</p></article><article className="interpret"><span>识别</span><p>{identificationSummary}</p></article><article className="hypothesis"><span>下一次观察</span><p>{nextObservation}</p></article></div>{item.supports.map((support) => <div className="support-head" key={support.id}><div><Badge tone={tone(support.status)}>{statusLabel[support.status]}</Badge><h3>{responseLabel[support.category]}：{support.strategy}</h3><p>{support.next_observation_focus}{support.child_response ? ` · 后续反应：${support.child_response}` : ""}</p></div>{support.status !== "closed" && <button className="btn btn-secondary" disabled={busy} onClick={() => void advanceSupport(support)}>{support.status === "planned" ? "记录已实施" : support.status === "implemented" ? "进入复察" : support.status === "follow_up" ? "填写复察证据" : "关闭行动"}</button>}</div>)}</div></details></Panel>;
-      })}</div>}
+      <div className="metrics-row"><Metric icon={<Activity />} value={visibleTimeline.length} label={themeFilter ? "主题内观察" : "已采用观察"} detail={themeFilter || `${growth.coverage.scenes.length}类游戏场景`} /><Metric icon={<Sprout />} value={growth.interestInsights.sustainedInterests.length} label="持续兴趣" detail="跨至少2个日期" tone="blue" /><Metric icon={<CheckCircle2 />} value={themeFilter ? visibleVerifiedSupports : growth.coverage.verifiedSupports} label="已验证应答" detail="有复察证据" tone="green" /></div>
+      <Panel title="游戏主题" subtitle="主题是教师记录名称；点击后筛选观察，不等同于持续兴趣判断。"><div className="growth-theme-chips"><button className={!themeFilter ? "selected" : ""} onClick={() => setThemeFilter("")}>全部</button>{themeOptions.map((theme) => <button className={themeFilter === theme ? "selected" : ""} onClick={() => setThemeFilter(theme)} key={theme}>{theme}</button>)}</div></Panel>
+      <div className="growth-interest-grid"><Panel title="该幼儿持续兴趣" subtitle="同一或相近主题至少2条观察、跨2个日期。">{growth.interestInsights.sustainedInterests.length ? growth.interestInsights.sustainedInterests.map((item) => <article className="interest-insight" key={item.label}><strong>{item.label}</strong><span>{item.observationCount}条观察 · {item.timePointCount}个日期</span><small>{new Date(item.firstSeenAt).toLocaleDateString("zh-CN")} 至 {new Date(item.lastSeenAt).toLocaleDateString("zh-CN")}</small></article>) : <p className="empty-inline">待积累跨时间证据。</p>}</Panel><Panel title="班级共同兴趣" subtitle="至少2名幼儿、2个日期，可作为课程线索入口。" action={<button className="btn btn-secondary" onClick={() => navigate("/curriculum")}><BookOpen />进入课程生成</button>}>{growth.interestInsights.sharedInterests.length ? growth.interestInsights.sharedInterests.map((item) => <article className="interest-insight" key={item.label}><strong>{item.label}</strong><span>{item.childCount}名幼儿 · {item.observationCount}条观察</span><small>{item.aliases.join("、")}</small></article>) : <p className="empty-inline">当前尚未形成跨幼儿、跨时间的共同兴趣。</p>}</Panel></div>
+      {visibleTimeline.length === 0 ? <EmptyState title="该主题暂无成长记录" description="切换游戏主题，或继续积累并采用相关观察证据。" /> : <div className="growth-card-grid">{visibleTimeline.map((item) => <button className="growth-compact-card" key={item.observation.id} onClick={() => setGrowthDetail(item)}><div><Badge tone="green">{stageLabel[item.observation.organization_stage]}</Badge><span>{new Date(item.observation.occurred_at).toLocaleDateString("zh-CN")}</span></div><strong>{item.observation.theme}</strong><p>{item.analysis?.structured_result.objectiveSummary ?? item.observation.teacher_observation}</p><small>{item.observation.scene} · {item.supports.length}项应答</small></button>)}</div>}
     </>}
+    {growthDetail && <Modal wide title={growthDetail.observation.title} description={`${new Date(growthDetail.observation.occurred_at).toLocaleDateString("zh-CN")} · ${growthDetail.observation.scene} · ${growthDetail.observation.theme}`} onClose={() => setGrowthDetail(null)}><div className="remote-analysis-layers growth-analysis-list"><article className="fact"><span>观察事实</span><p>{detailObservationSummary}</p></article><article className="interpret"><span>教师确认识别</span><p>{detailIdentificationSummary}</p></article><article className="hypothesis"><span>下一次观察</span><p>{detailNextObservation}</p></article></div>{growthDetail.supports.map((support) => <div className="support-head" key={support.id}><div><Badge tone={tone(support.status)}>{statusLabel[support.status]}</Badge><h3>{responseLabel[support.category]}：{support.strategy}</h3><p>{support.next_observation_focus}{support.child_response ? ` · 后续反应：${support.child_response}` : ""}</p></div>{support.status !== "closed" && <button className="btn btn-secondary" disabled={busy} onClick={() => void advanceSupport(support)}>{support.status === "planned" ? "记录已实施" : support.status === "implemented" ? "进入复察" : support.status === "follow_up" ? "填写复察证据" : "关闭行动"}</button>}</div>)}</Modal>}
     {followUp && <Modal title="记录复察证据" description="效果判断必须依据支持后幼儿实际发生的行为。" onClose={() => setFollowUp(null)}><form className="remote-form" onSubmit={verify}><label className="full-field"><span>幼儿后续反应</span><textarea required minLength={5} rows={5} value={followUpForm.childResponse} onChange={(event) => setFollowUpForm({ ...followUpForm, childResponse: event.target.value })} /></label><label><span>效果判断</span><select value={followUpForm.effectiveness} onChange={(event) => setFollowUpForm({ ...followUpForm, effectiveness: event.target.value })}><option value="supported">已有支持证据</option><option value="continue">继续验证</option><option value="insufficient">支持不足</option></select></label><button className="btn btn-primary" disabled={busy} type="submit"><Save />保存复察</button></form></Modal>}
   </div>;
 }
@@ -2512,11 +2528,35 @@ type ReportEditorState = Record<string, string>;
 
 const splitReportLines = (value: string) => value.split(/\r?\n/).map((item) => item.trim()).filter(Boolean);
 
+const developmentStateColors = {
+  初现: "#D89B5B",
+  发展中: "#6A9CB5",
+  较稳定: "#4F8068",
+  跨情境迁移: "#826CA8",
+  待积累证据: "#D8D6CF",
+} as const;
+
+function IndividualDevelopmentProfile({ profile }: { profile: RemoteIndividualDevelopmentProfile }) {
+  const groups = [
+    ["五大领域", profile.domains],
+    ["游戏经验", profile.gameExperiences],
+    ["学习品质与问题解决", profile.learningDispositions],
+  ] as const;
+  return <section className="development-profile"><header><div><strong>本周期循证发展画像</strong><p>{profile.evidenceBoundary}</p></div><div className="development-legend">{Object.entries(developmentStateColors).map(([state, color]) => <span key={state}><i style={{ background: color }} />{state}</span>)}</div></header>{groups.map(([title, items]) => <div className="development-group" key={title}><h3>{title}</h3><div>{items.map((item) => <article key={item.dimension}><span className="development-state" style={{ borderColor: developmentStateColors[item.state], color: item.state === "待积累证据" ? "#77736B" : developmentStateColors[item.state] }}>{item.state}</span><strong>{item.dimension}</strong><p>{item.summary}</p><small>{item.evidenceCount}条证据 · {item.timePointCount}个日期 · {item.sceneCount}类场景</small></article>)}</div></div>)}</section>;
+}
+
+function ClassroomDevelopmentChart({ profile }: { profile: RemoteClassroomDevelopmentProfile }) {
+  const data = profile.domains.map((item) => ({ name: item.domain, ...item.distribution }));
+  return <section className="class-development-chart"><header><strong>五大领域发展状态与证据覆盖</strong><p>{profile.evidenceBoundary}</p></header><div className="report-chart"><ResponsiveContainer width="100%" height="100%"><BarChart data={data} layout="vertical" margin={{ top: 8, right: 18, bottom: 8, left: 8 }}><CartesianGrid strokeDasharray="3 3" horizontal={false} /><XAxis type="number" allowDecimals={false} /><YAxis type="category" dataKey="name" width={36} /><Tooltip /><Legend />{Object.entries(developmentStateColors).map(([state, color]) => <Bar dataKey={state} stackId="state" fill={color} radius={state === "待积累证据" ? [0, 5, 5, 0] : 0} key={state} />)}</BarChart></ResponsiveContainer></div><div className="class-domain-coverage">{profile.domains.map((item) => <span key={item.domain}><b>{item.domain}</b>{item.observedChildCount}/{profile.totalChildCount}名幼儿有证据 · {item.evidenceCount}条</span>)}</div></section>;
+}
+
 export function RemoteReportsPage() {
   const [reports, setReports] = useState<RemotePeriodReport[]>([]);
   const [classrooms, setClassrooms] = useState<RemoteClassroom[]>([]);
   const [children, setChildren] = useState<RemoteChild[]>([]);
   const [view, setView] = useState<"individual" | "classroom">("individual");
+  const [reportClassroomId, setReportClassroomId] = useState("");
+  const [rosterChildId, setRosterChildId] = useState("");
   const [selectedId, setSelectedId] = useState("");
   const [createModal, setCreateModal] = useState(false);
   const [editModal, setEditModal] = useState(false);
@@ -2543,6 +2583,7 @@ export function RemoteReportsPage() {
     setReports(reportResult.items);
     setClassrooms(activeClasses);
     setChildren(activeChildren);
+    setReportClassroomId((current) => current || activeClasses[0]?.id || "");
     setForm((current) => ({
       ...current,
       classroomId: current.classroomId || activeClasses[0]?.id || "",
@@ -2558,8 +2599,14 @@ export function RemoteReportsPage() {
       setForm((current) => ({ ...current, childId: first.id }));
     }
   }, [form.classroomId, children]);
+  useEffect(() => {
+    const first = children.find((child) => child.classroom_id === reportClassroomId);
+    if (!children.some((child) => child.id === rosterChildId && child.classroom_id === reportClassroomId)) setRosterChildId(first?.id || "");
+    setSelectedId("");
+  }, [reportClassroomId, children]);
 
-  const visibleReports = reports.filter((item) => view === "classroom" ? item.report_type === "classroom" : item.report_type !== "classroom");
+  const rosterChildren = children.filter((child) => child.classroom_id === reportClassroomId);
+  const visibleReports = reports.filter((item) => item.classroom_id === reportClassroomId && (view === "classroom" ? item.report_type === "classroom" : item.report_type !== "classroom" && item.child_id === rosterChildId));
   const selected = visibleReports.find((item) => item.id === selectedId) ?? visibleReports[0];
   const reportVersion = (report: RemotePeriodReport) => report.report_type === "classroom" ? "班级证据画像" : report.report_type === "teacher" ? "教师专业版" : "家庭交流版";
   const run = async (operation: () => Promise<void>) => {
@@ -2655,11 +2702,14 @@ export function RemoteReportsPage() {
   return <div className="page remote-page reports-page">
     <PageHeader eyebrow="标准周期报告" title="标准周期报告" description="报告生成后就是教师可编辑的工作稿。个体报告追踪连续变化，班级报告呈现共同兴趣与支持改进，不进行排名。" actions={<button className="btn btn-primary" onClick={() => { setForm((current) => ({ ...current, dimension: view })); setCreateModal(true); }}><Plus />生成报告</button>} />
     {error && <div className="remote-error"><CircleAlert />{error}</div>}
-    <div className="report-toolbar"><div className="segmented report-type"><button className={view === "individual" ? "active" : ""} onClick={() => { setView("individual"); setSelectedId(""); }}>个体周期报告</button><button className={view === "classroom" ? "active" : ""} onClick={() => { setView("classroom"); setSelectedId(""); }}>班级周期报告</button></div>{selected && <ReportActions />}</div>
+    <div className="report-toolbar"><div className="segmented report-type"><button className={view === "individual" ? "active" : ""} onClick={() => { setView("individual"); setSelectedId(""); }}>个体周期报告</button><button className={view === "classroom" ? "active" : ""} onClick={() => { setView("classroom"); setSelectedId(""); }}>班级周期报告</button></div><label className="report-class-filter"><span>班级</span><select value={reportClassroomId} onChange={(event) => setReportClassroomId(event.target.value)}>{classrooms.map((item) => <option value={item.id} key={item.id}>{item.name}</option>)}</select></label>{selected && <ReportActions />}</div>
+    {loaded && view === "individual" && <Panel className="report-roster-strip" title="班级幼儿名册" subtitle="每名幼儿均保留报告入口；没有足够连续证据时显示尚未生成。"><div>{rosterChildren.map((child) => { const count = reports.filter((report) => report.report_type !== "classroom" && report.child_id === child.id).length; return <button className={child.id === rosterChildId ? "selected" : ""} onClick={() => { setRosterChildId(child.id); setSelectedId(""); }} key={child.id}><strong>{child.display_name}</strong><span>{count ? `${count}份报告` : "尚未生成"}</span></button>; })}</div></Panel>}
     {!loaded ? <LoadingState label="正在加载周期报告…" /> : !selected ? <EmptyState title={view === "classroom" ? "暂无班级周期报告" : "暂无个体周期报告"} description={view === "classroom" ? "选择班级与周期，汇总多幼儿、多时间点的教师确认证据。" : "选择幼儿与周期，汇总教师确认采用的连续证据。"} action={<button className="btn btn-primary" onClick={() => { setForm((current) => ({ ...current, dimension: view })); setCreateModal(true); }}><Plus />生成第一份报告</button>} /> : <div className="report-layout">
-      <Panel className="report-list" title={view === "classroom" ? "班级报告" : "个体报告"}>{visibleReports.map((report) => <button className={report.id === selected.id ? "selected" : ""} onClick={() => setSelectedId(report.id)} key={report.id}><div><strong>{report.content.title}</strong><span>{reportVersion(report)} · {report.period_start} 至 {report.period_end}</span></div><Badge tone="blue">可编辑</Badge></button>)}</Panel>
+      <Panel className="report-list" title={view === "classroom" ? "班级报告" : "幼儿名册与报告"}>{view === "individual" && <div className="report-roster">{rosterChildren.map((child) => { const latest = reports.find((report) => report.classroom_id === reportClassroomId && report.report_type !== "classroom" && report.child_id === child.id); return <button className={child.id === rosterChildId ? "selected" : ""} onClick={() => { setRosterChildId(child.id); setSelectedId(""); }} key={child.id}><strong>{child.display_name}</strong><span>{latest ? "已有周期报告" : "尚未生成"}</span></button>; })}</div>}<div className="report-history"><small>{view === "classroom" ? "历史报告" : "该幼儿的历史报告"}</small>{visibleReports.map((report) => <button className={report.id === selected.id ? "selected" : ""} onClick={() => setSelectedId(report.id)} key={report.id}><div><strong>{report.content.title}</strong><span>{reportVersion(report)} · {report.period_start} 至 {report.period_end}</span></div><Badge tone="blue">可编辑</Badge></button>)}</div></Panel><div className="report-document-stack">
+      {selected.report_type === "classroom" && selected.content.developmentProfile && <ClassroomDevelopmentChart profile={selected.content.developmentProfile} />}
+      {selected.report_type !== "classroom" && selected.content.developmentProfile && <IndividualDevelopmentProfile profile={selected.content.developmentProfile} />}
       {selected.report_type === "classroom" ? <article className="report-paper class-paper"><header><div><span>同迹 · 班级证据画像{selected.content.aiMeta ? ` · ${selected.content.aiMeta.provider === "QianwenAIProvider" ? "AI生成" : "演示AI"}` : ""}</span><h1>{selected.content.title}</h1><p>{selected.period_start} 至 {selected.period_end} · 不展示个体排名与综合分数</p></div><Badge tone="blue">教师工作稿</Badge></header><section className="report-highlight"><Sprout /><div><strong>{selected.content.observationCoverage}</strong><p>{selected.content.evidenceBoundary}</p></div></section><div className="report-sections classroom-report-sections"><section><span>01</span><h2>观察覆盖</h2><p>已观察{selected.content.observedChildCount}/{selected.content.totalChildCount}名幼儿，累计{selected.content.observationCount}条证据、{selected.content.timePointCount}个日期。</p><p>场景：{selected.content.sceneCoverage.join("、") || "仍需补充"}</p></section><section><span>02</span><h2>共同兴趣</h2>{selected.content.commonInterests.length ? selected.content.commonInterests.map((item) => <p key={item}>• {item}</p>) : <p>仍需积累更多共同兴趣证据。</p>}</section><section><span>03</span><h2>持续问题</h2>{selected.content.recurringQuestions.length ? selected.content.recurringQuestions.map((item) => <p key={item}>• {item}</p>) : <p>当前没有形成跨观察的持续问题。</p>}</section><section><span>04</span><h2>五大领域证据</h2>{Object.entries(selected.content.domainEvidence).map(([domain, count]) => <p key={domain}>• {domain}：{count}条教师确认的证据</p>)}</section><section><span>05</span><h2>支持复察与课程线索</h2><p>支持策略复察率：{selected.content.supportFollowUpRate}%</p>{selected.content.curriculumClues.length ? selected.content.curriculumClues.map((item) => <p key={item.id}>• {item.title}（{item.theme}）</p>) : <p>本周期尚未形成课程线索。</p>}</section><section><span>06</span><h2>下一步建议</h2>{selected.content.nextSuggestions.map((item) => <p key={item}>• {item}</p>)}</section></div><footer><span>证据索引：{selected.evidence_observation_ids.join(" · ")}</span></footer></article> : <article className="report-paper"><header><div><span>同迹 · {reportVersion(selected)}{selected.content.aiMeta ? ` · ${selected.content.aiMeta.provider === "QianwenAIProvider" ? "AI生成" : "演示AI"}` : ""}</span><h1>{selected.content.title}</h1><p>{selected.period_start} 至 {selected.period_end}</p></div><Badge tone="blue">教师工作稿</Badge></header><section className="report-highlight"><Sprout /><div><strong>{selected.content.observationCoverage}</strong><p>{selected.content.evidenceBoundary}</p></div></section><div className="report-sections"><section><span>01</span><h2>主要兴趣</h2>{selected.content.interests.map((item) => <p key={item}>• {item}</p>)}</section><section><span>02</span><h2>有证据支持的变化</h2>{selected.content.evidencedGrowth.map((item) => <p key={item}>• {item}</p>)}</section><section><span>03</span><h2>教师支持及效果</h2>{selected.content.teacherSupport.map((item) => <p key={item}>• {item}</p>)}</section><section><span>04</span><h2>{selected.report_type === "guardian" ? "家庭共玩建议" : "待验证与下一计划"}</h2>{(selected.report_type === "guardian" ? selected.content.familySuggestions : [...selected.content.pendingQuestions, ...selected.content.nextPlan]).map((item) => <p key={item}>• {item}</p>)}</section></div><footer><span>证据索引：{selected.evidence_observation_ids.join(" · ")}</span></footer></article>}
-    </div>}
+    </div></div>}
 
     {createModal && <Modal title="生成标准周期报告" description={form.dimension === "classroom" ? "班级报告至少覆盖2名幼儿、2条教师确认观察和2个不同日期。" : "个体报告至少需要2条教师确认观察并覆盖2个不同日期。"} onClose={() => setCreateModal(false)}><form className="remote-form" onSubmit={generate}><label><span>报告维度</span><select value={form.dimension} onChange={(event) => setForm({ ...form, dimension: event.target.value })}><option value="individual">幼儿个体</option><option value="classroom">班级画像</option></select></label><label><span>班级</span><select required value={form.classroomId} onChange={(event) => setForm({ ...form, classroomId: event.target.value })}>{classrooms.map((item) => <option value={item.id} key={item.id}>{item.name}</option>)}</select></label>{form.dimension === "individual" && <><label><span>幼儿</span><select required value={form.childId} onChange={(event) => setForm({ ...form, childId: event.target.value })}>{children.filter((child) => child.classroom_id === form.classroomId).map((child) => <option value={child.id} key={child.id}>{child.display_name}</option>)}</select></label><label><span>报告版本</span><select value={form.reportType} onChange={(event) => setForm({ ...form, reportType: event.target.value })}><option value="teacher">教师专业版</option><option value="guardian">家长交流版</option></select></label></>}<label><span>开始日期</span><input required type="date" value={form.periodStart} onChange={(event) => setForm({ ...form, periodStart: event.target.value })} /></label><label><span>结束日期</span><input required type="date" value={form.periodEnd} onChange={(event) => setForm({ ...form, periodEnd: event.target.value })} /></label><button className="btn btn-primary" disabled={busy || (form.dimension === "individual" && !form.childId)} type="submit"><Sparkles />生成报告</button></form></Modal>}
 

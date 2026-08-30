@@ -83,6 +83,7 @@
   "scene": "建构区",
   "theme": "桥梁建构",
   "organizationStage": "process",
+  "observationFocusCategory": "materials_tools",
   "observationFocus": ["材料选择与使用", "问题解决"],
   "teacherObservation": "客观白描，至少10字",
   "childQuote": "这块更稳。",
@@ -96,6 +97,8 @@
 ```
 
 `organizationStage`：`plan | introduction | process | sharing | evaluation`。
+
+`observationFocusCategory` 为教师必选的单一观察聚焦：`materials_tools`（材料与工具）、`cognition_experience`（认知与经验）、`social_experience`（交往与经验）。历史记录可以为空，不做追溯性猜测。
 
 `teacherResponse.category`：`experience | material | activity`。
 
@@ -253,7 +256,7 @@ curriculum_plan
 |---|---|---|
 | GET | `/support-actions` | 查看教师采用AI建议后形成的待实施应答 |
 | PATCH | `/support-actions/:id` | 按“实施、复察、验证、关闭”状态机记录效果证据 |
-| GET | `/children/:id/growth` | 汇总该幼儿已采用观察、分析和应答效果时间轴 |
+| GET | `/children/:id/growth` | 汇总该幼儿已采用观察、分析、应答效果、跨时间持续兴趣和班级共同兴趣 |
 | GET | `/reports` | 查看权限范围内的周期报告 |
 | POST | `/reports/generate` | 生成个体教师版、个体家长版或班级证据画像工作稿 |
 | PATCH | `/reports/:id` | 教师直接修改报告叙述内容 |
@@ -262,8 +265,11 @@ curriculum_plan
 | GET | `/curriculum-clues` | 查看多幼儿、多时间点课程线索 |
 | POST | `/curriculum-clues/scan` | 先按主题、场景和教师识别进行可解释语义聚类，再按证据门槛生成课程草案 |
 | PATCH | `/curriculum-clues/:id` | 保存可编辑课程草案新版本并推进状态 |
+| DELETE | `/curriculum-clues/:id` | 删除课程线索及其方向、计划、循环记录；保留来源观察和媒体证据 |
 
-个体报告至少需要2条、跨2个日期的教师确认证据。班级报告至少需要覆盖2名幼儿、2条观察和2个日期；覆盖人数、场景、五大领域证据条数、支持复察率和课程线索由系统计算，AI只提炼共同兴趣、持续问题和下一步建议。报告不设审核、发布或撤回流程，教师可直接编辑、AI修订、打印为PDF或删除。课程线索至少满足“2名幼儿或同一幼儿3次观察”，并跨越不少于2个时间点；系统只生成可修改草案。
+个体报告至少需要2条、跨2个日期的教师确认证据。系统按五大领域、游戏经验、学习品质与问题解决形成“初现、发展中、较稳定、跨情境迁移”四阶段描述；没有足够证据时显示“待积累证据”，不生成能力分数或排名。班级报告至少需要覆盖2名幼儿、2条观察和2个日期；覆盖人数、场景、五大领域状态分布、支持复察率和课程线索由系统计算，AI只提炼共同兴趣、持续问题和下一步建议。报告不设审核、发布或撤回流程，教师可直接编辑、AI修订、打印为PDF或删除。课程线索至少满足“2名幼儿或同一幼儿3次观察”，并跨越不少于2个时间点；系统只生成可修改草案。
+
+观察AI的公开资料补充采用可返回来源清单的联网检索结果，并可合并Crossref学术元数据。服务端只把已验证候选网址交给AI筛选，最终保留题名、作者、出版年份、来源类型和检索时间；公开资料只支持应答设计，不作为幼儿发展判断证据。
 
 观察记录和课程计划Word采用即时生成：
 

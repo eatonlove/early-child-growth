@@ -125,6 +125,7 @@ export async function generateBlankObservationTemplate() {
     "观察教师：________________    班级：________________",
     "观察时间：________________    游戏场地：________________",
     "游戏主题：________________    组织阶段：计划 / 导入 / 过程 / 分享 / 评价",
+    "观察聚焦（单选）：□材料与工具    □认知与经验    □交往与经验",
     "幼儿姓名、人数及本次情境特征：",
     "________________________________________________________________________",
     "客观白描（请在白描中保留关键幼儿原话）：",
@@ -185,12 +186,21 @@ function professionalAnalysisSections(analysis: Record<string, any>) {
     heading("观察切口与重点", HeadingLevel.HEADING_3),
     ...bulletParagraphs([...(analysis.observationCut ?? []), ...(analysis.observationFocus ?? [])]),
     heading("公开资料补充", HeadingLevel.HEADING_3),
-    ...bulletParagraphs((analysis.externalSupportReferences ?? []).map((item: any) => `${item.title}（${item.source}）\n${item.appliedSuggestion}\n${item.url}`)),
+    ...bulletParagraphs((analysis.externalSupportReferences ?? []).map((item: any) => {
+      const authors = item.authors?.length ? `｜作者：${item.authors.join("、")}` : "";
+      const publication = item.publication || item.publicationYear ? `｜${[item.publication, item.publicationYear].filter(Boolean).join("，")}` : "";
+      return `${item.title}（${item.source}${authors}${publication}）\n${item.appliedSuggestion}\n${item.url}`;
+    })),
   ];
 }
 
 function observationDocumentChildren(input: ObservationDocumentData) {
   const { observation } = input;
+  const focusCategoryLabel: Record<string, string> = {
+    materials_tools: "材料与工具",
+    cognition_experience: "认知与经验",
+    social_experience: "交往与经验",
+  };
   const subjectRows = [
     new TableRow({ children: ["幼儿", "角色", "本次情境特征"].map((text) => new TableCell({ children: [paragraph(text, true)] })) }),
     ...input.subjects.map((subject) => new TableRow({ children: [
@@ -207,6 +217,7 @@ function observationDocumentChildren(input: ObservationDocumentData) {
     label("游戏场地", observation.scene),
     label("游戏主题", observation.theme),
     label("游戏组织阶段", observation.organization_stage),
+    label("观察聚焦", focusCategoryLabel[observation.observation_focus_category] ?? "历史记录未选择"),
     heading("观察对象", HeadingLevel.HEADING_2),
     new Table({
       width: { size: 100, type: WidthType.PERCENTAGE },

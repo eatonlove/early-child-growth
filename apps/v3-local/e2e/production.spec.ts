@@ -2,11 +2,11 @@ import { expect, test, type Page } from "@playwright/test";
 
 const classroom = { id: "11111111-1111-4111-8111-111111111111", name: "中一班", grade: "middle", academic_year: "2026-2027", semester: "上学期", status: "active" };
 const child = { id: "22222222-2222-4222-8222-222222222222", classroom_id: classroom.id, internal_code: "M001", display_name: "乐乐", birth_month: "2022-01-01", guardian_consent_status: "granted", interests: ["桥梁建构"], status: "active" };
-const observation = { id: "44444444-4444-4444-8444-444444444444", classroom_id: classroom.id, child_id: child.id, title: "桥梁再次加固", occurred_at: "2026-08-24T09:00:00+08:00", scene: "建构区", theme: "积木桥梁", organization_stage: "process", observation_focus: ["问题解决"], teacher_observation: "幼儿移动桥墩后，再次把积木放到桥面上。", child_quote: "这样更稳。", teacher_identification: "正在比较支撑位置。", teacher_response: { category: "material", strategy: "保留不同形状支撑物", nextObservationFocus: "观察是否主动比较" }, observer_ids: [], observer_name_snapshot: "陈老师", unlisted_participant_count: 0, status: "ai_ready", created_at: "2026-08-24T09:20:00+08:00" };
+const observation = { id: "44444444-4444-4444-8444-444444444444", classroom_id: classroom.id, child_id: child.id, title: "桥梁再次加固", occurred_at: "2026-08-24T09:00:00+08:00", scene: "建构区", theme: "积木桥梁", organization_stage: "process", observation_focus_category: "materials_tools", observation_focus: ["问题解决"], teacher_observation: "幼儿移动桥墩后，再次把积木放到桥面上。", child_quote: "这样更稳。", teacher_identification: "正在比较支撑位置。", teacher_response: { category: "material", strategy: "保留不同形状支撑物", nextObservationFocus: "观察是否主动比较" }, observer_ids: [], observer_name_snapshot: "陈老师", unlisted_participant_count: 0, status: "ai_ready", created_at: "2026-08-24T09:20:00+08:00" };
 const observationImport = {
   id: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa", classroom_id: classroom.id, source_file_name: "桥梁观察记录.docx",
   source_mime_type: "application/vnd.openxmlformats-officedocument.wordprocessingml.document", status: "needs_review",
-  extracted_fields: { observerName: "陈老师", occurredAtText: "2026-08-24 09:00", scene: "建构区", theme: "桥梁探究", organizationStage: "process", subjects: [{ displayName: "乐乐", contextualFeature: "主动调整桥墩", role: "primary" }], unlistedParticipantCount: 1, groupContext: "两名同伴在旁共同搭建", objectiveObservation: "乐乐移动桥墩后，再次把积木放到桥面上进行测试。", teacherIdentification: "教师识别到比较支撑位置的经验线索。", teacherResponseDraft: "保留不同形状支撑物。", nextObservationFocus: "观察是否主动比较。", warnings: [], fieldConfidence: { objectiveObservation: .94, teacherIdentification: .86 } },
+  extracted_fields: { observerName: "陈老师", occurredAtText: "2026-08-24 09:00", scene: "建构区", theme: "桥梁探究", organizationStage: "process", observationFocusCategory: "cognition_experience", subjects: [{ displayName: "乐乐", contextualFeature: "主动调整桥墩", role: "primary" }], unlistedParticipantCount: 1, groupContext: "两名同伴在旁共同搭建", objectiveObservation: "乐乐移动桥墩后，再次把积木放到桥面上进行测试。", teacherIdentification: "教师识别到比较支撑位置的经验线索。", teacherResponseDraft: "保留不同形状支撑物。", nextObservationFocus: "观察是否主动比较。", warnings: [], fieldConfidence: { objectiveObservation: .94, teacherIdentification: .86 } },
   field_confidence: { objectiveObservation: .94, teacherIdentification: .86 }, matched_child_ids: [child.id], failure_reason: null, observation_id: null, created_at: "2026-08-28T09:00:00+08:00",
 };
 const analysis = {
@@ -39,6 +39,12 @@ const bubbleObservation = {
   theme: "泡泡探秘",
   status: "adopted",
 };
+const secondRobotObservation = {
+  ...robotObservation,
+  id: "19191919-1919-4919-8919-191919191919",
+  title: "机器人连接片再次比较",
+  occurred_at: "2026-08-27T09:00:00+08:00",
+};
 const growthResult = {
   child,
   timeline: [
@@ -47,9 +53,14 @@ const growthResult = {
       analysis: { ...analysis, observation_id: robotObservation.id, decision: "adopted" },
       supports: [{ id: "14141414-1414-4414-8414-141414141414", child_id: child.id, observation_id: robotObservation.id, category: "material", rationale: "支持比较不同连接材料", strategy: "补充不同宽度连接片", next_observation_focus: "观察是否主动比较稳定性", child_response: "幼儿更换连接片后再次测试。", effectiveness: "supported", status: "verified", created_at: "2026-08-25T09:00:00+08:00" }],
     },
+    { observation: secondRobotObservation, analysis: { ...analysis, observation_id: secondRobotObservation.id, decision: "adopted" }, supports: [] },
     { observation: bubbleObservation, analysis: null, supports: [] },
   ],
-  coverage: { observations: 2, scenes: ["建构区"], themes: ["机器人搭建", "泡泡探秘"], verifiedSupports: 1 },
+  coverage: { observations: 3, scenes: ["建构区"], themes: ["机器人搭建", "泡泡探秘"], verifiedSupports: 1 },
+  interestInsights: {
+    sustainedInterests: [{ label: "机器人搭建", aliases: ["机器人搭建"], observationCount: 2, timePointCount: 2, childCount: 1, firstSeenAt: robotObservation.occurred_at, lastSeenAt: secondRobotObservation.occurred_at, evidenceObservationIds: [robotObservation.id, secondRobotObservation.id], childIds: [child.id] }],
+    sharedInterests: [{ label: "结构搭建", aliases: ["机器人搭建", "积木桥梁"], observationCount: 4, timePointCount: 3, childCount: 2, firstSeenAt: "2026-08-20T09:00:00+08:00", lastSeenAt: secondRobotObservation.occurred_at, evidenceObservationIds: [robotObservation.id, secondRobotObservation.id, observation.id], childIds: [child.id, "20202020-2020-4020-8020-202020202020"] }],
+  },
 };
 
 const memoryFrameworks = [
@@ -83,11 +94,37 @@ const classroomReport = {
     supportFollowUpRate: 50,
     nextSuggestions: ["补充健康、艺术领域的真实游戏证据。"],
     curriculumClues: [{ id: "99999999-9999-4999-8999-999999999999", title: "稳固的桥", theme: "结构", status: "draft" }],
+    developmentProfile: {
+      totalChildCount: 3,
+      evidenceBoundary: "仅汇总教师确认采用的证据，以状态分布和证据覆盖呈现，不形成分数或排名。",
+      domains: ["健康", "语言", "社会", "科学", "艺术"].map((domain, index) => ({
+        domain,
+        distribution: { 初现: index === 0 ? 1 : 0, 发展中: index === 2 ? 1 : 0, 较稳定: index === 3 ? 1 : 0, 跨情境迁移: 0, 待积累证据: index === 4 ? 3 : 2 },
+        evidenceCount: index === 3 ? 3 : index === 4 ? 0 : 1,
+        observedChildCount: index === 4 ? 0 : 1,
+      })),
+    },
     audience: "classroom",
   },
   evidence_observation_ids: [observation.id],
   status: "draft",
   created_at: "2026-08-24T10:00:00+08:00",
+};
+
+const curriculumClue = {
+  id: "21212121-2121-4121-8121-212121212121",
+  classroom_id: classroom.id,
+  title: "机器人怎样站得更稳",
+  theme: "结构搭建",
+  origin: "来自跨时间的机器人搭建观察。",
+  inquiry_questions: ["怎样选择更稳的连接材料？"],
+  child_ids: [child.id],
+  evidence_observation_ids: [robotObservation.id, secondRobotObservation.id],
+  time_point_count: 2,
+  threshold_met: true,
+  plan: { scope: "classroom_curriculum", version: 1 },
+  status: "clue",
+  updated_at: "2026-08-30T09:00:00+08:00",
 };
 
 const aiPrompt = {
@@ -125,7 +162,8 @@ const aiModelConfig = {
   ],
 };
 
-async function mockApi(page: Page, role: "teacher" | "researcher", withAnalysis = false, withClassroomReport = false, withActiveAnalysisJob = false) {
+async function mockApi(page: Page, role: "teacher" | "researcher", withAnalysis = false, withClassroomReport = false, withActiveAnalysisJob = false, withCurriculumClue = false) {
+  let curriculumExists = withCurriculumClue;
   const analysisJob = {
     id: "99999999-9999-4999-8999-999999999999",
     observation_id: observation.id,
@@ -139,6 +177,11 @@ async function mockApi(page: Page, role: "teacher" | "researcher", withAnalysis 
     const url = new URL(route.request().url());
     const path = url.pathname;
     const method = route.request().method();
+    if (path === `/api/curriculum-clues/${curriculumClue.id}` && method === "DELETE") {
+      curriculumExists = false;
+      await route.fulfill({ status: 204, body: "" });
+      return;
+    }
     const json = path === "/api/me" ? { user: { id: role === "teacher" ? "teacher-id" : "research-id", tenantId: "tenant-id", username: role, displayName: role === "teacher" ? "陈老师" : "周教研员", role, tenantName: "向阳实验幼儿园" } }
       : path === "/api/dashboard" ? { counts: { classrooms: 1, children: 1, observations: 0, pendingAnalyses: 0 }, role }
       : path === "/api/classrooms" ? { items: [classroom] }
@@ -160,7 +203,8 @@ async function mockApi(page: Page, role: "teacher" | "researcher", withAnalysis 
       : path === "/api/research-activities" ? { items: [] }
       : path === `/api/children/${child.id}/growth` ? growthResult
       : path === "/api/reports" ? { items: withClassroomReport ? [classroomReport] : [] }
-      : path === "/api/curriculum-clues" ? { items: [] }
+      : path === "/api/curriculum-clues" ? { items: curriculumExists ? [curriculumClue] : [] }
+      : path === `/api/curriculum-clues/${curriculumClue.id}/workspace` ? { clue: curriculumClue, options: [], plans: [], cycles: [] }
       : path === "/api/curriculum-templates" ? { items: [{ id: "cccccccc-cccc-4ccc-8ccc-cccccccccccc", code: "co-growth-course", name: "同生课程模板", version: 1, description: "连续证据课程模板", structure: {}, is_default: true, status: "active" }] }
       : path === "/api/professional-memories" ? { items: professionalMemories }
       : path === "/api/curriculum-resource-packages" ? { items: [] }
@@ -203,6 +247,10 @@ test("生产教师端只显示两角色模型下的核心工作区", async ({ pa
   expect(viewport).not.toBeNull();
   expect(dialogBox!.y).toBeGreaterThanOrEqual(0);
   expect(dialogBox!.y + dialogBox!.height).toBeLessThanOrEqual(viewport!.height);
+  await expect(dialog.getByRole("radio", { name: "材料与工具" })).toBeChecked();
+  await dialog.getByRole("radio", { name: "交往与经验" }).check();
+  await expect(dialog.getByRole("radio", { name: "交往与经验" })).toBeChecked();
+  await expect(dialog.getByRole("radio", { checked: true })).toHaveCount(1);
   await page.keyboard.press("Escape");
   await expect(dialog).toBeHidden();
   await openWorkspaceMenu(page);
@@ -236,6 +284,7 @@ test("上传观察模板后进入与网页录入相同的教师校对表单", as
   await expect(reviewDialog.getByLabel(/客观白描/)).toHaveValue(/再次把积木放到桥面上/);
   await expect(reviewDialog.getByLabel("教师识别")).toHaveValue(/比较支撑位置/);
   await expect(reviewDialog.getByLabel("教师原始应答")).toHaveValue(/保留不同形状支撑物/);
+  await expect(reviewDialog.getByRole("radio", { name: "认知与经验" })).toBeChecked();
 });
 
 test("AI结果展示连续观察、指南证据链与教师最终确认", async ({ page }) => {
@@ -271,17 +320,18 @@ test("0830建议页面采用单列、折叠和精确主题筛选", async ({ page
   await expect(page.getByRole("button", { name: "导出当前档案" })).toBeEnabled();
 
   await page.goto("/growth");
-  await expect(page.getByRole("heading", { name: "机器人搭建与加固" })).toBeVisible();
-  const allRecords = page.locator(".growth-record");
-  await expect(allRecords).toHaveCount(2);
-  await expect(allRecords.first()).not.toHaveAttribute("open", "");
-  await page.getByLabel("游戏主题").selectOption("机器人搭建");
-  await expect(page.getByRole("heading", { name: "机器人搭建与加固" })).toBeVisible();
-  await expect(page.getByRole("heading", { name: "泡泡大小比较" })).toHaveCount(0);
-  await expect(page.locator(".growth-record")).toHaveCount(1);
-  await page.locator(".growth-record summary").click();
-  await expect(page.locator(".growth-record")).toHaveAttribute("open", "");
+  await expect(page.getByRole("heading", { name: "成长轨迹与应答追踪" })).toBeVisible();
+  await expect(page.getByText(/2条观察 · 2个日期/)).toBeVisible();
+  await expect(page.getByText(/2名幼儿 · 4条观察/)).toBeVisible();
+  const allRecords = page.locator(".growth-compact-card");
+  await expect(allRecords).toHaveCount(3);
+  await page.locator(".growth-theme-chips").getByRole("button", { name: "机器人搭建", exact: true }).click();
+  await expect(page.locator(".growth-compact-card").getByText("泡泡探秘", { exact: true })).toHaveCount(0);
+  await expect(page.locator(".growth-compact-card")).toHaveCount(2);
+  await page.locator(".growth-compact-card").first().click();
+  await expect(page.getByRole("dialog", { name: "机器人搭建与加固" })).toBeVisible();
   await expect(page.locator(".growth-analysis-list > article")).toHaveCount(3);
+  await page.keyboard.press("Escape");
 
   await page.goto("/memories");
   const frameworkRows = page.locator(".evo-framework-list article");
@@ -315,11 +365,26 @@ test("周期报告支持班级维度生成与画像展示", async ({ page }) => 
   await expect(page.getByText("已观察2/3名幼儿")).toBeVisible();
   await expect(page.getByText("支持策略复察率：50%")).toBeVisible();
   await expect(page.getByText(/科学：3条教师确认的证据/)).toBeVisible();
+  await expect(page.getByText("五大领域发展状态与证据覆盖")).toBeVisible();
+  await expect(page.locator(".class-domain-coverage > span")).toHaveCount(5);
+  await expect(page.getByText(/不形成分数或排名/)).toBeVisible();
   await page.getByRole("button", { name: "生成报告" }).click();
   const dialog = page.getByRole("dialog", { name: "生成标准周期报告" });
   await dialog.getByLabel("报告维度").selectOption("classroom");
   await expect(dialog.getByLabel("幼儿", { exact: true })).toHaveCount(0);
   await expect(dialog.getByText(/至少覆盖2名幼儿/)).toBeVisible();
+});
+
+test("课程线索可删除派生内容且明确保留来源观察", async ({ page }) => {
+  await mockApi(page, "teacher", true, false, false, true);
+  await page.goto("/curriculum");
+  await expect(page.getByRole("heading", { name: "机器人怎样站得更稳" })).toBeVisible();
+  await expect(page.getByText(/不会删除来源观察/)).toBeVisible();
+  page.once("dialog", (dialog) => dialog.accept());
+  const deleteRequest = page.waitForRequest((request) => request.method() === "DELETE" && request.url().endsWith(`/api/curriculum-clues/${curriculumClue.id}`));
+  await page.getByRole("button", { name: "删除课程线索" }).click();
+  await deleteRequest;
+  await expect(page.getByText("尚无课程线索")).toBeVisible();
 });
 
 test("手机端提供清晰的全部功能入口", async ({ page }) => {

@@ -69,3 +69,17 @@ describe("production AI prompt API", () => {
     expect(JSON.parse(String(calls[4]?.init?.body))).toEqual({ expectedRevision: 1 });
   });
 });
+
+describe("production curriculum API", () => {
+  it("deletes a curriculum clue through the real backend contract", async () => {
+    const fetcher = vi.fn(async () => new Response(null, { status: 204 }));
+    vi.stubGlobal("fetch", fetcher);
+
+    await remoteApi.deleteCurriculumClue("21212121-2121-4121-8121-212121212121");
+
+    expect(fetcher).toHaveBeenCalledWith(
+      "/api/curriculum-clues/21212121-2121-4121-8121-212121212121",
+      expect.objectContaining({ method: "DELETE", credentials: "include" }),
+    );
+  });
+});

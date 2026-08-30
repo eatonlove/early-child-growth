@@ -26,6 +26,7 @@ export interface ObservationForAnalysis {
   theme: string;
   organization_stage: string;
   observation_focus?: string[];
+  observation_focus_category?: "materials_tools" | "cognition_experience" | "social_experience" | null;
   group_context?: string | null;
   subject_context?: string | null;
   subject_role?: "primary" | "participant" | "incidental";
@@ -215,6 +216,13 @@ export const analysisResultSchema = z.object({
     url: z.string().url().max(1000),
     source: z.string().trim().min(1).max(200),
     appliedSuggestion: z.string().trim().min(1).max(1200),
+    authors: z.array(z.string().trim().min(1).max(160)).max(12).optional(),
+    publicationYear: z.number().int().min(1900).max(2100).nullable().optional(),
+    publication: z.string().trim().max(300).optional(),
+    sourceType: z.enum(["academic", "policy", "institutional", "practice"]).optional(),
+    verified: z.boolean().optional(),
+    retrievedAt: z.string().datetime().optional(),
+    doi: z.string().trim().max(300).optional(),
   }).strict()).max(6).default([]),
   evidenceSufficiency: z.enum(["有限", "初步充分"]),
   warnings: z.array(shortText).min(1).max(8),
@@ -224,9 +232,7 @@ export type AnalysisResult = z.infer<typeof analysisResultSchema>;
 
 export const supportResearchSchema = z.object({
   references: z.array(z.object({
-    title: z.string().trim().min(1).max(300),
     url: z.string().url().max(1000),
-    source: z.string().trim().min(1).max(200),
     appliedSuggestion: z.string().trim().min(1).max(1200),
   }).strict()).max(6),
 }).strict();
@@ -239,6 +245,7 @@ export const observationDocumentExtractionSchema = z.object({
   scene: z.string().trim().max(120).default(""),
   theme: z.string().trim().max(160).default(""),
   organizationStage: z.enum(["plan", "introduction", "process", "sharing", "evaluation"]).default("process"),
+  observationFocusCategory: z.enum(["materials_tools", "cognition_experience", "social_experience"]).nullable().default(null),
   subjects: z.array(z.object({
     displayName: z.string().trim().min(1).max(80),
     contextualFeature: z.string().trim().max(500).default(""),
@@ -255,6 +262,43 @@ export const observationDocumentExtractionSchema = z.object({
 }).strict();
 
 export type ObservationDocumentExtraction = z.infer<typeof observationDocumentExtractionSchema>;
+
+const developmentStateSchema = z.enum(["初现", "发展中", "较稳定", "跨情境迁移", "待积累证据"]);
+const developmentDimensionProfileSchema = z.object({
+  dimension: z.string().trim().min(1).max(120),
+  state: developmentStateSchema,
+  evidenceCount: z.number().int().min(0),
+  timePointCount: z.number().int().min(0),
+  sceneCount: z.number().int().min(0),
+  summary: z.string().trim().min(1).max(2000),
+  evidenceObservationIds: z.array(z.string().uuid()).max(100),
+}).strict();
+
+const individualDevelopmentProfileSchema = z.object({
+  domains: z.array(developmentDimensionProfileSchema).length(5),
+  gameExperiences: z.array(developmentDimensionProfileSchema).length(7),
+  learningDispositions: z.array(developmentDimensionProfileSchema).length(6),
+  evidenceBoundary: z.string().trim().min(1).max(1000),
+}).strict();
+
+const stateDistributionSchema = z.object({
+  初现: z.number().int().min(0),
+  发展中: z.number().int().min(0),
+  较稳定: z.number().int().min(0),
+  跨情境迁移: z.number().int().min(0),
+  待积累证据: z.number().int().min(0),
+}).strict();
+
+const classroomDevelopmentProfileSchema = z.object({
+  domains: z.array(z.object({
+    domain: z.enum(["健康", "语言", "社会", "科学", "艺术"]),
+    distribution: stateDistributionSchema,
+    evidenceCount: z.number().int().min(0),
+    observedChildCount: z.number().int().min(0),
+  }).strict()).length(5),
+  totalChildCount: z.number().int().min(0),
+  evidenceBoundary: z.string().trim().min(1).max(1000),
+}).strict();
 
 export interface ObservationDocumentExtractionInput {
   fileName: string;
@@ -326,6 +370,7 @@ export const reportContentSchema = z.object({
   nextPlan: z.array(shortText).max(8),
   familySuggestions: z.array(shortText).max(6),
   audience: z.enum(["teacher", "guardian"]),
+  developmentProfile: individualDevelopmentProfileSchema.optional(),
 }).strict();
 
 export type ReportContent = z.infer<typeof reportContentSchema>;
@@ -359,6 +404,7 @@ export const classroomReportContentSchema = z.object({
     status: z.string().trim().min(1).max(80),
   }).strict()).max(20),
   audience: z.literal("classroom"),
+  developmentProfile: classroomDevelopmentProfileSchema.optional(),
 }).strict();
 
 export type ClassroomReportContent = z.infer<typeof classroomReportContentSchema>;

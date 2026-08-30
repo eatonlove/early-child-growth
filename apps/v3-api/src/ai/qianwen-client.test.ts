@@ -65,7 +65,7 @@ describe("QwenClient", () => {
 
   it("unwraps a JSON object serialized as a string by multimodal responses", async () => {
     const content = JSON.stringify(JSON.stringify({ answer: "视频证据草稿" }));
-    const fetcher = vi.fn(async () => new Response(JSON.stringify({
+    const fetcher = vi.fn(async (_url: string | URL | Request, _init?: RequestInit) => new Response(JSON.stringify({
       choices: [{ message: { content } }],
     }), { status: 200, headers: { "Content-Type": "application/json" } }));
     const client = new QwenClient({
@@ -214,5 +214,28 @@ describe("QwenClient", () => {
       baseUrl: "https://dashscope.aliyuncs.com/compatible-mode/v1",
       timeoutMs: 5000,
     })).not.toThrow();
+  });
+
+  it("uses the native DashScope search protocol and returns provider source records", async () => {
+    const fetcher = vi.fn(async (_url: string | URL | Request, _init?: RequestInit) => new Response(JSON.stringify({
+      output: {
+        choices: [{ message: { content: "可参考公开资料。" } }],
+        search_info: { search_results: [{ title: "教育部学前教育资料", url: "https://www.moe.gov.cn/example", site_name: "教育部" }] },
+      },
+    }), { status: 200, headers: { "Content-Type": "application/json" } }));
+    const client = new QwenClient({
+      apiKey: "sk-test-only",
+      baseUrl: "https://dashscope.aliyuncs.com/compatible-mode/v1",
+      timeoutMs: 5000,
+      retries: 0,
+      fetcher: fetcher as typeof fetch,
+    });
+
+    const result = await client.searchWithSources({ model: "qwen3.7-plus", systemPrompt: "检索可靠资料", query: "幼儿游戏支持" });
+
+    expect(String(fetcher.mock.calls[0]?.[0])).toContain("/api/v1/services/aigc/text-generation/generation");
+    const request = JSON.parse(String(fetcher.mock.calls[0]?.[1]?.body));
+    expect(request.parameters.search_options.enable_source).toBe(true);
+    expect(result.sources).toEqual([{ title: "教育部学前教育资料", url: "https://www.moe.gov.cn/example", siteName: "教育部" }]);
   });
 });

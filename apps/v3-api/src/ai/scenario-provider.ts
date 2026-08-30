@@ -235,6 +235,12 @@ export function buildScenarioObservationExtraction(input: ObservationDocumentExt
   const identification = labelValue(text, ["识别", "分析", "教师分析", "经验分析"]);
   const response = labelValue(text, ["应答", "支持策略", "教师支持", "调整策略"]);
   const nextFocus = labelValue(text, ["下一次观察", "观察重点", "后续观察"]);
+  const focusCategoryText = labelValue(text, ["观察聚焦", "聚焦类型", "观察类型"]);
+  const focusCategoryMatches = ([
+    ["材料与工具", "materials_tools"],
+    ["认知与经验", "cognition_experience"],
+    ["交往与经验", "social_experience"],
+  ] as const).filter(([label]) => focusCategoryText.includes(label));
   const confidenceFor = (value: string, high = 0.82) => value ? high : 0.25;
   return {
     observerName: labelValue(text, ["观察教师", "观察者", "教师"]),
@@ -242,6 +248,9 @@ export function buildScenarioObservationExtraction(input: ObservationDocumentExt
     scene: labelValue(text, ["游戏场地", "观察地点", "游戏区域", "区域"]),
     theme: labelValue(text, ["游戏主题", "主题名称", "主题"]),
     organizationStage: "process",
+    observationFocusCategory: focusCategoryMatches.length === 1
+      ? focusCategoryMatches[0]![1] as "materials_tools" | "cognition_experience" | "social_experience"
+      : null,
     subjects: namedChildren.map((child, index) => ({ displayName: child.displayName, contextualFeature: "", role: index === 0 ? "primary" : "participant" })),
     unlistedParticipantCount: 0,
     groupContext: labelValue(text, ["游戏背景", "情境", "活动背景"]),

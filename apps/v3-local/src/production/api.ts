@@ -382,6 +382,7 @@ export const remoteApi = {
       method: "PATCH",
       body: body(value),
     }),
+  deleteCurriculumClue: (id: string) => request<void>(`/api/curriculum-clues/${id}`, { method: "DELETE" }),
   curriculumTemplates: () => request<{ items: RemoteCurriculumTemplate[] }>("/api/curriculum-templates"),
   createCurriculumTemplate: (value: { code: string; name: string; description: string; structure: Record<string, unknown>; isDefault: boolean }) =>
     request<{ item: RemoteCurriculumTemplate }>("/api/curriculum-templates", { method: "POST", body: body(value) }),

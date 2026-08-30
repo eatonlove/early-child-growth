@@ -60,6 +60,7 @@ export interface RemoteObservation {
   theme: string;
   organization_stage:
     "plan" | "introduction" | "process" | "sharing" | "evaluation";
+  observation_focus_category?: "materials_tools" | "cognition_experience" | "social_experience" | null;
   observation_focus: string[];
   teacher_observation: string;
   child_quote?: string | null;
@@ -150,6 +151,13 @@ export interface AnalysisResult {
     url: string;
     source: string;
     appliedSuggestion: string;
+    authors?: string[];
+    publicationYear?: number | null;
+    publication?: string;
+    sourceType?: "academic" | "policy" | "institutional" | "practice";
+    verified?: boolean;
+    retrievedAt?: string;
+    doi?: string;
   }>;
   evidenceSufficiency: string;
   warnings: string[];
@@ -280,6 +288,7 @@ export interface RemoteObservationImport {
     scene?: string;
     theme?: string;
     organizationStage?: RemoteObservation["organization_stage"];
+    observationFocusCategory?: RemoteObservation["observation_focus_category"];
     subjects?: Array<{ displayName: string; contextualFeature: string; role: RemoteObservationSubject["role"] }>;
     unlistedParticipantCount?: number;
     groupContext?: string;
@@ -445,6 +454,52 @@ export interface RemoteGrowthResult {
     themes: string[];
     verifiedSupports: number;
   };
+  interestInsights: {
+    sustainedInterests: RemoteInterestInsight[];
+    sharedInterests: RemoteInterestInsight[];
+  };
+}
+
+export interface RemoteInterestInsight {
+  label: string;
+  aliases: string[];
+  observationCount: number;
+  timePointCount: number;
+  childCount: number;
+  firstSeenAt: string;
+  lastSeenAt: string;
+  evidenceObservationIds: string[];
+  childIds: string[];
+}
+
+export type RemoteDevelopmentState = "初现" | "发展中" | "较稳定" | "跨情境迁移" | "待积累证据";
+
+export interface RemoteDevelopmentDimensionProfile {
+  dimension: string;
+  state: RemoteDevelopmentState;
+  evidenceCount: number;
+  timePointCount: number;
+  sceneCount: number;
+  summary: string;
+  evidenceObservationIds: string[];
+}
+
+export interface RemoteIndividualDevelopmentProfile {
+  domains: RemoteDevelopmentDimensionProfile[];
+  gameExperiences: RemoteDevelopmentDimensionProfile[];
+  learningDispositions: RemoteDevelopmentDimensionProfile[];
+  evidenceBoundary: string;
+}
+
+export interface RemoteClassroomDevelopmentProfile {
+  domains: Array<{
+    domain: "健康" | "语言" | "社会" | "科学" | "艺术";
+    distribution: Record<RemoteDevelopmentState, number>;
+    evidenceCount: number;
+    observedChildCount: number;
+  }>;
+  totalChildCount: number;
+  evidenceBoundary: string;
 }
 
 interface RemoteReportAiMeta {
@@ -466,6 +521,7 @@ export interface RemoteIndividualReportContent {
   familySuggestions: string[];
   audience: "teacher" | "guardian";
   aiMeta?: RemoteReportAiMeta;
+  developmentProfile?: RemoteIndividualDevelopmentProfile;
 }
 
 export interface RemoteClassroomReportContent {
@@ -485,6 +541,7 @@ export interface RemoteClassroomReportContent {
   curriculumClues: Array<{ id: string; title: string; theme: string; status: string }>;
   audience: "classroom";
   aiMeta?: RemoteReportAiMeta;
+  developmentProfile?: RemoteClassroomDevelopmentProfile;
 }
 
 interface RemotePeriodReportBase {

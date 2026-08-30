@@ -31,6 +31,8 @@ describe("Word document generation", () => {
     expect(buffer.byteLength).toBeGreaterThan(5000);
     expect(text).toContain("同迹·游戏观察记录表");
     expect(text).toContain("客观白描");
+    expect(text).toContain("观察聚焦（单选）");
+    expect(text).toContain("材料与工具");
     expect(text).not.toContain("综合评分");
   });
 

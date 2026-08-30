@@ -31,6 +31,19 @@ interface StructuredCompletionInput<T> {
   timeoutMs?: number;
 }
 
+export interface QwenSearchSource {
+  title: string;
+  url: string;
+  siteName: string;
+}
+
+interface SearchWithSourcesInput {
+  model: string;
+  systemPrompt: string;
+  query: string;
+  timeoutMs?: number;
+}
+
 export class QwenRequestError extends Error {
   constructor(
     message: string,
@@ -158,6 +171,68 @@ export class QwenClient {
         transientRetries += 1;
       }
     }
+  }
+
+  async searchWithSources(input: SearchWithSourcesInput): Promise<{ content: string; sources: QwenSearchSource[] }> {
+    const compatibleBase = this.options.baseUrl.replace(/\/$/, "");
+    const endpoint = compatibleBase.includes("/compatible-mode/v1")
+      ? compatibleBase.replace(/\/compatible-mode\/v1$/, "/api/v1/services/aigc/text-generation/generation")
+      : `${new URL(compatibleBase).origin}/api/v1/services/aigc/text-generation/generation`;
+    let response: Response;
+    try {
+      response = await this.fetcher(endpoint, {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${this.options.apiKey}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          model: input.model,
+          input: {
+            messages: [
+              { role: "system", content: input.systemPrompt },
+              { role: "user", content: input.query },
+            ],
+          },
+          parameters: {
+            result_format: "message",
+            enable_search: true,
+            search_options: {
+              forced_search: true,
+              search_strategy: "max",
+              enable_source: true,
+              enable_citation: true,
+              citation_format: "[ref_<number>]",
+            },
+          },
+        }),
+        signal: AbortSignal.timeout(input.timeoutMs ?? this.options.timeoutMs),
+      });
+    } catch (error) {
+      const timedOut = error instanceof Error && (error.name === "TimeoutError" || error.name === "AbortError");
+      throw new QwenRequestError(timedOut ? "千问联网检索超时" : "千问联网检索请求失败", undefined, !timedOut);
+    }
+    if (!response.ok) {
+      throw new QwenRequestError(`千问联网检索返回HTTP ${response.status}`, response.status, response.status === 429 || response.status >= 500);
+    }
+    const payload = await response.json() as {
+      output?: {
+        choices?: Array<{ message?: { content?: unknown } }>;
+        search_info?: { search_results?: Array<{ title?: unknown; url?: unknown; site_name?: unknown }> };
+      };
+    };
+    const content = payload.output?.choices?.[0]?.message?.content;
+    const sources = (payload.output?.search_info?.search_results ?? []).flatMap((item) => {
+      if (typeof item.url !== "string" || typeof item.title !== "string") return [];
+      try {
+        const url = new URL(item.url);
+        if (!/^https?:$/.test(url.protocol)) return [];
+        return [{ title: item.title.trim(), url: url.toString(), siteName: typeof item.site_name === "string" ? item.site_name.trim() : url.hostname }];
+      } catch {
+        return [];
+      }
+    });
+    return { content: typeof content === "string" ? content : "", sources };
   }
 
   private async request<T>(input: StructuredCompletionInput<T>): Promise<T> {

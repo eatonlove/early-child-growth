@@ -84,6 +84,7 @@ const contract = [
   ["GET", "/api/curriculum-clues", true],
   ["POST", "/api/curriculum-clues/scan", true],
   ["PATCH", "/api/curriculum-clues/:id", true],
+  ["DELETE", "/api/curriculum-clues/:id", true],
   ["POST", "/api/curriculum-clues/from-evidence", true],
   ["POST", "/api/curriculum-clues/:id/activity-options", true],
   ["PATCH", "/api/curriculum-clues/:id/activity-options", true],
