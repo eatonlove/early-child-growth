@@ -162,7 +162,10 @@ const aiModelConfig = {
   ],
 };
 
-async function mockApi(page: Page, role: "teacher" | "researcher", withAnalysis = false, withClassroomReport = false, withActiveAnalysisJob = false, withCurriculumClue = false) {
+async function mockApi(page: Page, role: "teacher" | "researcher", withAnalysis = false, withClassroomReport = false, withActiveAnalysisJob = false, withCurriculumClue = false, withLoginMarker = true) {
+  if (withLoginMarker) {
+    await page.addInitScript(() => window.sessionStorage.setItem("tongji.password-login.current-tab", "1"));
+  }
   let curriculumExists = withCurriculumClue;
   const analysisJob = {
     id: "99999999-9999-4999-8999-999999999999",
@@ -177,12 +180,14 @@ async function mockApi(page: Page, role: "teacher" | "researcher", withAnalysis 
     const url = new URL(route.request().url());
     const path = url.pathname;
     const method = route.request().method();
+    const user = { id: role === "teacher" ? "teacher-id" : "research-id", tenantId: "tenant-id", username: role, displayName: role === "teacher" ? "陈老师" : "周教研员", role, tenantName: "向阳实验幼儿园" };
     if (path === `/api/curriculum-clues/${curriculumClue.id}` && method === "DELETE") {
       curriculumExists = false;
       await route.fulfill({ status: 204, body: "" });
       return;
     }
-    const json = path === "/api/me" ? { user: { id: role === "teacher" ? "teacher-id" : "research-id", tenantId: "tenant-id", username: role, displayName: role === "teacher" ? "陈老师" : "周教研员", role, tenantName: "向阳实验幼儿园" } }
+    const json = path === "/api/auth/login" ? { user }
+      : path === "/api/me" ? { user }
       : path === "/api/dashboard" ? { counts: { classrooms: 1, children: 1, observations: 0, pendingAnalyses: 0 }, role }
       : path === "/api/classrooms" ? { items: [classroom] }
       : path === "/api/children" ? { items: [child] }
@@ -217,6 +222,25 @@ async function mockApi(page: Page, role: "teacher" | "researcher", withAnalysis 
     });
   });
 }
+
+test("重新打开网页必须再次输入密码，当前标签页刷新保持登录", async ({ page, context }) => {
+  await mockApi(page, "teacher", false, false, false, false, false);
+  await page.goto("/");
+  await expect(page.getByRole("button", { name: "登录系统" })).toBeVisible();
+  await expect(page.getByText(/重新打开网页时需再次输入密码/)).toBeVisible();
+  await page.getByLabel("账号").fill("teacher");
+  await page.getByLabel("密码").fill("LocalTeacher123!");
+  await page.getByRole("button", { name: "登录系统" }).click();
+  await expect(page.getByRole("heading", { name: "每一次，从老师的观察开始" })).toBeVisible();
+
+  await page.reload();
+  await expect(page.getByRole("heading", { name: "每一次，从老师的观察开始" })).toBeVisible();
+
+  const reopenedPage = await context.newPage();
+  await mockApi(reopenedPage, "teacher", false, false, false, false, false);
+  await reopenedPage.goto("/");
+  await expect(reopenedPage.getByRole("button", { name: "登录系统" })).toBeVisible();
+});
 
 async function openWorkspaceMenu(page: Page) {
   await page.getByRole("button", { name: "打开全部功能菜单" }).click();

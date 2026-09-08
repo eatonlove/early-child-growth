@@ -4,7 +4,7 @@
 
 - Base path：`/api`
 - 数据格式：`application/json; charset=utf-8`
-- 会话：身份服务的 access/refresh token 由 API 写入 `HttpOnly` Cookie，前端不读取令牌。
+- 会话：身份服务的 access/refresh token 由 API 写入浏览器会话级 `HttpOnly` Cookie，前端不读取令牌；重新打开网页需要再次输入密码。
 - 角色：`teacher`、`researcher`。
 - 数据 schema：`tongji_v3`；`tongji_v3_private` 仅保存 RLS 辅助函数，不对 Data API 暴露。
 - 成功响应：单对象使用 `{ "item": ... }`，列表使用 `{ "items": [...] }`。
@@ -17,7 +17,7 @@
 
 | 方法 | 路径 | 权限 | 作用 |
 |---|---|---|---|
-| POST | `/auth/login` | 公开、限流 | 使用账号和密码登录，设置安全 Cookie |
+| POST | `/auth/login` | 公开、限流 | 使用账号和密码登录，设置不跨浏览器会话持久化的安全 Cookie |
 | POST | `/auth/refresh` | refresh Cookie | 刷新会话 |
 | POST | `/auth/logout` | 当前会话 | 注销并清除 Cookie |
 | GET | `/me` | 已登录 | 返回当前角色、园所与用户资料 |

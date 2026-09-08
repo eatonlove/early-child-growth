@@ -140,7 +140,7 @@ function LoginPage() {
         </form>
         <div className="remote-login-security">
           <KeyRound />
-          <span>账号由园所统一分配，教师仅访问所负责班级的数据。</span>
+          <span>账号由园所统一分配；重新打开网页时需再次输入密码。</span>
         </div>
       </section>
     </main>

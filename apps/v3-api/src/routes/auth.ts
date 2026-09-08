@@ -10,10 +10,10 @@ const credentialsSchema = z.object({
   password: z.string().min(10).max(128),
 });
 
-function setSessionCookies(reply: FastifyReply, session: { access_token: string; refresh_token: string; expires_in: number }) {
+function setSessionCookies(reply: FastifyReply, session: { access_token: string; refresh_token: string }) {
   const base = { path: "/api", httpOnly: true, secure: config.cookieSecure, sameSite: "strict" as const };
-  reply.setCookie("tj_access", session.access_token, { ...base, maxAge: session.expires_in });
-  reply.setCookie("tj_refresh", session.refresh_token, { ...base, maxAge: 60 * 60 * 24 * 7 });
+  reply.setCookie("tj_access", session.access_token, base);
+  reply.setCookie("tj_refresh", session.refresh_token, base);
 }
 
 function sessionPayload(profile: Record<string, unknown>, tenant: Record<string, unknown> | null) {

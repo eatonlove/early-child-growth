@@ -20,12 +20,36 @@ interface AuthValue {
 }
 
 const AuthContext = createContext<AuthValue | null>(null);
+const loginSessionKey = "tongji.password-login.current-tab";
+
+function hasCurrentTabLogin() {
+  try {
+    return window.sessionStorage.getItem(loginSessionKey) === "1";
+  } catch {
+    return false;
+  }
+}
+
+function setCurrentTabLogin(active: boolean) {
+  try {
+    if (active) window.sessionStorage.setItem(loginSessionKey, "1");
+    else window.sessionStorage.removeItem(loginSessionKey);
+  } catch {
+    // Browsers that block session storage simply require a new login after reload.
+  }
+}
 
 export function RemoteAuthProvider({ children }: { children: ReactNode }) {
   const [user, setUser] = useState<RemoteUser | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const verify = useCallback(async () => {
+    if (!hasCurrentTabLogin()) {
+      setUser(null);
+      setError("");
+      setLoading(false);
+      return;
+    }
     setLoading(true);
     setError("");
     try {
@@ -33,6 +57,7 @@ export function RemoteAuthProvider({ children }: { children: ReactNode }) {
       setUser(result.user);
     } catch (reason) {
       if (isUnauthenticatedError(reason)) {
+        setCurrentTabLogin(false);
         setUser(null);
       } else {
         setError(reason instanceof Error ? reason.message : "无法连接同迹服务");
@@ -52,6 +77,7 @@ export function RemoteAuthProvider({ children }: { children: ReactNode }) {
       retry: verify,
       login: async (username, password) => {
         const result = await remoteApi.login(username, password);
+        setCurrentTabLogin(true);
         setError("");
         setUser(result.user);
       },
@@ -59,6 +85,7 @@ export function RemoteAuthProvider({ children }: { children: ReactNode }) {
         try {
           await remoteApi.logout();
         } finally {
+          setCurrentTabLogin(false);
           setUser(null);
         }
       },

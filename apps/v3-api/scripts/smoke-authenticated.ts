@@ -49,7 +49,11 @@ try {
     body: JSON.stringify({ username, password }),
   });
   if (!loginResponse.ok) throw new Error(`真实登录失败: ${loginResponse.status}`);
-  const cookie = loginResponse.headers.getSetCookie().map((value) => value.split(";", 1)[0]).join("; ");
+  const setCookies = loginResponse.headers.getSetCookie();
+  if (setCookies.some((value) => /(?:max-age|expires)=/i.test(value))) {
+    throw new Error("登录Cookie不应跨浏览器会话持久化");
+  }
+  const cookie = setCookies.map((value) => value.split(";", 1)[0]).join("; ");
   if (!cookie.includes("tj_access=") || !cookie.includes("tj_refresh=")) throw new Error("登录未返回安全会话Cookie");
 
   const paths = [
