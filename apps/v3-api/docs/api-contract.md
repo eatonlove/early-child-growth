@@ -38,6 +38,7 @@
 | POST | `/accounts` | 教研员 | 创建教师或教研员账号 |
 | PATCH | `/accounts/:id/status` | 教研员 | 停用或恢复账号 |
 | PATCH | `/accounts/:id/password` | 教研员 | 重置账号密码 |
+| PATCH | `/accounts/:id/classrooms` | 教研员 | 原子替换本园教师的班级范围；教研员固定为全园 |
 
 登录请求：
 
@@ -64,6 +65,12 @@
 
 1. `tongji_v3.profiles.status=disabled`，使 API 中间件与 RLS 立即拒绝旧 access token。
 2. 身份服务同步禁止新登录和会话刷新。
+
+创建和重置密码须为10至128位，同时包含大写字母、小写字母与数字。参数不合规返回`422 VALIDATION_ERROR`及`fields`字段原因；前端必须在当前弹窗显示，不能只显示在背景页面。
+
+修改教师班级范围请求：`{"classroomIds":["uuid"]}`。传入空数组表示暂不分配任何班级；只允许本园有效班级，已分配的归档班级可保留或移除，不能新增归档班级。重复班级被拒绝。教师不能修改范围，其他园账号无法修改，教研员范围修改返回`409 RESEARCHER_SCOPE_FIXED`。
+
+返回`{"item":RemoteAccount}`，`item.classroom_ids`为保存后的范围。数据库函数`set_teacher_classrooms`仅后端`service_role`可执行，使用调用者权限，不提权；替换与审计同一事务，失败不丢失原范围。教师下一次请求按新范围校验，历史观察及幼儿记录不删除。
 
 ## 3. 班级与幼儿
 

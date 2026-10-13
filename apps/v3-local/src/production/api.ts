@@ -305,6 +305,10 @@ export const remoteApi = {
       method: "PATCH",
       body: body({ password }),
     }),
+  updateAccountClassrooms: (userId:string,classroomIds:string[]) =>
+    request<{item:RemoteAccount}>(`/api/accounts/${userId}/classrooms`,{
+      method:'PATCH',body:body({classroomIds}),
+    }),
   aiModelConfig: () =>
     request<{ item: RemoteAIModelConfig }>("/api/ai-model-config"),
   updateAIModelConfig: (value: { model: string; expectedRevision: number }) =>

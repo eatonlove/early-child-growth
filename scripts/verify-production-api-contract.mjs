@@ -63,6 +63,7 @@ const contract = [
   ["POST", "/api/accounts", true],
   ["PATCH", "/api/accounts/:userId/status", true],
   ["PATCH", "/api/accounts/:userId/password", true],
+  ["PATCH", "/api/accounts/:userId/classrooms", true],
   ["GET", "/api/ai-model-config", true],
   ["PUT", "/api/ai-model-config", true],
   ["GET", "/api/ai-prompts", true],

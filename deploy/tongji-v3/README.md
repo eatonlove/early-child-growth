@@ -56,6 +56,7 @@ apps/v3-api/supabase/migrations/20260829190000_async_analysis_and_media_optimiza
 apps/v3-api/supabase/migrations/20260830092020_tenant_ai_model_config.sql
 apps/v3-api/supabase/migrations/20260830144512_add_observation_focus_category.sql
 apps/v3-api/supabase/migrations/20261013095606_resource_library_categories.sql
+apps/v3-api/supabase/migrations/20261013142716_teacher_account_classroom_scope.sql
 ```
 
 托管 Supabase：
@@ -129,6 +130,14 @@ docker compose --env-file .env -f docker-compose.yml -f acceptance.compose.yml r
 ```
 
 测试被外部强制终止时必须按本次验收园所编号定向清理，不能删除真实客户园所或使用宽泛的历史数据删除命令。
+
+账号范围更新迁移只新增`set_teacher_classrooms`函数，不修改现有账号和分班记录。函数仅后端可调用，教师分班与审计在同一事务中保存；教研员始终拥有全园范围。上线前仍需同迹schema备份。已授权的生产账号验收可在同一隔离容器中运行：
+
+```bash
+docker compose --env-file .env -f docker-compose.yml -f acceptance.compose.yml run --rm --no-deps --entrypoint node api dist/scripts/smoke-account-production.js https://tongji.meidaquan.com --authorized-production-fixtures
+```
+
+此脚本仅创建并清理隔离园所中的临时账号和班级，不操作正式教师范围，也不创建截图中的指定账号。事务故障注入仅由本地`smoke-account-scope.ts`进行，禁止在生产注入故障。
 
 Certbot 使用 Webroot 签发时，将 `certbot-nginx-reload.sh` 安装到 `/etc/letsencrypt/renewal-hooks/deploy/`，并启用 `certbot-renew.timer`，确保证书续期成功后平滑重载 Nginx。
 

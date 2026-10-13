@@ -823,7 +823,8 @@
 .accounts-page .panel { overflow: auto; }
 .accounts-page .account-principle { margin-bottom: 16px; }
 .accounts-page .remote-account-table article { min-height: 64px; }
-.accounts-page .remote-account-table .remote-row-actions { justify-content: flex-end; }
+.accounts-page .remote-account-table .remote-row-actions { justify-content: flex-end; flex-wrap: wrap; }
+.accounts-page .remote-account-table .remote-row-actions .btn { white-space: nowrap; }
 .accounts-page .remote-form fieldset { min-width: 0; }
 .account-create-form .remote-class-checks label {
   display: inline-flex;

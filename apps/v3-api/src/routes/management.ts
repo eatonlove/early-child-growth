@@ -4,9 +4,10 @@ import { config, internalEmail } from "../config.js";
 import { ApiError, audit, authenticate, requireResearcher } from "../http.js";
 import { authProvider } from "../runtime/auth-provider.js";
 import { serviceClient } from "../supabase.js";
+import { accountPasswordSchema,createAccountInput,teacherClassroomsInput } from '../domain/account-contracts.js';
 
 const uuid = z.string().uuid();
-const password = z.string().min(10).max(128).regex(/[a-z]/).regex(/[A-Z]/).regex(/[0-9]/);
+const password = accountPasswordSchema;
 const classroomInput = z.object({
   name: z.string().trim().min(1).max(60),
   grade: z.enum(["small", "middle", "large"]),
@@ -288,18 +289,12 @@ export async function managementRoutes(app: FastifyInstance) {
   app.post("/api/accounts", async (request, reply) => {
     const auth = await authenticate(request);
     requireResearcher(auth);
-    const input = z.object({
-      username: z.string().trim().toLowerCase().regex(/^[a-z0-9._-]{3,40}$/),
-      displayName: z.string().trim().min(1).max(40),
-      role: z.enum(["teacher", "researcher"]),
-      password,
-      classroomIds: z.array(uuid).max(20).default([]),
-    }).parse(request.body);
+    const input = createAccountInput.parse(request.body);
 
     if (input.classroomIds.length) {
-      const { count, error } = await serviceClient.schema(config.SUPABASE_SCHEMA).from("classrooms").select("id", { count: "exact", head: true }).eq("tenant_id", auth.tenantId).in("id", input.classroomIds);
+      const { count, error } = await serviceClient.schema(config.SUPABASE_SCHEMA).from("classrooms").select("id", { count: "exact", head: true }).eq("tenant_id", auth.tenantId).eq('status','active').in("id", input.classroomIds);
       if (error) throw new ApiError(500, "CLASSROOM_ASSIGNMENT_CHECK_FAILED", "班级分配校验失败");
-      if (count !== input.classroomIds.length) throw new ApiError(422, "INVALID_CLASSROOM_ASSIGNMENT", "包含无权分配的班级");
+      if (count !== input.classroomIds.length) throw new ApiError(422, "INVALID_CLASSROOM_ASSIGNMENT", "包含无权分配或已归档的班级");
     }
 
     const { data: created, error: authError } = await authProvider.createUser({
@@ -307,8 +302,12 @@ export async function managementRoutes(app: FastifyInstance) {
       password: input.password,
       appMetadata: { application: "tongji_v3" },
     });
-    if (authError || !created?.user) throw new ApiError(authError?.status === 422 ? 409 : 500, "ACCOUNT_CREATE_FAILED", authError?.status === 422 ? "账号已存在或密码不符合要求" : "账号创建失败");
+    if (authError || !created?.user) {
+      request.log.warn({authStatus:authError?.status},'account identity creation failed');
+      throw new ApiError(authError?.status === 422 ? 409 : 500, "ACCOUNT_CREATE_FAILED", authError?.status === 422 ? "账号已存在或密码不符合要求" : "账号创建失败");
+    }
 
+    let creationStage='profile';
     try {
       const { error: profileError } = await serviceClient.schema(config.SUPABASE_SCHEMA).from("profiles").insert({
         user_id: created.user.id,
@@ -321,10 +320,13 @@ export async function managementRoutes(app: FastifyInstance) {
       });
       if (profileError) throw profileError;
       if (input.role === "teacher" && input.classroomIds.length) {
+        creationStage='classroom_assignments';
         const { error: assignmentError } = await serviceClient.schema(config.SUPABASE_SCHEMA).from("classroom_teachers").insert(input.classroomIds.map((classroomId) => ({ classroom_id: classroomId, user_id: created.user.id, tenant_id: auth.tenantId, assigned_by: auth.userId })));
         if (assignmentError) throw assignmentError;
       }
     } catch (error) {
+      const dbError=error as {code?:string;message?:string};
+      request.log.error({creationStage,dbError:{code:dbError.code,message:dbError.message}},'account profile creation failed');
       await serviceClient
         .schema(config.SUPABASE_SCHEMA)
         .from("profiles")
@@ -335,6 +337,31 @@ export async function managementRoutes(app: FastifyInstance) {
     }
     await audit(auth, "account.created", "account", created.user.id, { username: input.username, role: input.role, classroomIds: input.classroomIds });
     return reply.status(201).send({ item: { user_id: created.user.id, username: input.username, display_name: input.displayName, role: input.role, status: "active", classroom_ids: input.classroomIds } });
+  });
+
+  app.patch('/api/accounts/:userId/classrooms',async(request) => {
+    const auth=await authenticate(request);
+    requireResearcher(auth);
+    const {userId}=z.object({userId:uuid}).parse(request.params);
+    const input=teacherClassroomsInput.parse(request.body);
+    const schema=serviceClient.schema(config.SUPABASE_SCHEMA);
+    const {data:target,error:readError}=await schema.from('profiles')
+      .select('user_id,username,display_name,role,status,last_login_at,disabled_reason')
+      .eq('user_id',userId).eq('tenant_id',auth.tenantId).maybeSingle();
+    if(readError) throw new ApiError(500,'ACCOUNT_LOOKUP_FAILED','账号读取失败');
+    if(!target) throw new ApiError(404,'ACCOUNT_NOT_FOUND','账号不存在或不属于本园');
+    if(target.role !== 'teacher') throw new ApiError(409,'RESEARCHER_SCOPE_FIXED','教研员固定拥有全园权限，不需要分配班级');
+    const {data,error}=await schema.rpc('set_teacher_classrooms',{
+      target_tenant_id:auth.tenantId,target_user_id:userId,actor_user_id:auth.userId,target_classroom_ids:input.classroomIds,
+    });
+    if(error) {
+      if(['22023','42501'].includes(error.code)) request.log.warn({dbCode:error.code},'account classroom scope validation failed');
+      else request.log.error({dbError:{code:error.code,message:error.message}},'account classroom scope update failed');
+      if(error.code === '22023') throw new ApiError(422,'INVALID_CLASSROOM_ASSIGNMENT','班级不存在、不属于本园，或不能新增已归档班级');
+      if(error.code === '42501') throw new ApiError(403,'ACCOUNT_SCOPE_FORBIDDEN','无权修改该账号的班级范围');
+      throw new ApiError(500,'ACCOUNT_CLASSROOMS_UPDATE_FAILED','班级范围保存失败，请刷新确认后重试');
+    }
+    return {item:{...target,classroom_ids:data.classroomIds}};
   });
 
   app.patch("/api/accounts/:userId/status", async (request) => {

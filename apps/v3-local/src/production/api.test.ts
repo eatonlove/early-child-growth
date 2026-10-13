@@ -12,6 +12,15 @@ describe("production API error boundary", () => {
   });
 });
 
+describe('account classroom scope API',() => {
+  it('uses the real researcher endpoint and retains validation fields',async() => {
+    const fetcher=vi.fn(async()=>new Response(JSON.stringify({item:{user_id:'teacher',classroom_ids:['classroom']}}),{status:200}));
+    vi.stubGlobal('fetch',fetcher);
+    await remoteApi.updateAccountClassrooms('teacher',['classroom']);
+    expect(fetcher).toHaveBeenCalledWith('/api/accounts/teacher/classrooms',expect.objectContaining({method:'PATCH',body:JSON.stringify({classroomIds:['classroom']})}));
+  });
+});
+
 describe("production AI prompt API", () => {
   it("uses the real researcher prompt endpoints with revision control", async () => {
     const calls: Array<{ url: string; init?: RequestInit }> = [];

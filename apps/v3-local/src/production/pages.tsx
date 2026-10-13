@@ -43,6 +43,7 @@ import {
 import { useNavigate } from "../router";
 import { Bar, BarChart, CartesianGrid, Legend, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
 import { remoteApi, RemoteApiError } from "./api";
+import { accountErrorMessage,accountFormProblem,passwordProblem } from './account-form';
 import type {
   RemoteAccount,
   AnalysisClaimDecision,
@@ -2105,6 +2106,9 @@ export function RemoteAccountsPage({
   const [classrooms, setClassrooms] = useState<RemoteClassroom[]>([]);
   const [modal, setModal] = useState(false);
   const [passwordTarget, setPasswordTarget] = useState<RemoteAccount | null>(null);
+  const [scopeTarget,setScopeTarget] = useState<RemoteAccount | null>(null);
+  const [scopeClassroomIds,setScopeClassroomIds] = useState<string[]>([]);
+  const [formError,setFormError] = useState('');
   const [newPassword, setNewPassword] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
@@ -2128,10 +2132,13 @@ export function RemoteAccountsPage({
   }, []);
   const create = async (event: FormEvent) => {
     event.preventDefault();
+    const problem=accountFormProblem(form);
+    if(problem) {setFormError(problem);return;}
     setBusy(true);
-    setError("");
+    setFormError('');
     try {
-      await remoteApi.createAccount(form);
+      const {item}=await remoteApi.createAccount({...form,username:form.username.trim(),displayName:form.displayName.trim(),classroomIds:form.role === 'researcher' ? [] : form.classroomIds});
+      setAccounts(current => [...current,item]);
       setModal(false);
       setForm({
         username: "",
@@ -2140,9 +2147,9 @@ export function RemoteAccountsPage({
         password: "",
         classroomIds: [],
       });
-      await load();
+      await load().catch(reason => setError(accountErrorMessage(reason)));
     } catch (reason) {
-      setError(showError(reason));
+      setFormError(accountErrorMessage(reason));
     } finally {
       setBusy(false);
     }
@@ -2167,17 +2174,30 @@ export function RemoteAccountsPage({
   const resetPassword = async (event: FormEvent) => {
     event.preventDefault();
     if (!passwordTarget) return;
+    const problem=passwordProblem(newPassword);
+    if(problem) {setFormError(problem);return;}
     setBusy(true);
-    setError("");
+    setFormError('');
     try {
       await remoteApi.resetAccountPassword(passwordTarget.user_id, newPassword);
       setPasswordTarget(null);
       setNewPassword("");
     } catch (reason) {
-      setError(showError(reason));
+      setFormError(accountErrorMessage(reason));
     } finally {
       setBusy(false);
     }
+  };
+  const saveScope=async(event:FormEvent) => {
+    event.preventDefault();
+    if(!scopeTarget) return;
+    setBusy(true);setFormError('');
+    try {
+      const {item}=await remoteApi.updateAccountClassrooms(scopeTarget.user_id,scopeClassroomIds);
+      setAccounts(current => current.map(account => account.user_id === item.user_id ? item : account));
+      setScopeTarget(null);
+    }catch(reason) {setFormError(accountErrorMessage(reason));}
+    finally {setBusy(false);}
   };
   return (
     <div className="page remote-page accounts-page">
@@ -2186,7 +2206,7 @@ export function RemoteAccountsPage({
         title="账号与权限管理"
         description="只保留教师和教研员。教研员新增账号并为教师分配班级；停用后历史数据保留，旧会话立即失去业务权限。"
         actions={
-          <button className="btn btn-primary" onClick={() => setModal(true)}>
+          <button className="btn btn-primary" disabled={busy} onClick={() => {setFormError('');setModal(true);}}>
             <UserPlus />
             新增账号
           </button>
@@ -2240,7 +2260,8 @@ export function RemoteAccountsPage({
                 {statusLabel[account.status]}
               </Badge>
               <div className="remote-row-actions">
-                <button className="btn btn-secondary" disabled={busy} onClick={() => { setPasswordTarget(account); setNewPassword(""); }}>重置密码</button>
+                {account.role === 'teacher' && <button className="btn btn-secondary" disabled={busy} onClick={() => {setScopeTarget(account);setScopeClassroomIds([...account.classroom_ids]);setFormError('');}}>编辑班级范围</button>}
+                <button className="btn btn-secondary" disabled={busy} onClick={() => { setPasswordTarget(account); setNewPassword("");setFormError(''); }}>重置密码</button>
                 <button
                   className={account.status === "active" ? "btn btn-ghost-danger" : "btn btn-secondary"}
                   disabled={busy || account.user_id === currentUser.id}
@@ -2257,13 +2278,15 @@ export function RemoteAccountsPage({
         <Modal
           title="新增系统账号"
           description="账号只能由教研员创建，不开放自主注册。"
-          onClose={() => setModal(false)}
+          onClose={() => {if(!busy) setModal(false);}}
         >
-          <form className="remote-form account-create-form" onSubmit={create}>
+          <form className="remote-form account-create-form" onSubmit={create} noValidate>
+            {formError && <div className="remote-error full-field" role="alert">{formError}</div>}
             <label>
               <span>登录账号</span>
               <input
                 required
+                maxLength={40}
                 pattern="[a-zA-Z0-9._-]{3,40}"
                 value={form.username}
                 onChange={(event) =>
@@ -2278,6 +2301,7 @@ export function RemoteAccountsPage({
               <span>显示姓名</span>
               <input
                 required
+                maxLength={40}
                 value={form.displayName}
                 onChange={(event) =>
                   setForm({ ...form, displayName: event.target.value })
@@ -2289,7 +2313,7 @@ export function RemoteAccountsPage({
               <select
                 value={form.role}
                 onChange={(event) =>
-                  setForm({ ...form, role: event.target.value })
+                  setForm({ ...form, role: event.target.value,classroomIds:[] })
                 }
               >
                 <option value="teacher">教师</option>
@@ -2297,23 +2321,27 @@ export function RemoteAccountsPage({
               </select>
             </label>
             <label>
-              <span>初始密码</span>
+              <span id="account-initial-password-label">初始密码</span>
               <input
                 type="password"
                 required
                 minLength={10}
+                maxLength={128}
+                autoComplete="new-password"
+                aria-labelledby="account-initial-password-label"
+                aria-describedby="account-password-requirements"
                 value={form.password}
                 onChange={(event) =>
                   setForm({ ...form, password: event.target.value })
                 }
               />
-              <small>至少10位，包含大小写字母和数字</small>
+              <small id="account-password-requirements">10至128位，必须同时包含大写字母、小写字母和数字</small>
             </label>
             {form.role === "teacher" && (
               <fieldset>
                 <legend>分配班级</legend>
                 <div className="remote-class-checks">
-                  {classrooms.map((item) => (
+                  {classrooms.filter(item => item.status === 'active').map((item) => (
                     <label key={item.id}>
                       <input
                         type="checkbox"
@@ -2335,20 +2363,34 @@ export function RemoteAccountsPage({
             )}
             <button disabled={busy} className="btn btn-primary" type="submit">
               <Save />
-              创建账号
+              {busy ? '正在创建…' : '创建账号'}
             </button>
           </form>
         </Modal>
       )}
       {passwordTarget && (
-        <Modal title={`重置${passwordTarget.display_name}的密码`} description="新密码只提交给后端身份服务，不写入同迹业务表。" onClose={() => setPasswordTarget(null)}>
-          <form className="remote-form" onSubmit={resetPassword}>
-            <label className="full-field"><span>新密码</span><input autoComplete="new-password" required type="password" minLength={10} value={newPassword} onChange={(event) => setNewPassword(event.target.value)} /></label>
-            <small className="full-field">至少10位，且同时包含大写字母、小写字母和数字。</small>
+        <Modal title={`重置${passwordTarget.display_name}的密码`} description="新密码只提交给后端身份服务，不写入同迹业务表。" onClose={() => {if(!busy) setPasswordTarget(null);}}>
+          <form className="remote-form" onSubmit={resetPassword} noValidate>
+            {formError && <div className="remote-error full-field" role="alert">{formError}</div>}
+            <label className="full-field"><span>新密码</span><input autoComplete="new-password" required type="password" minLength={10} maxLength={128} value={newPassword} onChange={(event) => setNewPassword(event.target.value)} /></label>
+            <small className="full-field">10至128位，且同时包含大写字母、小写字母和数字。</small>
             <button className="btn btn-primary" disabled={busy} type="submit"><KeyRound />确认重置</button>
           </form>
         </Modal>
       )}
+      {scopeTarget && <Modal title={`编辑${scopeTarget.display_name}的班级范围`} description="保存后按新的班级范围访问，历史观察和幼儿数据不会被删除。未选择班级表示暂不分配。" onClose={() => {if(!busy) setScopeTarget(null);}}>
+        <form className="remote-form account-create-form" onSubmit={saveScope}>
+          {formError && <div className="remote-error full-field" role="alert">{formError}</div>}
+          <fieldset><legend>教师负责班级</legend><div className="remote-class-checks">
+            {classrooms.filter(item => item.status === 'active' || scopeTarget.classroom_ids.includes(item.id)).map(item => <label key={item.id}>
+              <input type="checkbox" disabled={busy} checked={scopeClassroomIds.includes(item.id)} onChange={() => setScopeClassroomIds(current => current.includes(item.id) ? current.filter(id => id !== item.id) : [...current,item.id])}/>
+              {item.name}{item.status === 'archived' ? '（已归档）' : ''}
+            </label>)}
+          </div></fieldset>
+          <small className="full-field">教研员固定拥有全园权限，不通过本入口调整。</small>
+          <button className="btn btn-primary" disabled={busy} type="submit"><Save/>{busy ? '正在保存…' : '保存班级范围'}</button>
+        </form>
+      </Modal>}
     </div>
   );
 }
