@@ -125,7 +125,7 @@ export async function generateBlankObservationTemplate() {
     "观察教师：________________    班级：________________",
     "观察时间：________________    游戏场地：________________",
     "游戏主题：________________    组织阶段：计划 / 导入 / 过程 / 分享 / 评价",
-    "观察聚焦（单选）：□材料与工具    □认知与经验    □交往与经验",
+    "观察聚焦（单选）：□材料与工具    □认知与经验    □交往与规则",
     "幼儿姓名、人数及本次情境特征：",
     "________________________________________________________________________",
     "客观白描（请在白描中保留关键幼儿原话）：",
@@ -199,7 +199,7 @@ function observationDocumentChildren(input: ObservationDocumentData) {
   const focusCategoryLabel: Record<string, string> = {
     materials_tools: "材料与工具",
     cognition_experience: "认知与经验",
-    social_experience: "交往与经验",
+    social_experience: "交往与规则",
   };
   const subjectRows = [
     new TableRow({ children: ["幼儿", "角色", "本次情境特征"].map((text) => new TableCell({ children: [paragraph(text, true)] })) }),

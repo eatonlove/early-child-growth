@@ -98,6 +98,36 @@ async function download(path: string, fileName: string) {
 
 const body = (value: unknown) => JSON.stringify(value);
 
+async function uploadFile<T>(path:string,file:File,contentType:string,onProgress?:(percent:number)=>void):Promise<T> {
+  const upload=()=>new Promise<T>((resolve,reject)=>{
+    const xhr=new XMLHttpRequest();
+    xhr.open('POST',`${baseUrl}${path}`);xhr.withCredentials=true;xhr.timeout=15*60*1000;
+    xhr.setRequestHeader('Content-Type',contentType);
+    xhr.upload.onprogress=event=>{if(event.lengthComputable)onProgress?.(Math.round(event.loaded/event.total*100));};
+    xhr.onerror=()=>reject(new RemoteApiError(0,'UPLOAD_NETWORK_ERROR',`${file.name}：上传连接中断，请重试当前文件`));
+    xhr.ontimeout=()=>reject(new RemoteApiError(0,'UPLOAD_TIMEOUT',`${file.name}：上传或处理超时，请先查看记录状态后重试`));
+    xhr.onabort=()=>reject(new RemoteApiError(0,'UPLOAD_ABORTED',`${file.name}：上传已取消`));
+    xhr.onload=()=>{
+      let payload:Record<string,unknown>={};
+      try{const parsed=JSON.parse(xhr.responseText);if(parsed&&typeof parsed==='object'&&!Array.isArray(parsed))payload=parsed;}catch{ /* Nginx can return a non-JSON error page. */ }
+      if(xhr.status>=200&&xhr.status<300)resolve(payload as T);
+      else reject(new RemoteApiError(xhr.status,typeof payload.code==='string'?payload.code:'UPLOAD_FAILED',typeof payload.message==='string'?payload.message:xhr.status===413?'文件超过允许的大小，请缩短视频片段或减小文件':'文件上传失败，请重试',payload.fields as Record<string,string[]>|undefined));
+    };
+    xhr.send(file);
+  });
+  try{return await upload();}catch(reason){
+    if(reason instanceof RemoteApiError&&reason.status===401){
+      const refreshed=await fetch(`${baseUrl}/api/auth/refresh`,{method:'POST',credentials:'include'});
+      if(refreshed.ok)return upload();
+    }
+    throw reason;
+  }
+}
+
+function inferredFileMime(file:File) {
+  return file.type||({doc:'application/msword',docx:'application/vnd.openxmlformats-officedocument.wordprocessingml.document',pdf:'application/pdf',jpg:'image/jpeg',jpeg:'image/jpeg',png:'image/png',webp:'image/webp',mp4:'video/mp4',mov:'video/quicktime'} as Record<string,string>)[file.name.toLowerCase().split('.').pop()??'']||'application/octet-stream';
+}
+
 export const remoteApi = {
   login: (username: string, password: string) =>
     request<{ user: RemoteUser }>(
@@ -229,14 +259,13 @@ export const remoteApi = {
   combineResponsePlans: (value: { title: string; activityPlanId: string; materialPlanId: string; experiencePlanId: string }) =>
     request<{ item: RemoteResponsePlan }>("/api/response-plans/combine", { method: "POST", body: body(value) }),
   downloadObservationTemplate: () => download("/api/observation-template/document", "同迹游戏观察记录表模板.docx"),
-  async importObservationDocument(classroomId: string, file: File) {
+  async importObservationDocument(classroomId: string, file: File, onProgress?:(percent:number)=>void) {
+    if(!file.size||file.size>10*1024*1024)throw new RemoteApiError(422,'OBSERVATION_DOCUMENT_TOO_LARGE','观察表文件不能为空，且不能超过10MB');
     const created = await request<{ item: RemoteObservationImport }>("/api/observation-imports", {
       method: "POST",
-      body: body({ classroomId, fileName: file.name, mimeType: file.type || (file.name.toLowerCase().endsWith(".doc") ? "application/msword" : "application/octet-stream"), sizeBytes: file.size }),
+      body: body({ classroomId, fileName: file.name, mimeType: inferredFileMime(file), sizeBytes: file.size }),
     });
-    return request<{ item: RemoteObservationImport; aiNotice: string }>(`/api/observation-imports/${created.item.id}/upload`, {
-      method: "POST", headers: { "Content-Type": "application/octet-stream" }, body: file,
-    });
+    return uploadFile<{item:RemoteObservationImport;aiNotice:string}>(`/api/observation-imports/${created.item.id}/upload`,file,'application/octet-stream',onProgress);
   },
   observationImports: (classroomId?: string) =>
     request<{ items: RemoteObservationImport[] }>(`/api/observation-imports${classroomId ? `?classroomId=${encodeURIComponent(classroomId)}` : ""}`),
@@ -251,7 +280,7 @@ export const remoteApi = {
       method: "POST",
       body: body({
         fileName: file.name,
-        mimeType: file.type,
+        mimeType: inferredFileMime(file),
         sizeBytes: file.size,
       }),
     }),
@@ -261,16 +290,11 @@ export const remoteApi = {
     }),
   evidenceDownload: (id: string) =>
     request<{ url: string; expiresIn: number }>(`/api/evidence/${id}/download`),
-  async uploadEvidence(observationId: string, file: File) {
+  async uploadEvidence(observationId: string, file: File, onProgress?:(percent:number)=>void) {
+    const limit=inferredFileMime(file).startsWith('video/')?100*1024*1024:10*1024*1024;
+    if(!file.size||file.size>limit)throw new RemoteApiError(422,'MEDIA_TOO_LARGE',`${file.name}：文件不能为空，视频最多100MB，图片或文档最多10MB`);
     const ticket = await this.evidenceTicket(observationId, file);
-    return request<{ item: RemoteEvidence }>(
-      `/api/evidence/${ticket.evidenceId}/upload`,
-      {
-        method: "POST",
-        headers: { "Content-Type": "application/octet-stream" },
-        body: file,
-      },
-    );
+    return uploadFile<{item:RemoteEvidence}>(ticket.uploadPath,file,'application/x-tongji-evidence-stream',onProgress);
   },
   knowledge: (params = "") =>
     request<{ items: RemoteKnowledgeCard[]; version: string }>(

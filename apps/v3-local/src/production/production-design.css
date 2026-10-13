@@ -431,10 +431,25 @@
 .evo-child-select label small { color: var(--tj-muted); font-size: 10px; font-weight: 500; }
 .import-review-banner { display: grid; gap: 10px; padding: 16px; border: 1px solid #e7c78f; border-radius: 16px; background: #fff8e8; }
 .import-review-banner > div:first-child { display: flex; flex-wrap: wrap; align-items: center; gap: 9px; }
-.import-confidence-grid { display: flex; flex-wrap: wrap; gap: 6px; }
-.import-confidence-grid span { padding: 5px 8px; border-radius: 999px; font-size: 10px; }
-.import-confidence-grid .ok { color: #315c45; background: #e8f2e4; }
-.import-confidence-grid .low { color: #8a4f20; background: #fce6bf; font-weight: 800; }
+.remote-observation-form .observation-focus-choice > div { display: grid; grid-template-columns: repeat(3,minmax(0,1fr)); gap: 10px; }
+.remote-observation-form .observation-focus-choice label { display: flex; align-items: center; justify-content: flex-start; min-height: 48px; min-width: 0; margin: 0; padding: 12px 14px; gap: 10px; border: 1px solid #d7dfd8; border-radius: 12px; background: #fffdf9; cursor: pointer; }
+.remote-observation-form .observation-focus-choice label.selected { border-color: var(--tj-green); background: #edf5ef; box-shadow: none; }
+.remote-observation-form .observation-focus-choice label input[type="radio"] { appearance: auto; flex: 0 0 18px; width: 18px; min-width: 18px; max-width: 18px; height: 18px; padding: 0; margin: 0; box-shadow: none; accent-color: var(--tj-green); }
+.remote-observation-form .observation-focus-choice label strong { font-size: 13px; line-height: 1.5; }
+.observation-save-notice,.observation-upload-progress { display: flex; align-items: center; gap: 10px; margin-bottom: 14px; padding: 12px 16px; border: 1px solid #d5e3d9; border-radius: 14px; color: var(--tj-green); background: #f0f6f0; line-height: 1.7; }
+.observation-save-notice svg,.observation-upload-progress svg { flex: 0 0 18px; width: 18px; }
+.observation-upload-error { display: flex; justify-content: space-between; align-items: center; gap: 16px; margin-bottom: 14px; padding: 14px 16px; border: 1px solid #ecc8c2; border-radius: 14px; color: var(--tj-danger); background: #fff5f3; }
+.observation-upload-error > div { min-width: 0; overflow-wrap: anywhere; }
+.observation-upload-error p { margin: 5px 0; }
+.observation-upload-error button { flex: 0 0 auto; }
+.analysis-runtime-note { margin: 0; padding: 12px 16px; border-radius: 12px; background: #f2f6f1; color: var(--tj-muted); line-height: 1.7; }
+.detail-stack:focus { outline: none; }
+@media(max-width:600px) {
+  .remote-observation-form .observation-focus-choice > div { grid-template-columns: 1fr; }
+  .observation-import-ledger article { grid-template-columns: minmax(0,1fr) auto; }
+  .observation-import-ledger article > div { grid-column: 1 / -1; overflow-wrap: anywhere; }
+  .observation-upload-error { flex-direction: column; align-items: flex-start; }
+}
 .observation-import-ledger { margin-bottom: 16px; border: 1px solid #e4d8c9; border-radius: 16px; background: rgba(255, 253, 249, 0.94); }
 .observation-import-ledger > summary { display: flex; justify-content: space-between; padding: 13px 16px; cursor: pointer; }
 .observation-import-ledger > div { display: grid; gap: 7px; padding: 0 12px 12px; }

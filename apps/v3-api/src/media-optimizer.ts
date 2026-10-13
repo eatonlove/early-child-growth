@@ -1,5 +1,5 @@
 import { execFile } from "node:child_process";
-import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { promisify } from "node:util";
@@ -17,6 +17,7 @@ export interface MediaOptimizationResult {
   originalSizeBytes: number;
   optimizedSizeBytes: number;
 }
+export type MediaFileOptimizationResult=Omit<MediaOptimizationResult,'body'>&{path:string};
 
 interface OptimizationPlan {
   command: string;
@@ -59,36 +60,36 @@ export async function optimizeMediaLosslessly(
   mimeType: string,
   runner: MediaCommandRunner = defaultRunner,
 ): Promise<MediaOptimizationResult> {
-  const plan = mediaOptimizationPlan(mimeType);
-  if (!plan) return {
-    body,
-    mimeType,
-    status: "not_applicable",
-    mode: "none",
-    tool: "none",
-    originalSizeBytes: body.length,
-    optimizedSizeBytes: body.length,
-  };
-
   const directory = await mkdtemp(join(tmpdir(), "tongji-media-"));
-  const input = join(directory, `input.${plan.inputExtension}`);
-  const output = join(directory, `output.${plan.outputExtension}`);
+  const plan=mediaOptimizationPlan(mimeType);
+  const input = join(directory, `input.${plan?.inputExtension||'bin'}`);
+  const output = join(directory, `output.${plan?.outputExtension||'bin'}`);
   try {
     await writeFile(input, body);
-    await runner(plan.command, plan.args(input, output));
-    const candidate = await readFile(output);
-    if (!candidate.length) throw new Error("媒体优化工具生成了空文件");
-    const optimized = candidate.length < body.length ? candidate : body;
-    return {
-      body: optimized,
-      mimeType,
-      status: "optimized",
-      mode: "lossless",
-      tool: candidate.length < body.length ? plan.tool : `${plan.tool}; kept-original-smaller`,
-      originalSizeBytes: body.length,
-      optimizedSizeBytes: optimized.length,
-    };
+    const result=await optimizeMediaFileLosslessly(input,mimeType,output,runner);
+    const {path,...metadata}=result;
+    return {...metadata,body:path===input?body:await readFile(path)};
   } finally {
     await rm(directory, { recursive: true, force: true });
+  }
+}
+
+export async function optimizeMediaFileLosslessly(input:string,mimeType:string,output:string,runner:MediaCommandRunner=defaultRunner):Promise<MediaFileOptimizationResult> {
+  const originalSizeBytes=(await stat(input)).size;
+  if(!originalSizeBytes)throw new Error('媒体文件为空');
+  const original={path:input,mimeType,originalSizeBytes,optimizedSizeBytes:originalSizeBytes};
+  const plan=mediaOptimizationPlan(mimeType);
+  if(!plan)return {...original,status:'not_applicable',mode:'none',tool:'none'};
+  try{
+    await runner(plan.command,plan.args(input,output));
+    const size=(await stat(output)).size;
+    if(!size)throw new Error('媒体优化工具生成了空文件');
+    return {...original,path:size<originalSizeBytes?output:input,optimizedSizeBytes:Math.min(size,originalSizeBytes),status:'optimized',mode:'lossless',tool:size<originalSizeBytes?plan.tool:`${plan.tool}; kept-original-smaller`};
+  }catch(reason){
+    if(!mimeType.startsWith('video/'))throw reason;
+    // Some phone videos carry data tracks MP4 remuxing cannot preserve. Validate
+    // their playable tracks, then keep every byte of the original rather than drop tracks.
+    await runner('ffmpeg',['-hide_banner','-loglevel','error','-i',input,'-map','0:v:0','-map','0:a?','-c','copy','-f','null','-']);
+    return {...original,status:'not_applicable',mode:'none',tool:'ffmpeg playable-stream validation; kept-original-remux-incompatible'};
   }
 }

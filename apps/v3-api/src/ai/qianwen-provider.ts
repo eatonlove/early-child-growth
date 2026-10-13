@@ -48,10 +48,11 @@ export interface QianwenProviderOptions {
   timeoutMs: number;
   visionTimeoutMs?: number;
   webSearchEnabled?: boolean;
+  supportResearchTimeoutMs?:number;
 }
 
-const DOCUMENT_EXTRACTION_PROMPT_VERSION = "observation-document-extraction.qwen.v1";
-const OBSERVATION_PROMPT_VERSION = "observation-analysis.qwen.v7";
+const DOCUMENT_EXTRACTION_PROMPT_VERSION = "observation-document-extraction.qwen.v2";
+const OBSERVATION_PROMPT_VERSION = "observation-analysis.qwen.v8";
 const ANALYSIS_REVISION_PROMPT_VERSION = "observation-analysis-revision.qwen.v1";
 const REPORT_PROMPT_VERSION = "period-report.qwen.v2";
 const REPORT_REVISION_PROMPT_VERSION = "period-report-revision.qwen.v1";
@@ -95,7 +96,7 @@ const observationSystemPrompt = `你是幼儿园“观察·识别·应答·拓�
 16. 不得补写未发生的行为、原话、次数、时长或因果关系；不得输出达标/不达标、优秀/落后、正常/异常、聪明/能力差等标签。输出3个responsePlans、1-2个observationCut和2-5个observationFocus，并完全符合JSON Schema，不要输出Markdown。`;
 
 const documentExtractionSystemPrompt = `你是幼儿园观察记录表字段提取助手。你只负责从教师上传的文档或图片中提取已有内容，不分析幼儿发展，不补写事实。
-优先匹配输入提供的当前班级幼儿姓名；重名、不确定姓名和日期必须降低fieldConfidence并加入warnings。幼儿特征只能提取本次情境描述，不得生成性格标签。若表格明确勾选或写明“材料与工具、认知与经验、交往与经验”，分别映射为materials_tools、cognition_experience、social_experience；未明确出现时observationFocusCategory必须为null。没有找到的其他文本字段输出空字符串，不得猜测。输出必须完全符合JSON Schema，不要输出Markdown。`;
+优先匹配输入提供的当前班级幼儿姓名；重名、不确定姓名和日期必须降低fieldConfidence并加入warnings。幼儿特征只能提取本次情境描述，不得生成性格标签。若表格明确勾选或写明“材料与工具、认知与经验、交往与规则”（兼容旧表“交往与经验”），分别映射为materials_tools、cognition_experience、social_experience；未明确出现时observationFocusCategory必须为null。没有找到的其他文本字段输出空字符串，不得猜测。warnings必须用简短中文说明教师需要校对的内容，不得输出英文字段名、枚举值、内部编号或置信度百分比。正常的中文日期格式无须作为警告。输出必须完全符合JSON Schema，不要输出Markdown。`;
 
 const analysisRevisionSystemPrompt = `你是幼儿游戏循证分析修订助手。输入包含一份AI原稿和教师对专业板块的意见。教师意见优先，但不得据此补造原始观察中不存在的事实。
 保留原稿证据ID、知识编码和风险边界；拒绝的板块不得换一种说法偷偷保留。输出仍是教师审核草稿，必须符合完整JSON Schema，不得输出Markdown。`;
@@ -525,8 +526,25 @@ export class QianwenAIProvider implements AIAnalysisProvider {
     return { data, provider:'QianwenAIProvider', model:input.prompt?.model || this.options.textModel, promptVersion:prompt.version, mediaAnalyzed:false, notice:'已基于当前分类资料生成指向内容与指标侧重。' };
   }
 
-  private async researchSupport(input: ObservationAnalysisInput, cards: KnowledgeRow[]) {
-    if (!this.options.webSearchEnabled) return [];
+  private readonly supportCache=new Map<string,{expiresAt:number;result:Promise<AnalysisResult['externalSupportReferences']>}>();
+
+  private async researchSupport(input:ObservationAnalysisInput,cards:KnowledgeRow[]) {
+    if(!this.options.webSearchEnabled)return {references:[],cacheHit:false};
+    const key=JSON.stringify([input.classroom.id,input.observation.id,input.prompt?.model||this.options.textModel,input.classroom.grade,input.observation.scene,input.observation.theme,input.observation.observation_focus,cards.map(card=>card.code)]);
+    const now=Date.now();
+    const cached=this.supportCache.get(key);
+    if(cached&&cached.expiresAt>now)return {references:await cached.result,cacheHit:true};
+    for(const [cacheKey,entry] of this.supportCache)if(entry.expiresAt<=now)this.supportCache.delete(cacheKey);
+    if(this.supportCache.size>=32)this.supportCache.delete(this.supportCache.keys().next().value!);
+    const entry={expiresAt:now+10*60*1000,result:this.fetchSupportReferences(input,cards)};
+    this.supportCache.set(key,entry);
+    const references=await entry.result;
+    if(!references.length)entry.expiresAt=Date.now()+60*1000;
+    return {references,cacheHit:false};
+  }
+
+  private async fetchSupportReferences(input: ObservationAnalysisInput, cards: KnowledgeRow[]):Promise<AnalysisResult['externalSupportReferences']> {
+    const signal=AbortSignal.timeout(this.options.supportResearchTimeoutMs??30_000);
     try {
       const model = input.prompt?.model || this.options.textModel;
       const anonymizedQuery = `幼儿园 游戏支持 ${input.classroom.grade} ${input.observation.scene} ${input.observation.theme} ${(input.observation.observation_focus ?? []).join(" ")} ${cards.slice(0, 4).map((card) => card.title).join(" ")}`;
@@ -535,6 +553,7 @@ export class QianwenAIProvider implements AIAnalysisProvider {
           model,
           systemPrompt: "只检索公开可访问的学前教育政策、研究机构与安全实践资料，不推断任何幼儿身份。",
           query: `${anonymizedQuery}\n请优先查找有明确机构、作者或出版信息的可靠来源。`,
+          signal,
         }).catch(() => ({ content: "", sources: [] })),
         searchAcademicSources(`early childhood play education ${input.observation.theme}`, this.fetcher).catch(() => []),
       ]);
@@ -563,6 +582,7 @@ export class QianwenAIProvider implements AIAnalysisProvider {
         schemaName: "tongji_support_web_research",
         jsonSchema: supportResearchJsonSchema,
         validator: supportResearchSchema,
+        signal,
       });
       const byUrl = new Map(candidates.map((item) => [new URL(item.url).toString(), item]));
       return result.references.flatMap((reference) => {
@@ -583,7 +603,7 @@ export class QianwenAIProvider implements AIAnalysisProvider {
     const prompt = configuredPrompt(input, "observation_document_extraction");
     const content: QwenContentPart[] = [{
       type: "text",
-      text: JSON.stringify({ fileName: input.fileName, rawText: input.rawText.slice(0, 30000), classroomChildren: input.classroomChildren }),
+      text: `校对提示请用简短中文，不输出内部字段名、内部编号或概率。未明确选择的游戏阶段应提醒教师校对，不因常见中文日期格式重复告警。\n${JSON.stringify({ fileName: input.fileName, rawText: input.rawText.slice(0, 30000), classroomChildren: input.classroomChildren })}`,
     }];
     if (input.mediaUrl && input.mimeType.startsWith("image/")) {
       content.push({ type: "image_url", image_url: { url: input.mediaUrl, detail: "auto" } });
@@ -608,9 +628,12 @@ export class QianwenAIProvider implements AIAnalysisProvider {
   }
 
   async analyzeObservation(input: ObservationAnalysisInput): Promise<AIGeneration<AnalysisResult>> {
+    const startedAt=Date.now();
     const prompt = configuredPrompt(input, "observation_analysis");
     const cards = rankKnowledgeCards(input.observation, input.knowledge, 12);
-    const externalSupportReferences = await this.researchSupport(input, cards);
+    const research=await this.researchSupport(input,cards);
+    const externalSupportReferences=research.references;
+    const researchFinishedAt=Date.now();
     const ageBands = [...new Set(cards.map((card) => card.age_band).filter(Boolean))];
     const mediaIds = new Set(input.media.map((item) => item.id));
     const evidence = input.evidence.map((item) => ({
@@ -624,7 +647,7 @@ export class QianwenAIProvider implements AIAnalysisProvider {
       analysisStandard: {
         name: "观察·识别·应答逐幼儿循证标准",
         coreOrder: ["观察：客观白描与事实", "识别：已有经验、问题、策略与指南参照", "应答：最低介入、支架支持、迁移拓展", "拓展：游戏经验、五大领域、学习品质与复察"],
-        observationFocusDimensions: ["材料与工具", "认知与经验", "交往与经验", "问题识别与解决发起", "教师互动及介入后变化"],
+        observationFocusDimensions: ["材料与工具", "认知与经验", "交往与规则", "问题识别与解决发起", "教师互动及介入后变化"],
       },
       ageContext: { grade: input.classroom.grade, knowledgeAgeBands: ageBands },
       targetSubject: {
@@ -706,9 +729,11 @@ export class QianwenAIProvider implements AIAnalysisProvider {
     let result = await this.client.structuredCompletion<AnalysisResult>(request);
     let validated: AnalysisResult;
     let sanitizedJudgmentCount = 0;
+    let groundingRetry=false;
     try {
       validated = validateObservationGrounding(result, input, cards);
     } catch {
+      groundingRetry=true;
       result = await this.client.structuredCompletion<AnalysisResult>({
         ...request,
         messages: [
@@ -745,6 +770,7 @@ export class QianwenAIProvider implements AIAnalysisProvider {
       model: input.prompt?.model || (input.media.length ? this.options.visionModel : this.options.textModel),
       promptVersion: prompt.version,
       mediaAnalyzed: input.media.length > 0,
+      diagnostics:{totalMs:Date.now()-startedAt,supportResearchMs:researchFinishedAt-startedAt,supportCacheHit:research.cacheHit,generationMs:Date.now()-researchFinishedAt,groundingRetry},
       notice: input.media.length
         ? "千问AI已按逐幼儿“观察·识别·应答·拓展”标准分析教师文字、年龄段知识卡和已授权媒体画面；视频音轨未处理。结果须由教师审核。"
         : "千问AI已按逐幼儿“观察·识别·应答·拓展”标准分析教师文字和年龄段知识卡；未发送媒体画面。结果须由教师审核。",

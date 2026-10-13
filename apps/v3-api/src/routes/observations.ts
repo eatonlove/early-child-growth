@@ -1,4 +1,10 @@
 import { randomUUID } from "node:crypto";
+import {createReadStream,createWriteStream} from 'node:fs';
+import {mkdtemp,rm} from 'node:fs/promises';
+import {tmpdir} from 'node:os';
+import {join} from 'node:path';
+import {Readable} from 'node:stream';
+import {pipeline} from 'node:stream/promises';
 import type { FastifyInstance } from "fastify";
 import { z } from "zod";
 import type { KnowledgeRow, MediaForAnalysis, ProfessionalMemoryForAnalysis } from "../ai/contracts.js";
@@ -9,7 +15,8 @@ import { enqueueAnalysisTask } from "../analysis-task-queue.js";
 import { effectiveAnalysisResult, flattenAnalysisClaims, legacyClaimDecision, claimDecisions } from "../analysis-claims.js";
 import { config } from "../config.js";
 import { ApiError, audit, authenticate } from "../http.js";
-import { optimizeMediaLosslessly } from "../media-optimizer.js";
+import { optimizeMediaFileLosslessly,optimizeMediaLosslessly } from "../media-optimizer.js";
+import {boundedUploadStream} from '../resource-library.js';
 import { mediaStorage } from "../runtime/media-storage.js";
 import { serviceClient } from "../supabase.js";
 
@@ -389,7 +396,7 @@ export async function observationRoutes(app: FastifyInstance) {
     async (request) => {
       const auth = await authenticate(request);
       const { id } = z.object({ id: uuid }).parse(request.params);
-      if (!Buffer.isBuffer(request.body) || request.body.length === 0) {
+      if ((!Buffer.isBuffer(request.body)&&!(request.body instanceof Readable))||(Buffer.isBuffer(request.body)&&request.body.length===0)) {
         throw new ApiError(422, "EMPTY_MEDIA_UPLOAD", "上传文件为空");
       }
 
@@ -410,10 +417,10 @@ export async function observationRoutes(app: FastifyInstance) {
       if (!media) {
         throw new ApiError(422, "UNSUPPORTED_MEDIA_TYPE", "证据媒体类型不受支持");
       }
-      if (request.body.length !== evidence.size_bytes) {
+      if (Buffer.isBuffer(request.body)&&request.body.length !== evidence.size_bytes) {
         throw new ApiError(422, "MEDIA_SIZE_MISMATCH", "上传文件大小与凭证不一致");
       }
-      if (request.body.length > media.max) {
+      if (Number(evidence.size_bytes) > media.max) {
         throw new ApiError(422, "MEDIA_TOO_LARGE", media.type === "video" ? "视频片段不能超过100MB" : "图片或文档不能超过10MB");
       }
 
@@ -427,9 +434,20 @@ export async function observationRoutes(app: FastifyInstance) {
         throw new ApiError(422, "CONSENT_WITHDRAWN", "监护人已撤回授权，不能新增媒体证据");
       }
 
+      const directory=await mkdtemp(join(tmpdir(),'tongji-evidence-'));
+      const input=join(directory,`input.${media.ext}`),output=join(directory,`output.${media.ext}`);
+      const startedAt=Date.now();
+      try{
+      const source=Buffer.isBuffer(request.body)?Readable.from([request.body]):request.body as Readable;
+      try{await pipeline(boundedUploadStream(source,Number(evidence.size_bytes),media.max),createWriteStream(input));}
+      catch(reason){
+        await serviceClient.schema(config.SUPABASE_SCHEMA).from('evidence_assets').update({upload_status:'failed',optimization_status:'failed',optimization_error:'上传文件不完整或超过登记大小，文件未保存，请重新选择该文件上传。'}).eq('id',id).eq('tenant_id',auth.tenantId).eq('upload_status','pending');
+        throw new ApiError(422,'MEDIA_SIZE_MISMATCH',reason instanceof Error?reason.message:'上传文件不完整，请重试');
+      }
+      const transferredAt=Date.now();
       let optimized;
       try {
-        optimized = await optimizeMediaLosslessly(request.body, evidence.mime_type);
+        optimized = await optimizeMediaFileLosslessly(input, evidence.mime_type,output);
       } catch (reason) {
         await serviceClient.schema(config.SUPABASE_SCHEMA).from("evidence_assets").update({
           upload_status: "failed", optimization_status: "failed",
@@ -439,10 +457,12 @@ export async function observationRoutes(app: FastifyInstance) {
         throw new ApiError(422, "MEDIA_OPTIMIZATION_FAILED", "媒体无损优化失败，原文件未写入存储，请检查文件是否完整后重新上传");
       }
 
-      const { error: uploadError } = await mediaStorage.upload(evidence.storage_path, optimized.body, {
+      const optimizedAt=Date.now();
+      const { error: uploadError } = await mediaStorage.uploadStream(evidence.storage_path,createReadStream(optimized.path), {
           contentType: optimized.mimeType,
           cacheControl: "3600",
           upsert: false,
+          sizeBytes:optimized.optimizedSizeBytes,
         });
       if (uploadError) {
         request.log.error({ err: uploadError, evidenceId: id }, "evidence storage upload failed");
@@ -474,7 +494,9 @@ export async function observationRoutes(app: FastifyInstance) {
         optimizationMode: optimized.mode,
         uploadChannel: "api-proxy",
       });
+      request.log.info({evidenceId:id,transferMs:transferredAt-startedAt,optimizationMs:optimizedAt-transferredAt,storageMs:Date.now()-optimizedAt,sizeBytes:optimized.optimizedSizeBytes,keptOriginal:optimized.status==='not_applicable'},'evidence upload phases completed');
       return { item: updated };
+      }finally{await rm(directory,{recursive:true,force:true});}
     },
   );
 
@@ -595,6 +617,10 @@ export async function observationRoutes(app: FastifyInstance) {
           } : null };
         });
         let media: MediaForAnalysis[] = [];
+        let mediaExclusionReason='';
+        const visualEvidence=(evidence??[]).filter(item=>['photo','video'].includes(item.evidence_type)&&item.storage_path);
+        if(visualEvidence.length&&child.guardian_consent_status!=='granted')mediaExclusionReason='该幼儿尚未取得完整监护授权，媒体未发送给AI。';
+        else if(visualEvidence.length&&(config.AI_MODE!=='qianwen'||!config.qwenMediaAnalysisEnabled||config.QWEN_MAX_MEDIA===0))mediaExclusionReason='本次服务未启用媒体画面分析，仅使用教师文字。';
         if (config.AI_MODE === "qianwen" && config.qwenMediaAnalysisEnabled && child.guardian_consent_status === "granted") {
           const candidates = (evidence ?? []).filter((item) => ["photo", "video"].includes(item.evidence_type) && item.storage_path).slice(0, config.QWEN_MAX_MEDIA);
           const signed = await Promise.all(candidates.map(async (item) => {
@@ -603,6 +629,7 @@ export async function observationRoutes(app: FastifyInstance) {
             return { id: item.id, evidenceType: item.evidence_type as "photo" | "video", mimeType: item.mime_type || (item.evidence_type === "video" ? "video/mp4" : "image/jpeg"), signedUrl: data.signedUrl } satisfies MediaForAnalysis;
           }));
           media = signed.filter((item): item is MediaForAnalysis => item !== null);
+          if(media.length<candidates.length)mediaExclusionReason='部分私有媒体链接创建失败，未成功提供的画面不作为分析证据。';
         }
         const observationForChild = {
           ...observation,
@@ -646,6 +673,8 @@ export async function observationRoutes(app: FastifyInstance) {
         notices.add(generated.notice);
         if (generated.fallbackReason) request.log.warn({ observationId: observation.id, childId: child.id, fallbackReason: generated.fallbackReason }, "AI provider used safe fallback");
         const structuredResult = generated.data;
+        if(mediaExclusionReason)structuredResult.warnings=[...new Set([mediaExclusionReason,...structuredResult.warnings])].slice(0,8);
+        request.log.info({analysisJobId:job.id,observationId:id,childId:child.id,model:generated.model,mediaCount:media.length,diagnostics:generated.diagnostics},'child analysis phases completed');
         const matchedCodes = [...structuredResult.developmentReferences.map((item) => item.indicatorCode), ...structuredResult.domainExperiences.flatMap((item) => item.indicatorCodes)];
         const matchedCards = (knowledge as KnowledgeRow[]).filter((card) => matchedCodes.includes(card.code));
         const now = new Date().toISOString();
@@ -658,6 +687,8 @@ export async function observationRoutes(app: FastifyInstance) {
             observation: observationForChild, subject: { role: subject.role, contextualFeature: subject.contextual_feature, evidenceAnchors: subject.evidence_anchors },
             child, classroom, evidence: (evidence ?? []).map(({ storage_path: _storagePath, ...item }) => item),
             mediaAnalyzed: generated.mediaAnalyzed,
+            mediaExclusionReason:mediaExclusionReason||undefined,
+            diagnostics:generated.diagnostics,
             history: history.map(({ adopted_analysis, ...item }) => ({ ...item, adoptedAnalysisIncluded: Boolean(adopted_analysis) })),
             professionalMemoryIds: rankedMemories.map((item) => item.id),
             analysisFrameworkVersionIds: (frameworkRows ?? []).map((item) => item.id),

@@ -240,6 +240,7 @@ export function buildScenarioObservationExtraction(input: ObservationDocumentExt
     ["材料与工具", "materials_tools"],
     ["认知与经验", "cognition_experience"],
     ["交往与经验", "social_experience"],
+    ["交往与规则", "social_experience"],
   ] as const).filter(([label]) => focusCategoryText.includes(label));
   const confidenceFor = (value: string, high = 0.82) => value ? high : 0.25;
   return {

@@ -85,6 +85,31 @@ const response = {
 };
 
 describe("QianwenAIProvider", () => {
+  it('bounds optional web research and reuses it for the same observation, not another class',async()=>{
+    let searches=0;
+    const fetcher=vi.fn(async(url:string|URL|Request,init?:RequestInit)=>{
+      if(String(url).includes('text-generation/generation')){
+        searches++;
+        return await new Promise<Response>((_resolve,reject)=>{
+          const signal=init!.signal!;
+          if(signal.aborted)reject(signal.reason);
+          else signal.addEventListener('abort',()=>reject(signal.reason),{once:true});
+        });
+      }
+      if(String(url).includes('crossref'))return new Response(JSON.stringify({message:{items:[]}}));
+      return new Response(JSON.stringify({choices:[{message:{content:JSON.stringify(expandedResponse)}}]}));
+    });
+    const provider=new QianwenAIProvider({apiKey:'sk-test-only',baseUrl:'https://dashscope.aliyuncs.com/compatible-mode/v1',textModel:'qwen3.7-max',visionModel:'qwen3.7-max',timeoutMs:5000,webSearchEnabled:true,supportResearchTimeoutMs:15},fetcher);
+    const input={observation:{id:'observation-1',teacher_observation:'幼儿将较长积木换到下层并继续搭建。',teacher_identification:'幼儿开始比较材料与稳定性的关系。',teacher_response:{category:'material',strategy:'增加不同长度积木',nextObservationFocus:'观察主动比较'},scene:'建构区',theme:'桥梁建构',organization_stage:'process'},classroom:{id:'class-1',grade:'middle'},child:{id:'child-1',display_name:'虚构幼儿',birth_month:'2022-05'},knowledge:[card],evidence:[],media:[],history:[]};
+    const first=await provider.analyzeObservation(input);
+    const second=await provider.analyzeObservation({...input,child:{...input.child,id:'child-2'}});
+    expect(searches).toBe(1);
+    expect(first.diagnostics?.supportResearchMs).toBeLessThan(1000);
+    expect(first.data.externalSupportReferences).toEqual([]);
+    expect(second.diagnostics?.supportCacheHit).toBe(true);
+    await provider.analyzeObservation({...input,classroom:{...input.classroom,id:'class-2'}});
+    expect(searches).toBe(2);
+  });
   it("allows evidence-boundary language but rejects an actual child label", () => {
     expect(() => assertNoForbiddenJudgment({ caution: "单次证据不足，不能据此判断幼儿是否达标。" })).not.toThrow();
     expect(() => assertNoForbiddenJudgment({ caution: "本稿未使用“优秀/落后”等横向标签。" })).not.toThrow();
@@ -188,7 +213,7 @@ describe("QianwenAIProvider", () => {
     expect(requestBody).toContain("video_url");
     expect(requestBody).toContain("image_url");
     expect(requestBody).not.toContain("不应发送的姓名");
-    expect(generated.promptVersion).toBe("observation-analysis.qwen.v7");
+    expect(generated.promptVersion).toBe("observation-analysis.qwen.v8");
 
     const apiRequest = JSON.parse(requestBody);
     expect(apiRequest.model).toBe("qwen3.7-flash");

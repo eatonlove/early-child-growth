@@ -18,6 +18,7 @@ export interface KnowledgeRow {
 }
 
 export interface ObservationForAnalysis {
+  id?:string;
   teacher_observation: string;
   child_quote?: string | null;
   teacher_identification: string;
@@ -533,6 +534,7 @@ export interface InterestClusteringInput {
 }
 
 export interface AIGeneration<T> {
+  diagnostics?:{totalMs:number;supportResearchMs:number;supportCacheHit:boolean;generationMs:number;groundingRetry:boolean};
   data: T;
   provider: "QianwenAIProvider" | "ScenarioAIProvider";
   model: string;

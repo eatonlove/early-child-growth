@@ -1,5 +1,82 @@
 import { expect, test, type Page } from "@playwright/test";
 
+test('import ledger opens an observation outside the current date filter and focuses its details',async({page})=>{
+  await mockApi(page,'teacher',true);
+  const archivedClass={...classroom,id:'32323232-3232-4232-8232-323232323232',academic_year:'2025-2026',status:'archived',name:'历史中班'};
+  const archivedObservation={...observation,id:'34343434-3434-4434-8434-343434343434',classroom_id:archivedClass.id,title:'历史桥梁观察'};
+  await page.route('**/api/classrooms',route=>route.fulfill({json:{items:[classroom,archivedClass]}}));
+  await page.route('**/api/observations',route=>route.fulfill({json:{items:[observation,archivedObservation]}}));
+  await page.route(`**/api/observations/${archivedObservation.id}`,route=>route.fulfill({json:{item:archivedObservation,evidence:[],analyses:[],subjects:[],responsePlans:[],observers:[],analysisJob:null}}));
+  await page.route('**/api/observation-imports',route=>route.fulfill({json:{items:[{...observationImport,classroom_id:archivedClass.id,status:'confirmed',observation_id:archivedObservation.id}]}}));
+  await page.goto('/observations');
+  await page.getByLabel('自然年（可选）').fill('2027');
+  await expect(page.getByText('当前 0 条',{exact:true})).toBeVisible();
+  await page.getByText('模板导入进度',{exact:true}).click();
+  await page.getByRole('button',{name:'查看观察',exact:true}).click();
+  await expect(page.getByLabel('自然年（可选）')).toHaveValue('');
+  await expect(page.getByRole('heading',{name:archivedObservation.title})).toBeVisible();
+  await expect(page.locator('.detail-stack')).toBeFocused();
+});
+
+test('import review hides internal probabilities, keeps Chinese notes and does not guess an unmatched child',async({page})=>{
+  await mockApi(page,'teacher');
+  const unmatched={...observationImport,extracted_fields:{...observationImport.extracted_fields,occurredAtText:'',observationFocusCategory:null,subjects:[{displayName:'未录入幼儿',contextualFeature:'黄衣',role:'primary'}],warnings:['classroomChildren为空，organizationStage映射为process需教师复核']}};
+  await page.route('**/api/observation-imports',route=>route.fulfill({json:{items:[unmatched]}}));
+  await page.goto('/observations');
+  await page.getByText('模板导入进度',{exact:true}).click();
+  await page.getByRole('button',{name:'继续校对'}).click();
+  const dialog=page.getByRole('dialog');
+  await expect(dialog.getByText('模板解析草稿',{exact:true})).toBeVisible();
+  await expect(dialog.locator('.import-review-banner')).not.toContainText('objectiveObservation');
+  await expect(dialog.locator('.import-review-banner')).not.toContainText('%');
+  await expect(dialog.locator('.import-review-banner')).not.toContainText('classroomChildren');
+  await expect(dialog.getByLabel('发生时间',{exact:true})).toHaveValue('');
+  await expect(dialog.getByRole('radio',{checked:true})).toHaveCount(0);
+  await expect(dialog.getByRole('button',{name:'保存教师观察'})).toBeDisabled();
+  const radio=dialog.getByRole('radio',{name:'交往与规则',exact:true});
+  await radio.check();
+  await expect(radio).toBeChecked();
+  await expect(dialog.getByRole('radio',{checked:true})).toHaveCount(1);
+  expect((await radio.boundingBox())!.width).toBeLessThanOrEqual(20);
+  await page.setViewportSize({width:390,height:844});
+  const labels=await dialog.locator('.observation-focus-choice label').all();
+  const positions=await Promise.all(labels.map(label=>label.boundingBox()));
+  expect(positions[1]!.y).toBeGreaterThan(positions[0]!.y);
+  expect(await page.evaluate(()=>document.documentElement.scrollWidth<=window.innerWidth+1)).toBe(true);
+});
+
+test('failed evidence upload leaves a saved observation and retries only the media file',async({page})=>{
+  await mockApi(page,'teacher');
+  let creates=0,uploads=0;
+  await page.route('**/api/observations',async route=>{
+    if(route.request().method()==='POST'){creates++;await route.fulfill({status:201,json:{item:{...observation,status:'submitted'}}});}
+    else await route.fulfill({json:{items:creates?[observation]:[]}});
+  });
+  await page.route(`**/api/observations/${observation.id}/evidence-ticket`,route=>route.fulfill({status:201,json:{evidenceId:'test-evidence',uploadPath:'/api/evidence/test-evidence/upload'}}));
+  await page.route('**/api/evidence/test-evidence/upload',async route=>{
+    uploads++;
+    await route.fulfill(uploads===1?{status:422,json:{code:'MEDIA_OPTIMIZATION_FAILED',message:'测试文件无法处理'}}:{json:{item:{id:'test-evidence',upload_status:'ready'}}});
+  });
+  await page.goto('/observations');
+  await page.getByRole('button',{name:'新建观察',exact:true}).click();
+  await page.getByRole('button',{name:'网页直接填写'}).click();
+  const dialog=page.getByRole('dialog');
+  await dialog.getByLabel('游戏主题',{exact:true}).fill('桥梁搭建');
+  await dialog.getByLabel('客观白描（含关键幼儿原话）').fill('幼儿先移动桥墩，再放上积木并再次测试桥面的稳定情况。');
+  await dialog.getByLabel('教师识别',{exact:true}).fill('幼儿正在比较不同支撑位置。');
+  await dialog.getByLabel('教师原始应答',{exact:true}).fill('提供不同长度积木。');
+  await dialog.getByLabel('下一次观察重点',{exact:true}).fill('观察是否主动比较位置。');
+  await dialog.locator('.evo-child-select').getByRole('checkbox').check();
+  await dialog.locator('input[type="file"]').setInputFiles({name:'证据.pdf',mimeType:'application/pdf',buffer:Buffer.from('%PDF-1.4')});
+  await dialog.getByRole('button',{name:'保存教师观察'}).click();
+  await expect(page.getByRole('dialog')).toHaveCount(0);
+  await expect(page.locator('.observation-upload-error')).toContainText('无需重新创建观察');
+  await page.getByRole('button',{name:'重试此文件'}).click();
+  await expect(page.locator('.observation-upload-error')).toHaveCount(0);
+  expect(creates).toBe(1);
+  expect(uploads).toBe(2);
+});
+
 const classroom = { id: "11111111-1111-4111-8111-111111111111", name: "中一班", grade: "middle", academic_year: "2026-2027", semester: "上学期", status: "active" };
 const child = { id: "22222222-2222-4222-8222-222222222222", classroom_id: classroom.id, internal_code: "M001", display_name: "乐乐", birth_month: "2022-01-01", guardian_consent_status: "granted", interests: ["桥梁建构"], status: "active" };
 const observation = { id: "44444444-4444-4444-8444-444444444444", classroom_id: classroom.id, child_id: child.id, title: "桥梁再次加固", occurred_at: "2026-08-24T09:00:00+08:00", scene: "建构区", theme: "积木桥梁", organization_stage: "process", observation_focus_category: "materials_tools", observation_focus: ["问题解决"], teacher_observation: "幼儿移动桥墩后，再次把积木放到桥面上。", child_quote: "这样更稳。", teacher_identification: "正在比较支撑位置。", teacher_response: { category: "material", strategy: "保留不同形状支撑物", nextObservationFocus: "观察是否主动比较" }, observer_ids: [], observer_name_snapshot: "陈老师", unlisted_participant_count: 0, status: "ai_ready", created_at: "2026-08-24T09:20:00+08:00" };
@@ -272,8 +349,8 @@ test("生产教师端只显示两角色模型下的核心工作区", async ({ pa
   expect(dialogBox!.y).toBeGreaterThanOrEqual(0);
   expect(dialogBox!.y + dialogBox!.height).toBeLessThanOrEqual(viewport!.height);
   await expect(dialog.getByRole("radio", { name: "材料与工具" })).toBeChecked();
-  await dialog.getByRole("radio", { name: "交往与经验" }).check();
-  await expect(dialog.getByRole("radio", { name: "交往与经验" })).toBeChecked();
+  await dialog.getByRole("radio", { name: "交往与规则" }).check();
+  await expect(dialog.getByRole("radio", { name: "交往与规则" })).toBeChecked();
   await expect(dialog.getByRole("radio", { checked: true })).toHaveCount(1);
   await page.keyboard.press("Escape");
   await expect(dialog).toBeHidden();
@@ -373,11 +450,11 @@ test("0830建议页面采用单列、折叠和精确主题筛选", async ({ page
 test("后台AI任务离开或刷新观察页面后仍可恢复真实进度", async ({ page }) => {
   await mockApi(page, "teacher", true, false, true);
   await page.goto("/observations");
-  await expect(page.getByText("逐幼儿分析文字、图片与视频")).toBeVisible();
+  await expect(page.getByText("生成当前幼儿的专业分析")).toBeVisible();
   await expect(page.getByText(/可以离开或关闭本页面/)).toBeVisible();
   await expect(page.getByText("52%")).toBeVisible();
   await page.reload();
-  await expect(page.getByText("逐幼儿分析文字、图片与视频")).toBeVisible();
+  await expect(page.getByText("生成当前幼儿的专业分析")).toBeVisible();
   await expect(page.getByText("52%")).toBeVisible();
 });
 

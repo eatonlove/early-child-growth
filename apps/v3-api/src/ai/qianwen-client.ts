@@ -29,6 +29,7 @@ interface StructuredCompletionInput<T> {
   enableSearch?: boolean;
   searchOptions?: Record<string, unknown>;
   timeoutMs?: number;
+  signal?:AbortSignal;
 }
 
 export interface QwenSearchSource {
@@ -42,6 +43,7 @@ interface SearchWithSourcesInput {
   systemPrompt: string;
   query: string;
   timeoutMs?: number;
+  signal?:AbortSignal;
 }
 
 export class QwenRequestError extends Error {
@@ -206,7 +208,7 @@ export class QwenClient {
             },
           },
         }),
-        signal: AbortSignal.timeout(input.timeoutMs ?? this.options.timeoutMs),
+        signal: input.signal?AbortSignal.any([input.signal,AbortSignal.timeout(input.timeoutMs??this.options.timeoutMs)]):AbortSignal.timeout(input.timeoutMs??this.options.timeoutMs),
       });
     } catch (error) {
       const timedOut = error instanceof Error && (error.name === "TimeoutError" || error.name === "AbortError");
@@ -260,7 +262,7 @@ export class QwenClient {
             },
           },
         }),
-        signal: AbortSignal.timeout(input.timeoutMs ?? this.options.timeoutMs),
+        signal: input.signal?AbortSignal.any([input.signal,AbortSignal.timeout(input.timeoutMs??this.options.timeoutMs)]):AbortSignal.timeout(input.timeoutMs??this.options.timeoutMs),
       });
     } catch (error) {
       const timedOut = error instanceof Error && (error.name === "TimeoutError" || error.name === "AbortError");

@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState, type FormEvent } from "react";
+import { useEffect, useMemo, useRef, useState, type FormEvent } from "react";
 import {
   ArrowRight, BookOpen, BrainCircuit, Check, CheckCircle2, CircleAlert, Download,
   FileInput, FileText, FileVideo, Plus, RefreshCcw, Save, Sparkles, Trash2, Upload, Users,
@@ -6,6 +6,7 @@ import {
 import { Badge, EmptyState, LoadingState, Modal, PageHeader, Panel } from "../components/ui";
 import { remoteApi, RemoteApiError } from "./api";
 import { ResourceLibrarySection } from './resource-library-section';
+import {importReviewNotes,matchImportedSubjects,type SubjectDraft} from './observation-import';
 import type {
   AnalysisClaimDecision, RemoteAnalysis, RemoteAnalysisFramework, RemoteChild, RemoteClassroom, RemoteCurriculumClue,
   RemoteCurriculumPlan, RemoteCurriculumTemplate, RemoteCurriculumWorkspace, RemoteEvidence,
@@ -17,7 +18,7 @@ import type {
 const showError = (reason: unknown) => reason instanceof RemoteApiError ? reason.message : "操作失败，请稍后重试";
 const gradeLabel = { small: "小班 3-4岁", middle: "中班 4-5岁", large: "大班 5-6岁" } as const;
 const stageLabel: Record<string, string> = { plan: "游戏计划", introduction: "游戏导入", process: "游戏过程", sharing: "游戏分享", evaluation: "游戏评价" };
-const focusCategoryLabel: Record<string, string> = { materials_tools: "材料与工具", cognition_experience: "认知与经验", social_experience: "交往与经验" };
+const focusCategoryLabel: Record<string, string> = { materials_tools: "材料与工具", cognition_experience: "认知与经验", social_experience: "交往与规则" };
 const statusLabel: Record<string, string> = {
   submitted: "教师已提交", ai_ready: "待教师确认", adopted: "教师已采用", abandoned: "已放弃",
   pending: "待确认", suggested: "AI候选", planned: "待实施", implemented: "已实施", follow_up: "待复察",
@@ -37,9 +38,8 @@ const localDateTime = (value: string) => {
   return `${year}-${month.padStart(2, "0")}-${day.padStart(2, "0")}T${hour.padStart(2, "0")}:${minute.padStart(2, "0")}`;
 };
 
-type SubjectDraft = { childId: string; role: "primary" | "participant" | "incidental"; contextualFeature: string; evidenceAnchors: string[] };
 const emptyObservation = () => ({
-  classroomId: "", templateId: "", sourceImportId: "", observerName: "", observerIds: [] as string[], occurredAt: new Date().toISOString().slice(0, 16), durationMinutes: 20,
+  classroomId: "", templateId: "", sourceImportId: "", observerName: "", observerIds: [] as string[], occurredAt: localDateTime(new Date().toLocaleString('sv-SE')), durationMinutes: 20,
   scene: "建构区", theme: "", organizationStage: "process", observationFocusCategory: "materials_tools", observationFocus: "材料选择与使用",
   groupContext: "", unlistedParticipantCount: 0, teacherObservation: "", teacherIdentification: "",
   responseCategory: "experience", responseStrategy: "", nextObservationFocus: "", subjects: [] as SubjectDraft[],
@@ -59,7 +59,7 @@ const analysisStageLabel: Record<RemoteAnalysisJob["stage"], string> = {
   queued: "等待后台分析",
   preparing: "准备观察与儿童证据",
   context_ready: "读取年龄段知识库与历史观察",
-  analyzing_subject: "逐幼儿分析文字、图片与视频",
+  analyzing_subject: "生成当前幼儿的专业分析",
   saving_subject: "保存证据链和应答建议",
   completed: "分析完成",
   failed: "分析失败",
@@ -295,7 +295,8 @@ function SimpleAnalysisBoard({
 }
 
 export function RemoteObservationV32Page({ user }: { user: RemoteUser }) {
-  const [classrooms, setClassrooms] = useState<RemoteClassroom[]>([]);
+  const [allClassrooms,setAllClassrooms]=useState<RemoteClassroom[]>([]);
+  const classrooms=useMemo(()=>allClassrooms.filter(item=>item.status==='active'),[allClassrooms]);
   const [children, setChildren] = useState<RemoteChild[]>([]);
   const [observations, setObservations] = useState<RemoteObservation[]>([]);
   const [templates, setTemplates] = useState<RemoteObservationTemplate[]>([]);
@@ -314,12 +315,17 @@ export function RemoteObservationV32Page({ user }: { user: RemoteUser }) {
   const [busy, setBusy] = useState(false);
   const [loaded, setLoaded] = useState(false);
   const [error, setError] = useState("");
+  const [uploadProgress,setUploadProgress]=useState('');
+  const [saveNotice,setSaveNotice]=useState('');
+  const [failedUploads,setFailedUploads]=useState<Array<{observationId:string;file:File;reason:string}>>([]);
+  const [jobClock,setJobClock]=useState(Date.now());
+  const detailRef=useRef<HTMLDivElement>(null);
   const classChildren = children.filter((child) => child.classroom_id === form.classroomId && child.status === "active");
   const filteredClassChildren = classChildren.filter((child) => !childSearch.trim() || `${child.display_name} ${child.internal_code}`.toLowerCase().includes(childSearch.trim().toLowerCase()));
   const childMap = useMemo(() => new Map(children.map((child) => [child.id, child])), [children]);
-  const archiveYears = [...new Set(classrooms.map((item) => item.academic_year))];
-  const archiveSemesters = [...new Set(classrooms.filter((item) => !archiveFilter.academicYear || item.academic_year === archiveFilter.academicYear).map((item) => item.semester))];
-  const archiveClassrooms = classrooms.filter((item) => (!archiveFilter.academicYear || item.academic_year === archiveFilter.academicYear) && (!archiveFilter.semester || item.semester === archiveFilter.semester));
+  const archiveYears = [...new Set(allClassrooms.map((item) => item.academic_year))];
+  const archiveSemesters = [...new Set(allClassrooms.filter((item) => !archiveFilter.academicYear || item.academic_year === archiveFilter.academicYear).map((item) => item.semester))];
+  const archiveClassrooms = allClassrooms.filter((item) => (!archiveFilter.academicYear || item.academic_year === archiveFilter.academicYear) && (!archiveFilter.semester || item.semester === archiveFilter.semester));
   const visibleObservations = observations.filter((item) => {
     if (archiveFilter.classroomId && item.classroom_id !== archiveFilter.classroomId) return false;
     if (!archiveFilter.classroomId && !archiveClassrooms.some((classroom) => classroom.id === item.classroom_id)) return false;
@@ -334,16 +340,32 @@ export function RemoteObservationV32Page({ user }: { user: RemoteUser }) {
       : "";
   const load = async () => {
     const [classes, childRows, rows, importRows] = await Promise.all([remoteApi.classrooms(), remoteApi.children(), remoteApi.observations(), remoteApi.observationImports()]);
-    setClassrooms(classes.items.filter((item) => item.status === "active")); setChildren(childRows.items); setObservations(rows.items); setImports(importRows.items);
+    setAllClassrooms(classes.items); setChildren(childRows.items); setObservations(rows.items); setImports(importRows.items);
     setSelected((current) => current || rows.items[0]?.id || "");
     setForm((current) => ({ ...current, observerName: current.observerName || user.displayName, classroomId: current.classroomId || classes.items.find((item) => item.status === "active")?.id || "" }));
   };
   const refreshDetail = async () => { if (!selected) return; const result = await remoteApi.observation(selected); setDetail(result); setAnalysisChildId((current) => result.subjects.some((item) => item.child_id === current) ? current : result.subjects[0]?.child_id || ""); };
   useEffect(() => { load().catch((reason) => setError(showError(reason))).finally(() => setLoaded(true)); }, []);
-  useEffect(() => { if (selected) refreshDetail().catch((reason) => setError(showError(reason))); else setDetail(null); }, [selected]);
+  useEffect(() => {
+    let cancelled=false;
+    if(!selected){setDetail(null);return;}
+    setDetail(current=>current?.item.id===selected?current:null);
+    remoteApi.observation(selected).then(result=>{
+      if(cancelled)return;
+      setDetail(result);setAnalysisChildId(current=>result.subjects.some(item=>item.child_id===current)?current:result.subjects[0]?.child_id||'');
+    }).catch(reason=>{if(!cancelled)setError(showError(reason));});
+    return()=>{cancelled=true;};
+  }, [selected]);
+  useEffect(()=>{
+    if(!imports.some(item=>item.status==='extracting'))return;
+    let cancelled=false;
+    const timer=window.setInterval(()=>void remoteApi.observationImports().then(result=>{if(!cancelled)setImports(result.items);}).catch(()=>{}),5000);
+    return()=>{cancelled=true;window.clearInterval(timer);};
+  },[imports.some(item=>item.status==='extracting')]);
   useEffect(() => {
     const job = detail?.analysisJob;
     if (!job || !["queued", "processing"].includes(job.status)) return;
+    const clockTimer=window.setInterval(()=>setJobClock(Date.now()),1000);
     let cancelled = false;
     const poll = async () => {
       try {
@@ -360,12 +382,12 @@ export function RemoteObservationV32Page({ user }: { user: RemoteUser }) {
       }
     };
     const timer = window.setInterval(() => void poll(), 2500);
-    return () => { cancelled = true; window.clearInterval(timer); };
+    return () => { cancelled = true; window.clearInterval(timer);window.clearInterval(clockTimer); };
   }, [detail?.analysisJob?.id, detail?.analysisJob?.status]);
   useEffect(() => {
     if (archiveClassrooms.some((item) => item.id === archiveFilter.classroomId)) return;
     setArchiveFilter((current) => ({ ...current, classroomId: archiveClassrooms.length === 1 ? archiveClassrooms[0].id : "" }));
-  }, [archiveFilter.academicYear, archiveFilter.semester, classrooms]);
+  }, [archiveFilter.academicYear, archiveFilter.semester, allClassrooms]);
   useEffect(() => {
     if (!visibleObservations.some((item) => item.id === selected)) setSelected(visibleObservations[0]?.id || "");
   }, [archiveFilter.classroomId, archiveFilter.academicYear, archiveFilter.semester, archiveFilter.year, archiveFilter.month, observations]);
@@ -384,9 +406,45 @@ export function RemoteObservationV32Page({ user }: { user: RemoteUser }) {
   }, [importResult?.id]);
   useEffect(() => {
     if (!classChildren.length) return setForm((current) => ({ ...current, subjects: [] }));
+    if(form.sourceImportId&&importResult){
+      setForm(current=>current.subjects.length&&current.subjects.every(subject=>classChildren.some(child=>child.id===subject.childId))?current:{...current,subjects:matchImportedSubjects(importResult,children,current.classroomId)});
+      return;
+    }
     setForm((current) => current.subjects.some((subject) => classChildren.some((child) => child.id === subject.childId)) ? current : { ...current, subjects: [{ childId: classChildren[0].id, role: "primary", contextualFeature: "", evidenceAnchors: [] }] });
-  }, [form.classroomId, children]);
+  }, [form.classroomId, children, form.sourceImportId]);
   const withBusy = async (operation: () => Promise<void>) => { setBusy(true); setError(""); try { await operation(); } catch (reason) { setError(showError(reason)); } finally { setBusy(false); } };
+  const openObservation=async(id:string)=>{
+    const result=await remoteApi.observation(id);
+    setArchiveFilter({classroomId:'',academicYear:'',semester:'',year:'',month:''});
+    setObservations(current=>current.some(item=>item.id===id)?current:[result.item,...current]);
+    setSelected(id);setDetail(result);setAnalysisChildId(result.subjects[0]?.child_id||'');
+    window.requestAnimationFrame(()=>{detailRef.current?.scrollIntoView({behavior:'smooth',block:'start'});detailRef.current?.focus({preventScroll:true});});
+  };
+  const reviewImport=(item:RemoteObservationImport)=>{
+    const fields=item.extracted_fields;
+    setError('');setImportResult(item);setFiles([]);
+    setForm({...emptyObservation(),classroomId:item.classroom_id,sourceImportId:item.id,
+      observerName:fields.observerName||user.displayName,occurredAt:localDateTime(fields.occurredAtText||''),
+      scene:fields.scene||'',theme:fields.theme||'',organizationStage:fields.organizationStage||'process',
+      observationFocusCategory:fields.observationFocusCategory||'',subjects:matchImportedSubjects(item,children),
+      unlistedParticipantCount:fields.unlistedParticipantCount??0,groupContext:fields.groupContext||'',teacherObservation:fields.objectiveObservation||'',
+      teacherIdentification:fields.teacherIdentification||'',responseStrategy:fields.teacherResponseDraft||'',nextObservationFocus:fields.nextObservationFocus||'',
+    });
+    setEntry('web');
+  };
+  const uploadMedia=async(observationId:string,selectedFiles:File[])=>{
+    for(const [index,file] of selectedFiles.entries()){
+      setUploadProgress(`准备上传 ${index+1}/${selectedFiles.length} · ${file.name}`);
+      try{
+        await remoteApi.uploadEvidence(observationId,file,percent=>setUploadProgress(`${file.name} · ${percent<100?`上传 ${percent}%`:'文件已传输，正在无损处理与保存'}`));
+        setFailedUploads(current=>current.filter(item=>item.observationId!==observationId||item.file!==file));
+      }catch(reason){setFailedUploads(current=>[...current.filter(item=>item.observationId!==observationId||item.file!==file),{observationId,file,reason:showError(reason)}]);}
+    }
+    setUploadProgress('');
+    await load();
+    const result=await remoteApi.observation(observationId);
+    setDetail(current=>current?.item.id===observationId?result:current);
+  };
   const toggleSubject = (childId: string) => setForm((current) => {
     const exists = current.subjects.some((item) => item.childId === childId);
     if (exists && current.subjects.length === 1) return current;
@@ -406,25 +464,26 @@ export function RemoteObservationV32Page({ user }: { user: RemoteUser }) {
       teacherObservation: form.teacherObservation, teacherIdentification: form.teacherIdentification,
       teacherResponse: { category: form.responseCategory, strategy: form.responseStrategy, nextObservationFocus: form.nextObservationFocus },
     });
-    for (const file of files) await remoteApi.uploadEvidence(created.item.id, file);
+    const selectedFiles=[...files];
     setEntry(null); setFiles([]); setImportFile(null); setImportResult(null); setForm({ ...emptyObservation(), observerName: user.displayName, classroomId: form.classroomId });
-    await load(); setSelected(created.item.id);
+    setSaveNotice('教师观察已保存。媒体将逐个上传；单个文件失败不会撤销观察，也不需要重新导入观察表。');
+    await openObservation(created.item.id);
+    await uploadMedia(created.item.id,selectedFiles);
   }); };
   const importDocument = () => void withBusy(async () => {
     if (!importFile || !form.classroomId) return;
-    const result = await remoteApi.importObservationDocument(form.classroomId, importFile); setImportResult(result.item);
-    const fields = result.item.extracted_fields;
-    const matched = (fields.subjects ?? []).map((subject, index) => {
-      const child = classChildren.find((item) => item.display_name.trim() === subject.displayName.trim());
-      return child ? { childId: child.id, role: index === 0 ? "primary" as const : subject.role === "primary" ? "participant" as const : subject.role, contextualFeature: subject.contextualFeature, evidenceAnchors: [] as string[] } : null;
-    }).filter((item): item is SubjectDraft => Boolean(item));
-    setForm((current) => ({ ...current, sourceImportId: result.item.id, observerName: fields.observerName || current.observerName || user.displayName, occurredAt: localDateTime(fields.occurredAtText || "") || current.occurredAt, scene: fields.scene || current.scene, theme: fields.theme || current.theme,
-      organizationStage: fields.organizationStage || current.organizationStage, observationFocusCategory: fields.observationFocusCategory || current.observationFocusCategory, subjects: matched.length ? matched : current.subjects,
-      unlistedParticipantCount: fields.unlistedParticipantCount ?? 0, groupContext: fields.groupContext || "", teacherObservation: fields.objectiveObservation || "",
-      teacherIdentification: fields.teacherIdentification || "", responseStrategy: fields.teacherResponseDraft || "", nextObservationFocus: fields.nextObservationFocus || "" }));
-    setEntry("web");
+    setUploadProgress('准备上传观察表');
+    try{
+      const result=await remoteApi.importObservationDocument(form.classroomId,importFile,percent=>setUploadProgress(percent<100?`观察表上传 ${percent}%`:'观察表已上传，AI正在提取字段，请稍候'));
+      reviewImport(result.item);
+    }finally{
+      setUploadProgress('');
+      await remoteApi.observationImports().then(result=>setImports(result.items)).catch(()=>{});
+    }
   });
   const latest = detail?.analyses.filter((item) => item.child_id === analysisChildId)[0];
+  const mediaWithoutConsent=detail?.evidence.some(item=>['photo','video'].includes(item.evidence_type)&&item.upload_status==='ready')&&detail.subjects.some(subject=>childMap.get(subject.child_id)?.guardian_consent_status!=='granted');
+  const jobSeconds=detail?.analysisJob?Math.max(0,Math.floor((jobClock-new Date(detail.analysisJob.started_at||detail.analysisJob.created_at||detail.analysisJob.requested_at).getTime())/1000)):0;
   const responsePlans = detail?.responsePlans.filter((item) => item.child_id === analysisChildId && (!latest || item.analysis_run_id === latest.id)) ?? [];
   const exportObservation = (variant: "teacher" | "professional") => void withBusy(async () => {
     if (!detail) return;
@@ -444,8 +503,11 @@ export function RemoteObservationV32Page({ user }: { user: RemoteUser }) {
     }
   };
   return <div className="page remote-page evo-page">
-    <PageHeader eyebrow="观察 · 识别 · 应答" title="标准游戏观察" description="网页填写和上传已有观察表最终形成同一种教师可校对记录；群体观察按幼儿分别分析。" actions={<div className="page-action-row"><button className="btn btn-secondary" onClick={() => void remoteApi.downloadObservationTemplate()}><Download />下载标准模板</button><button className="btn btn-primary" onClick={() => setEntry("choice")}><Plus />新建观察</button></div>} />
+    <PageHeader eyebrow="观察 · 识别 · 应答" title="标准游戏观察" description="网页填写和上传已有观察表最终形成同一种教师可校对记录；群体观察按幼儿分别分析。" actions={<div className="page-action-row"><button className="btn btn-secondary" onClick={() => void remoteApi.downloadObservationTemplate()}><Download />下载标准模板</button><button className="btn btn-primary" disabled={busy} onClick={() => {setError('');setImportResult(null);setImportFile(null);setFiles([]);setForm({...emptyObservation(),observerName:user.displayName,classroomId:form.classroomId});setEntry("choice");}}><Plus />新建观察</button></div>} />
     {error && <div className="remote-error"><CircleAlert />{error}</div>}
+    {saveNotice&&<div className="observation-save-notice" role="status"><CheckCircle2/>{saveNotice}</div>}
+    {uploadProgress&&<div className="observation-upload-progress" role="status"><Upload/>{uploadProgress}</div>}
+    {failedUploads.map(item=><div className="observation-upload-error" role="alert" key={`${item.observationId}-${item.file.name}`}><div><strong>{item.file.name}上传未完成</strong><p>{item.reason}</p><small>文字观察已保存；只需重试这个文件，无需重新创建观察。</small></div><button className="btn btn-secondary" disabled={busy} onClick={()=>void withBusy(()=>uploadMedia(item.observationId,[item.file]))}>重试此文件</button></div>)}
     <div className="evo-flow"><span>1 教师记录</span><span>2 AI生成观察、识别、应答</span><span>3 教师确认</span><span>4 实施与复察</span></div>
     <Panel className="observation-archive-toolbar" title="班级观察档案" subtitle="按班级与学期归集连续观察，可继续缩小到指定年份、月份并直接导出Word。">
       <div className="archive-filter-grid">
@@ -457,24 +519,34 @@ export function RemoteObservationV32Page({ user }: { user: RemoteUser }) {
         <div className="archive-filter-actions"><span>当前 {visibleObservations.length} 条</span><button className="btn btn-secondary" aria-describedby="archive-export-hint" disabled={busy || Boolean(archiveExportReason)} title={archiveExportReason} onClick={() => void withBusy(() => remoteApi.downloadObservationArchive({ classroomId: archiveFilter.classroomId, year: archiveFilter.year ? Number(archiveFilter.year) : undefined, month: archiveFilter.month ? Number(archiveFilter.month) : undefined }))}><Download />导出当前档案</button><small id="archive-export-hint" className={archiveExportReason ? "archive-export-hint unavailable" : "archive-export-hint"}>{archiveExportReason || "将导出当前班级及所选时间范围内的观察Word档案"}</small></div>
       </div>
     </Panel>
-    {imports.length > 0 && <details className="observation-import-ledger"><summary><strong>模板导入进度</strong><span>最近{Math.min(imports.length, 8)}份</span></summary><div>{imports.slice(0, 8).map((item) => <article key={item.id}><div><strong>{item.source_file_name}</strong><small>{new Date(item.created_at).toLocaleString("zh-CN")}</small></div><Badge tone={tone(item.status)}>{importStatusLabel[item.status]}</Badge>{item.status === "needs_review" && <button className="btn btn-secondary" onClick={() => { setImportResult(item); const fields = item.extracted_fields; const matched = (fields.subjects ?? []).map((subject, index) => { const child = children.find((childItem) => childItem.classroom_id === item.classroom_id && childItem.display_name.trim() === subject.displayName.trim()); return child ? { childId: child.id, role: index === 0 ? "primary" as const : subject.role === "primary" ? "participant" as const : subject.role, contextualFeature: subject.contextualFeature, evidenceAnchors: [] as string[] } : null; }).filter((subject): subject is SubjectDraft => Boolean(subject)); setForm((current) => ({ ...current, classroomId: item.classroom_id, sourceImportId: item.id, observerName: fields.observerName || user.displayName, occurredAt: localDateTime(fields.occurredAtText || "") || current.occurredAt, scene: fields.scene || current.scene, theme: fields.theme || current.theme, organizationStage: fields.organizationStage || current.organizationStage, subjects: matched.length ? matched : current.subjects, unlistedParticipantCount: fields.unlistedParticipantCount ?? 0, groupContext: fields.groupContext || "", teacherObservation: fields.objectiveObservation || "", teacherIdentification: fields.teacherIdentification || "", responseStrategy: fields.teacherResponseDraft || "", nextObservationFocus: fields.nextObservationFocus || "" })); setEntry("web"); }}>继续校对</button>}{item.observation_id && <button className="btn btn-secondary" onClick={() => setSelected(item.observation_id!)}>查看观察</button>}{item.failure_reason && <small className="import-failure">{item.failure_reason}</small>}</article>)}</div></details>}
+    {imports.length>0&&<details className="observation-import-ledger"><summary><strong>模板导入进度</strong><span>最近{Math.min(imports.length,8)}份</span></summary><div>{imports.slice(0,8).map(item=><article key={item.id}>
+      <div><strong>{item.source_file_name}</strong><small>{new Date(item.created_at).toLocaleString('zh-CN')}</small></div>
+      <Badge tone={tone(item.status)}>{importStatusLabel[item.status]}</Badge>
+      {item.status==='needs_review'&&<button className="btn btn-secondary" disabled={busy} onClick={()=>reviewImport(item)}>继续校对</button>}
+      {item.observation_id&&<button className="btn btn-secondary" disabled={busy} onClick={()=>void withBusy(()=>openObservation(item.observation_id!))}>查看观察</button>}
+      {item.failure_reason&&<small className="import-failure">{item.failure_reason}</small>}
+    </article>)}</div></details>}
     <div className="remote-observation-layout">
       <Panel className="remote-observation-list"><div className="remote-list-head"><strong>观察记录</strong><span>{visibleObservations.length}条</span></div>{visibleObservations.map((item) => <button className={selected === item.id ? "selected" : ""} key={item.id} onClick={() => setSelected(item.id)}><span>{item.scene.slice(0, 1)}</span><div><strong>{item.title}</strong><small>{item.scene} · {new Date(item.occurred_at).toLocaleDateString("zh-CN")}</small><Badge tone={tone(item.status)}>{statusLabel[item.status] ?? item.status}</Badge></div></button>)}</Panel>
-      {!loaded ? <LoadingState /> : detail ? <div className="detail-stack">
+      {!loaded ? <LoadingState /> : detail ? <div className="detail-stack" ref={detailRef} tabIndex={-1} aria-label="观察详情">
         <Panel><div className="remote-detail-head"><div><div className="knowledge-badges"><Badge tone="green">{detail.item.scene}</Badge><Badge tone="blue">{stageLabel[detail.item.organization_stage]}</Badge><Badge tone={tone(detail.item.status)}>{statusLabel[detail.item.status]}</Badge></div><h2>{detail.item.title}</h2><p>{detail.item.theme} · 观察教师：{detail.item.observer_name_snapshot || detail.observers.map((item) => item.displayName).join("、") || "未填写"}{detail.observers.length ? ` · 协同：${detail.observers.map((item) => item.displayName).join("、")}` : ""}</p></div><div className="page-action-row"><button className="btn btn-secondary" disabled={busy} onClick={() => exportObservation("teacher")}><Download />导出教师原稿</button><button className="btn btn-secondary" disabled={busy || detail.item.status !== "adopted"} title={detail.item.status !== "adopted" ? "完成所有幼儿AI确认后可导出专业版" : ""} onClick={() => exportObservation("professional")}><FileText />导出专业版</button></div></div><div className="evo-subject-chips">{detail.subjects.map((subject) => <button className={analysisChildId === subject.child_id ? "selected" : ""} key={subject.id} onClick={() => setAnalysisChildId(subject.child_id)}><strong>{subject.display_name}</strong><small>{subject.role === "primary" ? "主要观察" : subject.role === "incidental" ? "偶发参与" : "共同参与"} · {subject.contextual_feature || "未补充本次特征"}</small></button>)}{detail.item.unlisted_participant_count ? <span>另有{detail.item.unlisted_participant_count}名未列名参与者</span> : null}</div></Panel>
         <div className="observation-record-list"><Panel className="observation-record-item observation"><Badge tone="blue">观察</Badge><p>{detail.item.teacher_observation}</p></Panel><Panel className="observation-record-item identification"><Badge tone="green">识别</Badge><p>{detail.item.teacher_identification}</p></Panel><Panel className="observation-record-item response"><Badge tone="orange">教师原始应答</Badge><p>{detail.item.teacher_response.strategy}</p><small>复察：{detail.item.teacher_response.nextObservationFocus}</small></Panel></div>
         {detail.evidence.length > 0 && <Panel title="照片、视频与作品证据"><div className="remote-file-list">{detail.evidence.map((item) => <button className="btn btn-secondary evidence-file-button" key={item.id} disabled={item.upload_status !== "ready"} onClick={() => void withBusy(async () => { const result = await remoteApi.evidenceDownload(item.id); window.open(result.url, "_blank", "noopener,noreferrer"); })}><FileVideo /><span><strong>{item.file_name || "未命名证据"}</strong><small>{item.optimization_status === "optimized" ? `无损优化 ${formatBytes(item.original_size_bytes)} → ${formatBytes(item.optimized_size_bytes)}` : item.optimization_status === "not_applicable" ? "原样私有存储" : item.optimization_status === "legacy" ? "历史媒体" : item.optimization_status === "failed" ? "无损优化失败" : "等待处理"}</small></span></button>)}</div></Panel>}
         {(!latest || latest.decision !== "pending") && !["queued", "processing"].includes(detail.analysisJob?.status ?? "") && <Panel className="remote-ai-launch"><Sparkles /><div><Badge tone="purple">按幼儿独立分析</Badge><h2>为{detail.subjects.length}名幼儿分别生成专业第二视角</h2><p>会读取该幼儿已采用的历史观察，并结合可归属的文字、图片或视频证据生成差异化应答；个体证据不足时会明确提示。</p></div><button className="btn btn-primary" disabled={busy} onClick={() => void runAnalysis()}><BrainCircuit />{latest ? "生成新版本" : "运行AI分析"}</button></Panel>}
         {detail.analysisJob && ["queued", "processing"].includes(detail.analysisJob.status) && <Panel className="ai-progress-panel"><div className="ai-progress-heading"><div><Badge tone="purple">后台AI分析</Badge><strong>{analysisStageLabel[detail.analysisJob.stage]}</strong></div><span>{detail.analysisJob.progress}%</span></div><div className="ai-progress-track"><i style={{ width: `${detail.analysisJob.progress}%` }} /></div><p>任务已保存到后台，可以离开或关闭本页面；再次进入后会继续显示真实进度。</p></Panel>}
         {detail.analysisJob?.status === "failed" && <Panel className="ai-progress-panel ai-progress-failed"><div className="ai-progress-heading"><div><Badge tone="red">上次分析失败</Badge><strong>{detail.analysisJob.error_message || "AI分析暂时不可用"}</strong></div></div><p>失败原因已保留，可直接重新发起，不会把未完成内容写入正式分析。</p></Panel>}
+        <Panel title="补充照片或视频" subtitle="已有观察无需重新导入；可在这里补充或重新上传失败的媒体。"><input aria-label="补充照片或视频" disabled={busy} type="file" multiple accept="image/jpeg,image/png,image/webp,video/mp4,video/quicktime,application/pdf" onChange={event=>{const chosen=Array.from(event.target.files??[]).slice(0,5);event.target.value='';if(chosen.length)void withBusy(()=>uploadMedia(detail.item.id,chosen));}}/><small>图片或文档10MB/份，视频100MB/段。上传进度结束后还需要完成文件处理与私有存储。</small>{detail.evidence.some(item=>item.upload_status==='failed')&&<p className="warning-card">有历史媒体未上传成功，可重新选择该文件补充上传，已保存的观察文字不受影响。</p>}{mediaWithoutConsent&&<p className="warning-card">部分参与幼儿尚未取得完整监护授权。对应幼儿的AI分析只使用文字，不会读取照片或视频画面；授权确认后需重新发起分析。</p>}</Panel>
+        {detail.analysisJob&&['queued','processing'].includes(detail.analysisJob.status)&&<p className="analysis-runtime-note" role="status">已完成{detail.analysisJob.analysis_run_ids?.length??0}/{detail.subjects.length}名幼儿 · 已运行{Math.floor(jobSeconds/60)}分{jobSeconds%60}秒。任务在后台继续执行，可离开本页。</p>}
+        {latest?.input_snapshot&&<p className="analysis-runtime-note">{latest.input_snapshot.mediaAnalyzed?'本版AI已读取授权媒体画面；视频音轨未处理。':'本版AI仅使用文字，未读取照片或视频画面。'}{latest.input_snapshot.mediaExclusionReason?` ${latest.input_snapshot.mediaExclusionReason}`:''}</p>}
         {latest && <SimpleAnalysisBoard analysis={latest} observation={detail.item} childName={childMap.get(analysisChildId)?.display_name ?? "幼儿"} responsePlans={responsePlans} evidence={detail.evidence} busy={busy} onRefresh={async () => { await Promise.all([refreshDetail(), load()]); }} onError={setError} />}
       </div> : <EmptyState title="还没有观察记录" description="教师可网页填写，也可上传现有观察表由AI提取字段后校对。" />}
     </div>
     {entry === "choice" && <Modal title="选择观察记录方式" description="两种方式最终进入同一份标准观察草稿。" onClose={() => setEntry(null)}><div className="evo-entry-grid"><button onClick={() => setEntry("web")}><FileText /><strong>网页直接填写</strong><span>适合现场或观察后快速记录</span></button><button onClick={() => setEntry("import")}><FileInput /><strong>上传已有观察表</strong><span>DOCX、DOC、PDF、JPG或PNG，AI提取后必须校对</span></button></div></Modal>}
-    {entry === "import" && <Modal title="导入已有观察表" description="AI只做字段提取，不直接形成发展结论。PDF和图片准确率可能较低。" onClose={() => setEntry(null)}><div className="remote-form"><label><span>班级</span><select value={form.classroomId} onChange={(event) => setForm({ ...form, classroomId: event.target.value })}>{classrooms.map((item) => <option value={item.id} key={item.id}>{item.name}</option>)}</select></label><label><span>观察表文件（最大10MB）</span><input type="file" accept=".docx,.doc,.pdf,.jpg,.jpeg,.png" onChange={(event) => setImportFile(event.target.files?.[0] ?? null)} /></label>{importResult?.extracted_fields.warnings?.map((warning) => <p className="warning-card" key={warning}>{warning}</p>)}<button className="btn btn-primary" disabled={busy || !importFile} onClick={importDocument}><Upload />提取并进入教师校对</button></div></Modal>}
+    {entry === "import" && <Modal title="导入已有观察表" description="AI只做字段提取，不直接形成发展结论。请选择资料中幼儿所在的班级。" onClose={() => {if(!busy)setEntry(null);}}><div className="remote-form">{error&&<div className="remote-error full-field" role="alert">{error}</div>}<label><span>班级</span><select disabled={busy} value={form.classroomId} onChange={(event) => setForm({ ...form, classroomId: event.target.value })}>{classrooms.map((item) => <option value={item.id} key={item.id}>{item.name}</option>)}</select></label><label><span>观察表文件（最大10MB）</span><input disabled={busy} type="file" accept=".docx,.doc,.pdf,.jpg,.jpeg,.png" onChange={(event) => setImportFile(event.target.files?.[0] ?? null)} /></label>{uploadProgress&&<p className="full-field" role="status">{uploadProgress}</p>}<button className="btn btn-primary" disabled={busy || !importFile || !form.classroomId} onClick={importDocument}><Upload />{busy?'正在上传与解析…':'提取并进入教师校对'}</button></div></Modal>}
     {entry === "web" && <Modal wide title={form.sourceImportId ? "校对AI提取的观察草稿" : "新建标准观察"} description="上传模板与网页填写使用同一份在线表单；教师确认保存前不会形成正式观察。" onClose={() => setEntry(null)}><form className="remote-observation-form" onSubmit={submit}>
-      <fieldset className="observation-focus-choice"><legend>观察聚焦（单选）</legend><p>选择本次最需要聚焦的一类证据，AI仍会完整分析观察材料。</p><div>{Object.entries(focusCategoryLabel).map(([value, label]) => <label className={form.observationFocusCategory === value ? "selected" : ""} key={value}><input type="radio" name="observation-focus-category" value={value} checked={form.observationFocusCategory === value} onChange={() => setForm({ ...form, observationFocusCategory: value })} /><strong>{label}</strong></label>)}</div></fieldset>
-      {form.sourceImportId && importResult && <div className="import-review-banner"><div><Badge tone="orange">模板解析草稿</Badge><strong>{importResult.source_file_name}</strong><span>请逐项核对黄色低置信度字段、观察教师和幼儿匹配，确认后再保存。</span></div><div className="import-confidence-grid">{Object.entries(importResult.field_confidence ?? {}).map(([key, value]) => <span className={value < 0.7 ? "low" : "ok"} key={key}>{key} {Math.round(value * 100)}%</span>)}</div>{importResult.extracted_fields.warnings?.map((warning) => <p className="warning-card" key={warning}>{warning}</p>)}{(importResult.extracted_fields.subjects ?? []).filter((subject) => !classChildren.some((child) => child.display_name.trim() === subject.displayName.trim())).map((subject) => <p className="warning-card" key={subject.displayName}>“{subject.displayName}”未匹配到当前班级幼儿，请在下方手动选择。</p>)}</div>}
+      {error&&<div className="remote-error" role="alert">{error}</div>}
+      <fieldset className="observation-focus-choice"><legend>观察聚焦（单选）</legend><p>选择本次最需要聚焦的一类证据，AI仍会完整分析观察材料。</p><div>{Object.entries(focusCategoryLabel).map(([value, label]) => <label className={form.observationFocusCategory === value ? "selected" : ""} key={value}><input required type="radio" name="observation-focus-category" value={value} checked={form.observationFocusCategory === value} onChange={() => setForm({ ...form, observationFocusCategory: value })} /><strong>{label}</strong></label>)}</div></fieldset>
+      {form.sourceImportId&&importResult&&<div className="import-review-banner"><div><Badge tone="orange">模板解析草稿</Badge><strong>{importResult.source_file_name}</strong><span>请核对观察教师、发生时间、参与幼儿和观察内容，修改确认后再保存。</span></div>{importReviewNotes(importResult,children,form.classroomId).map(note=><p className="warning-card" key={note}>{note}</p>)}</div>}
       <div className="remote-form-section"><span>01 情境与观察者</span><div className="remote-form-grid"><label><b>观察教师</b><input required value={form.observerName} onChange={(event) => setForm({ ...form, observerName: event.target.value })} /><small>观察教师署名与当前上传账号不强制绑定</small></label><label><b>班级</b><select value={form.classroomId} onChange={(event) => setForm({ ...form, classroomId: event.target.value, observerIds: [] })}>{classrooms.map((item) => <option value={item.id} key={item.id}>{item.name} · {gradeLabel[item.grade]}</option>)}</select></label><label className="full-field"><b>协同观察者账号（可选）</b><div className="evo-observer-picker">{observers.map((item) => <label key={item.userId}><input type="checkbox" checked={form.observerIds.includes(item.userId)} onChange={() => setForm((current) => ({ ...current, observerIds: current.observerIds.includes(item.userId) ? current.observerIds.filter((id) => id !== item.userId) : [...current.observerIds, item.userId] }))} />{item.displayName}<small>{item.role === "researcher" ? "教研员" : "教师"}</small></label>)}</div></label><label><b>发生时间</b><input required type="datetime-local" value={form.occurredAt} onChange={(event) => setForm({ ...form, occurredAt: event.target.value })} /></label><label><b>游戏场地</b><input required value={form.scene} onChange={(event) => setForm({ ...form, scene: event.target.value })} /></label><label><b>游戏主题</b><input required value={form.theme} onChange={(event) => setForm({ ...form, theme: event.target.value })} /></label><label><b>组织阶段</b><select value={form.organizationStage} onChange={(event) => setForm({ ...form, organizationStage: event.target.value })}>{Object.entries(stageLabel).map(([value, label]) => <option value={value} key={value}>{label}</option>)}</select></label><label><b>观察模板</b><select value={form.templateId} onChange={(event) => setForm({ ...form, templateId: event.target.value })}><option value="">通用观察结构</option>{templates.map((item) => <option value={item.id} key={item.id}>{item.name}</option>)}</select></label><label><b>持续分钟</b><input type="number" min="1" max="240" value={form.durationMinutes} onChange={(event) => setForm({ ...form, durationMinutes: Number(event.target.value) })} /></label></div></div>
       <div className="remote-form-section"><span>02 参与幼儿与本次特征</span><p>搜索并勾选本次可识别幼儿，指定1名主要观察对象。多人共用照片或视频时，请为每名幼儿补充衣着、位置或时间段，帮助AI可靠区分。</p><div className="evo-child-toolbar"><input value={childSearch} onChange={(event) => setChildSearch(event.target.value)} placeholder="搜索幼儿姓名或班内编号" /><span>已选 {form.subjects.length} 名</span></div><div className="evo-child-selected">{form.subjects.map((subject) => <button type="button" key={subject.childId} onClick={() => toggleSubject(subject.childId)}>{childMap.get(subject.childId)?.display_name || "幼儿"} ×</button>)}</div><div className="evo-child-select">{filteredClassChildren.map((child) => { const subject = form.subjects.find((item) => item.childId === child.id); return <article className={subject ? "selected" : ""} key={child.id}><label><input type="checkbox" checked={Boolean(subject)} onChange={() => toggleSubject(child.id)} /><span><strong>{child.display_name}</strong><small>{child.internal_code}</small></span></label>{subject && <><select value={subject.role} onChange={(event) => setForm((current) => { const nextRole = event.target.value as SubjectDraft["role"]; return { ...current, subjects: current.subjects.map((item) => item.childId === child.id ? { ...item, role: nextRole } : nextRole === "primary" && item.role === "primary" ? { ...item, role: "participant" } : item) }; })}><option value="primary">主要观察</option><option value="participant">共同参与</option><option value="incidental">偶发参与</option></select><input placeholder="本次情境特征，如黄色上衣、负责桥墩" value={subject.contextualFeature} onChange={(event) => setForm((current) => ({ ...current, subjects: current.subjects.map((item) => item.childId === child.id ? { ...item, contextualFeature: event.target.value } : item) }))} /><textarea rows={2} placeholder="媒体定位，每行一条，如：视频00:04-00:20画面左侧黄色上衣幼儿" value={subject.evidenceAnchors.join("\n")} onChange={(event) => setForm((current) => ({ ...current, subjects: current.subjects.map((item) => item.childId === child.id ? { ...item, evidenceAnchors: lines(event.target.value).slice(0, 20) } : item) }))} /></>}</article>})}</div><div className="remote-form-grid"><label><b>未列名参与人数</b><input type="number" min="0" max="99" value={form.unlistedParticipantCount} onChange={(event) => setForm({ ...form, unlistedParticipantCount: Number(event.target.value) })} /></label><label className="full-field"><b>群体情境</b><textarea rows={2} value={form.groupContext} onChange={(event) => setForm({ ...form, groupContext: event.target.value })} /></label></div></div>
       <div className="remote-form-section"><span>03 观察、识别与原始应答</span><label><b>客观白描（含关键幼儿原话）</b><textarea required minLength={10} rows={7} value={form.teacherObservation} onChange={(event) => setForm({ ...form, teacherObservation: event.target.value })} /></label><label><b>教师识别</b><textarea required minLength={5} rows={4} value={form.teacherIdentification} onChange={(event) => setForm({ ...form, teacherIdentification: event.target.value })} /></label><div className="remote-form-grid"><label><b>原始应答类型</b><select value={form.responseCategory} onChange={(event) => setForm({ ...form, responseCategory: event.target.value })}><option value="experience">经验支持</option><option value="material">材料支持</option><option value="activity">活动支持</option></select></label><label><b>观察重点</b><input value={form.observationFocus} onChange={(event) => setForm({ ...form, observationFocus: event.target.value })} /></label><label className="full-field"><b>教师原始应答</b><textarea required minLength={2} rows={3} value={form.responseStrategy} onChange={(event) => setForm({ ...form, responseStrategy: event.target.value })} /></label><label className="full-field"><b>下一次观察重点</b><textarea required minLength={2} rows={2} value={form.nextObservationFocus} onChange={(event) => setForm({ ...form, nextObservationFocus: event.target.value })} /></label></div></div>

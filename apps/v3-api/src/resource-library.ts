@@ -14,7 +14,7 @@ export function boundedUploadStream(source: Readable, expectedBytes: number, lim
   const guard = new Transform({
     transform(chunk: Buffer, _encoding, callback) {
       received += chunk.length;
-      if (received > limit || received > expectedBytes) callback(new Error('上传文件超过登记大小或500MB上限'));
+      if (received > limit || received > expectedBytes) callback(new Error('上传文件超过登记大小或允许的上限'));
       else callback(null, chunk);
     },
     flush(callback) {

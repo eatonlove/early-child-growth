@@ -25,6 +25,7 @@ export async function buildApp() {
     (_request, body, done) => done(null, body),
   );
   app.addContentTypeParser('application/x-tongji-resource-stream', (_request, payload, done) => done(null, payload));
+  app.addContentTypeParser('application/x-tongji-evidence-stream', (_request, payload, done) => done(null, payload));
   await app.register(cookie);
   await app.register(cors, {
     origin: (origin, callback) => {

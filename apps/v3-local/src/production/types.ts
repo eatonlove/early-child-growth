@@ -175,6 +175,7 @@ export interface RemoteAnalysis {
   generated_at: string;
   child_id: string;
   claim_reviews: RemoteAnalysisClaimReview[];
+  input_snapshot?:{mediaAnalyzed:boolean;mediaExclusionReason?:string;diagnostics?:Record<string,unknown>};
 }
 
 export type AnalysisClaimDecision = "pending" | "adopted" | "modified" | "rejected" | "to_verify";
@@ -217,6 +218,7 @@ export interface RemoteAnalysisJob {
   id: string;
   observation_id: string;
   status: "queued" | "processing" | "completed" | "failed" | "cancelled";
+  created_at?:string;
   stage:
     | "queued"
     | "preparing"

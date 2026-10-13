@@ -118,17 +118,21 @@
 
 `organizationStage`：`plan | introduction | process | sharing | evaluation`。
 
-`observationFocusCategory` 为教师必选的单一观察聚焦：`materials_tools`（材料与工具）、`cognition_experience`（认知与经验）、`social_experience`（交往与经验）。历史记录可以为空，不做追溯性猜测。
+`observationFocusCategory` 为教师必选的单一观察聚焦：`materials_tools`（材料与工具）、`cognition_experience`（认知与经验）、`social_experience`（交往与规则）。枚举值不变，模板解析兼容旧表述“交往与经验”。历史记录可以为空，不做追溯性猜测。
 
 `teacherResponse.category`：`experience | material | activity`。
 
 ### 4.2 媒体证据
 
 1. `POST /observations/:id/evidence-ticket` 校验观察、授权、媒体类型和大小并创建待上传证据。
-2. `POST /evidence/:id/upload` 通过同迹API受控上传到私有媒体空间，避免向浏览器暴露内部存储地址。
+2. `POST /evidence/:id/upload` 通过同迹API受控上传到私有媒体空间，避免向浏览器暴露内部存储地址。新客户端使用 `Content-Type: application/x-tongji-evidence-stream`，文件有界写入临时文件并流式保存，不把整段视频复制到内存；兼容旧客户端的 `application/octet-stream`。
 3. 服务端核对文件大小、媒体类型、租户和授权后，在写入私有存储前执行无损优化：JPEG仅重排DCT系数并保留EXIF/ICC，PNG仅做无损压缩，MP4/MOV仅流复制重封装、不重编码画面与音轨；WebP及文档原样保存。优化结果不小于原文件时保留更小的原文件。
 4. 证据记录保存 `original_size_bytes`、`optimized_size_bytes`、`optimization_status`、`optimization_mode` 和 `optimization_tool`；只有优化或原样处理成功后才标记为 `ready` 并可进入AI分析。
 5. `GET /evidence/:id/download` 返回5分钟有效、使用公网HTTPS域名的私有查看链接。
+
+手机视频可能包含无法重封装到MP4的附加数据轨道。此时先验证原视频至少有可读取的视频轨道；验证通过则逐字节保留原文件，返回 `optimization_status=not_applicable`、`optimization_mode=none`，不删轨道、不重编码。视频本身损坏仍返回422，不伪装上传成功。
+
+观察文字保存与媒体上传分开反馈。文件失败不撤销观察、不重新确认导入任务；前端可仅重试文件，或通过现有 `evidence-ticket` 和 `upload` 接口为原观察补充媒体。进度100%仅表示浏览器文件传输完成，私有保存成功以接口返回的 `ready` 为准。
 
 新上传凭证只返回同迹受控 `uploadPath`，不再向前端返回内部存储地址、密钥或直传令牌。`POST /evidence/:id/complete` 仅兼容升级前已经签发但未完成的历史直传记录。
 
@@ -151,7 +155,11 @@
 
 分析只接受已经提交的教师记录。任务入库后由服务端继续执行，不依赖浏览器页面或前端会话持续连接；页面关闭、切换或刷新不会取消任务，并可通过任务接口恢复进度。服务进程重启时，未完成任务会被安全标记为失败并删除不完整分析，教师可重新发起。
 
-`AI_MODE=qianwen` 时使用 `QianwenAIProvider`；在监护授权为 `granted` 且 `QWEN_MEDIA_ANALYSIS_ENABLED=true` 时，可将无损优化后私有图片或视频的15分钟签名链接作为多模态输入。视频只分析画面，不处理音轨。生产环境默认禁止在真实 AI 失败时静默回退到模拟结果，并返回明确的服务错误；只有显式使用 `AI_MODE=scenario` 的本地演示环境才使用 `ScenarioAIProvider`。页面必须显示实际 Provider 和模型。
+`AI_MODE=qianwen` 时使用 `QianwenAIProvider`；在监护授权为 `granted` 且 `QWEN_MEDIA_ANALYSIS_ENABLED=true` 时，可将无损优化后私有图片或视频的15分钟签名链接作为多模态输入。视频只分析画面，不处理音轨。生产环境默认禁止在真实 AI 失败时静默回退到模拟结果，并返回明确的服务错误；只有显式使用 `AI_MODE=simulated` 的本地演示环境才使用 `ScenarioAIProvider`。页面必须显示实际 Provider 和模型。
+
+`analysis_runs.input_snapshot` 保留 `mediaAnalyzed`、`mediaExclusionReason` 与可选 `diagnostics`（总耗时、公开资料检索耗时、缓存命中、生成耗时和安全校验重试标记）。教师页面明确显示本版是否读取媒体，不能把“已上传”当成“已分析”。后台日志记录各阶段耗时，不记录密钥、签名URL或幼儿原始内容。
+
+公开支持资料检索是辅助拓展，不替代《指南》知识卡：检索与候选摘要共同使用30秒总截止时间，超时返回空的补充来源并继续核心分析；同班、同观察、同模型和知识主题的公开支持资料最多缓存10分钟，最多32项，避免逐幼儿重复检索。个体事实、历史与应答分析仍逐幼儿独立执行，不缓存或复制其他幼儿结论。未改变用户选择的模型。
 
 固定输出：
 
