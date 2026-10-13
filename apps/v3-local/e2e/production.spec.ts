@@ -479,4 +479,11 @@ test('课程资源按分类阅读且分类AI必须主动触发',async({page}) =>
   await page.getByRole('button',{name:'在线查阅'}).click();
   await expect(page.getByRole('dialog',{name:'小瓶子课程计划.docx'})).toBeVisible();
   await expect(page.getByText('课程活动：比较不同瓶子的使用方法。')).toBeVisible();
+  await page.getByRole('dialog',{name:'小瓶子课程计划.docx'}).getByRole('button',{name:'关闭'}).click();
+  await page.getByRole('dialog',{name:'小瓶子里的大世界'}).getByRole('button',{name:'关闭'}).click();
+  await page.getByRole('button',{name:'上传课程资源包'}).click();
+  await expect(page.getByText('单文件最高500MB。',{exact:false})).toBeVisible();
+  const ageLabel=page.locator('.resource-upload-form fieldset label').first();
+  await expect(ageLabel).toHaveCSS('white-space','nowrap');
+  await expect(ageLabel.getByRole('checkbox')).toHaveCSS('width','16px');
 });

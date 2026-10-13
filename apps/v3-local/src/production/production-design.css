@@ -813,8 +813,8 @@
 .resource-review-note { padding: 10px 12px; border-radius: 11px; background: #eff6ed; }
 .resource-review-note.rejected { color: #973f38; background: #fff0ee; }
 .resource-upload-form fieldset { display: flex; flex-wrap: wrap; gap: 10px; padding: 13px; border: 1px solid #e2d4c4; border-radius: 12px; }
-.production-app .resource-upload-form fieldset label { display: inline-flex; flex-direction: row; align-items: center; gap: 8px; white-space: nowrap; }
-.production-app .resource-upload-form fieldset input[type="checkbox"] { width: 16px; min-width: 16px; height: 16px; margin: 0; flex-shrink: 0; }
+.modal .resource-upload-form fieldset label { display: inline-flex; flex-direction: row; align-items: center; gap: 8px; white-space: nowrap; }
+.modal .resource-upload-form fieldset input[type="checkbox"] { width: 16px; min-width: 16px; height: 16px; padding: 0; margin: 0; flex-shrink: 0; }
 .form-note { margin: 0; color: var(--tj-muted); font-size: 11px; }
 .memory-source-tag { padding: 5px 9px; color: #3f763b; border-radius: 999px; background: var(--tj-green-soft); font-size: 10px; font-weight: 700; white-space: nowrap; }
 .research-page .research-process { display: grid; grid-template-columns: repeat(9, auto); align-items: center; justify-content: center; gap: 12px; padding: 14px 18px; border-radius: 16px; }
