@@ -13,6 +13,19 @@
 - 生产环境的 `GET /api/healthz` 只返回API服务状态，不公开数据库或AI内部配置；站点根路径的 `/healthz` 只表示Web容器存活。本地验证环境保留详细状态，便于检查真实AI开关。
 - `GET /api/local-media` 仅在 `RUNTIME_MODE=local-lite` 下提供本地限时签名文件；生产模式固定返回404。
 
+### 课程资源库 2026年10月更新
+
+- 资源包增加 `category`（`life`懂生活、`creation`慧创生、`growth`悦生长、历史待分类为null）与 `activity_origin`。创建请求使用 `activityOrigin`，历史 `summary` 保留兼容；标题有明确分类前缀的历史资料迁移至对应分类。
+- `PATCH /api/curriculum-resource-packages/:id`：上传者或教研员修改草稿信息；已有资料可调整分类。
+- `DELETE /api/curriculum-resource-packages/:id`：上传者或教研员删除草稿或退回资源，同步清理其文件和参考索引。
+- `POST /api/curriculum-resource-packages/:id/assets`：使用 `application/x-tongji-resource-stream` 流式请求，query包含 `assetType,fileName,mimeType,sizeBytes`；单文件500MiB（524288000字节）。替换成功前保留原文件；失败后继续提交同一资源包。三类必需文件齐全可提交，补充文件可稍后处理。
+- `GET /api/curriculum-resource-assets/:id/preview`：返回PDF/图片限时预览URL或Word文本阅读版；下载接口跳转到私有存储限时地址，避免后端缓存整份大文件。
+- `GET /api/resource-categories/:category/analysis`：最近一次分析，包含状态、来源课程、模型和提示词版本、结果及资料变化提醒。
+- `POST /api/resource-categories/:category/analyze`：人工主动触发，以该分类已入库资料生成后台任务，返回202。上传、归类、打开页面不会自动调用AI。
+- 分类AI固定输出 `directionalContent[{title,description,sourcePackageIds}]`、`indicatorFocus[{name,focus,observableBehaviors,sourcePackageIds}]`、`limitations[]`。来源ID必须属于本次输入；指标侧重描述课程经验，不评定具体幼儿。
+- 新增 `resource_category_analysis` 提示词场景，使用现有园所统一模型、可配置提示词和固定安全规则。
+- DOCX正文按流提取，500MB含图Word无需整份载入内存；大于32MB的PDF/旧DOC可阅读或下载，分类分析提示补充DOCX文字版。扫描PDF和图片未OCR时明确记录文字缺口。
+
 ## 2. 身份与账号
 
 | 方法 | 路径 | 权限 | 作用 |

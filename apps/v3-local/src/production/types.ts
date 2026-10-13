@@ -327,7 +327,8 @@ export type RemoteAIPromptKey =
   | "curriculum_interest_clustering"
   | "curriculum_draft"
   | "curriculum_activity_options"
-  | "curriculum_plan";
+  | "curriculum_plan"
+  | "resource_category_analysis";
 
 export interface RemoteAIPrompt {
   key: RemoteAIPromptKey;
@@ -649,6 +650,8 @@ export interface RemoteCurriculumResourcePackage {
   id: string;
   title: string;
   summary: string;
+  activity_origin: string;
+  category: ResourceCategory | null;
   applicable_grades: GradeCode[];
   themes: string[];
   status: "draft" | "pending" | "active" | "rejected" | "disabled";
@@ -656,9 +659,23 @@ export interface RemoteCurriculumResourcePackage {
   creator_name: string;
   created_by: string;
   created_at: string;
+  updated_at: string;
   reviewed_at?: string | null;
   assets: RemoteCurriculumResourceAsset[];
 }
+
+export type ResourceCategory = 'life' | 'creation' | 'growth';
+export interface RemoteResourceCategoryAnalysis {
+  id: string; category: ResourceCategory; status: 'queued' | 'processing' | 'completed' | 'failed';
+  source_package_ids: string[]; created_at: string; completed_at: string | null; isStale?: boolean;
+  provider: string | null; model: string | null; prompt_version: string | null; error_message: string | null;
+  result: {
+    directionalContent: Array<{title:string;description:string;sourcePackageIds:string[]}>;
+    indicatorFocus: Array<{name:string;focus:string;observableBehaviors:string[];sourcePackageIds:string[]}>;
+    limitations: string[];
+  } | null;
+}
+export type ResourcePreview = {kind:'pdf';url:string;fileName:string} | {kind:'image';url:string;fileName:string} | {kind:'text';text:string;note:string;fileName:string};
 
 export interface RemoteAnalysisFramework {
   id: string;

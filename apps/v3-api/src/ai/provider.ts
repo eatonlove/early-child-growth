@@ -1,5 +1,7 @@
 import type {
   AIGeneration,
+  ResourceCategoryAnalysisInput,
+  ResourceCategoryAnalysis,
   AIAnalysisProvider,
   AnalysisRevisionInput,
   AnalysisResult,
@@ -29,6 +31,15 @@ export interface AIProviderConfig extends QianwenProviderOptions {
 }
 
 class ScenarioAIProvider implements AIAnalysisProvider {
+  async analyzeResourceCategory(input: ResourceCategoryAnalysisInput): Promise<AIGeneration<ResourceCategoryAnalysis>> {
+    const ids = input.resources.map((item) => item.packageId);
+    return {
+      data: { directionalContent: [{ title:`${input.categoryLabel}课程内容`, description:input.resources.map((item) => item.activityOrigin || item.title).join('；').slice(0,1600), sourcePackageIds:ids }],
+        indicatorFocus:[{name:'活动中的经验运用',focus:'依据当前资料观察幼儿怎样在活动中运用已有经验。',observableBehaviors:['记录幼儿的实际行动、材料选择和调整过程。'],sourcePackageIds:ids}],
+        limitations:['当前是模拟AI，仅展示分类分析结构，正式内容由真实模型提炼。'] },
+      provider:'ScenarioAIProvider',model:'simulated-resource-category-v1',promptVersion:input.prompt?.version || 'resource-category-analysis.v1',mediaAnalyzed:false,notice:'模拟分类分析已完成。',
+    };
+  }
   async extractObservationDocument(input: ObservationDocumentExtractionInput): Promise<AIGeneration<ObservationDocumentExtraction>> {
     return {
       data: buildScenarioObservationExtraction(input),
@@ -153,6 +164,10 @@ class ResilientAIProvider implements AIAnalysisProvider {
     private readonly fallback: AIAnalysisProvider,
     private readonly fallbackEnabled: boolean,
   ) {}
+
+  analyzeResourceCategory(input: ResourceCategoryAnalysisInput) {
+    return this.withFallback('resource-category', () => this.primary.analyzeResourceCategory(input), () => this.fallback.analyzeResourceCategory(input));
+  }
 
   extractObservationDocument(input: ObservationDocumentExtractionInput) {
     return this.withFallback("document-extraction", () => this.primary.extractObservationDocument(input), () => this.fallback.extractObservationDocument(input));

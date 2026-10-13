@@ -13,6 +13,7 @@ import { knowledgeRoutes } from "./routes/knowledge.js";
 import { managementRoutes } from "./routes/management.js";
 import { observationRoutes } from "./routes/observations.js";
 import { outcomeRoutes } from "./routes/outcomes.js";
+import { resourceLibraryRoutes } from "./routes/resource-library.js";
 import { localMediaContentType, mediaStorage } from "./runtime/media-storage.js";
 import { z } from "zod";
 
@@ -23,6 +24,7 @@ export async function buildApp() {
     { parseAs: "buffer", bodyLimit: 100 * 1024 * 1024 },
     (_request, body, done) => done(null, body),
   );
+  app.addContentTypeParser('application/x-tongji-resource-stream', (_request, payload, done) => done(null, payload));
   await app.register(cookie);
   await app.register(cors, {
     origin: (origin, callback) => {
@@ -72,6 +74,7 @@ export async function buildApp() {
   await managementRoutes(app);
   await observationRoutes(app);
   await evolutionRoutes(app);
+  await resourceLibraryRoutes(app);
   await knowledgeRoutes(app);
   await governanceRoutes(app);
   await outcomeRoutes(app);

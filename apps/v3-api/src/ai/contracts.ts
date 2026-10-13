@@ -543,6 +543,7 @@ export interface AIGeneration<T> {
 }
 
 export interface AIAnalysisProvider {
+  analyzeResourceCategory(input: ResourceCategoryAnalysisInput): Promise<AIGeneration<ResourceCategoryAnalysis>>;
   extractObservationDocument(input: ObservationDocumentExtractionInput): Promise<AIGeneration<ObservationDocumentExtraction>>;
   analyzeObservation(input: ObservationAnalysisInput): Promise<AIGeneration<AnalysisResult>>;
   reviseAnalysis(input: AnalysisRevisionInput): Promise<AIGeneration<AnalysisResult>>;
@@ -553,4 +554,23 @@ export interface AIAnalysisProvider {
   generateActivityOptions(input: CurriculumActivityOptionsInput): Promise<AIGeneration<CurriculumActivityOptions>>;
   generateCurriculumPlan(input: CurriculumPlanGenerationInput): Promise<AIGeneration<CurriculumPlanContent>>;
   clusterInterests(input: InterestClusteringInput): Promise<AIGeneration<InterestClusterResult>>;
+}
+
+export const resourceCategoryAnalysisSchema = z.object({
+  directionalContent: z.array(z.object({
+    title: z.string().trim().min(1).max(100), description: z.string().trim().min(1).max(1600),
+    sourcePackageIds: z.array(z.string().uuid()).min(1).max(100),
+  }).strict()).min(1).max(8),
+  indicatorFocus: z.array(z.object({
+    name: z.string().trim().min(1).max(100), focus: z.string().trim().min(1).max(1600),
+    observableBehaviors: z.array(z.string().trim().min(1).max(300)).min(1).max(5),
+    sourcePackageIds: z.array(z.string().uuid()).min(1).max(100),
+  }).strict()).min(1).max(10),
+  limitations: z.array(z.string().trim().min(1).max(600)).max(10),
+}).strict();
+export type ResourceCategoryAnalysis = z.infer<typeof resourceCategoryAnalysisSchema>;
+export interface ResourceCategoryAnalysisInput {
+  category: 'life' | 'creation' | 'growth'; categoryLabel: string;
+  resources: Array<{ packageId: string; title: string; activityOrigin: string; text: string; notes: string[] }>;
+  prompt?: ResolvedAIPrompt;
 }

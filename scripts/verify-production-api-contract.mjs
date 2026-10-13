@@ -3,7 +3,7 @@ import path from "node:path";
 import process from "node:process";
 
 const root = process.cwd();
-const routeFiles = ["auth.ts", "management.ts", "observations.ts", "knowledge.ts", "governance.ts", "outcomes.ts", "evolution.ts", "ai-model-config.ts", "ai-prompts.ts"];
+const routeFiles = ["auth.ts", "management.ts", "observations.ts", "knowledge.ts", "governance.ts", "outcomes.ts", "evolution.ts", "resource-library.ts", "ai-model-config.ts", "ai-prompts.ts"];
 const backendSource = (
   await Promise.all([
     ...routeFiles.map((file) => readFile(path.join(root, "apps/v3-api/src/routes", file), "utf8")),
@@ -99,10 +99,15 @@ const contract = [
   ["PATCH", "/api/professional-memories/:id", true],
   ["GET", "/api/curriculum-resource-packages", true],
   ["POST", "/api/curriculum-resource-packages", true],
+  ["PATCH", "/api/curriculum-resource-packages/:id", true],
+  ["DELETE", "/api/curriculum-resource-packages/:id", true],
   ["POST", "/api/curriculum-resource-packages/:id/assets", true],
   ["POST", "/api/curriculum-resource-packages/:id/submit", true],
   ["PATCH", "/api/curriculum-resource-packages/:id/review", true],
   ["GET", "/api/curriculum-resource-assets/:id/download", true],
+  ["GET", "/api/curriculum-resource-assets/:id/preview", true],
+  ["GET", "/api/resource-categories/:category/analysis", true],
+  ["POST", "/api/resource-categories/:category/analyze", true],
   ["POST", "/api/observations/:id/document-exports", true],
   ["POST", "/api/curriculum-plans/:id/document-exports", true],
   ["GET", "/api/document-exports/:id/download", true],
@@ -125,10 +130,11 @@ const promptKeys = [
   "curriculum_draft",
   "curriculum_activity_options",
   "curriculum_plan",
+  "resource_category_analysis",
 ];
 
 for (const promptKey of promptKeys) {
-  if (!backendSource.includes(`resolveTenantPrompt(auth.tenantId, "${promptKey}")`)) {
+  if (!new RegExp(`resolveTenantPrompt\\(auth\\.tenantId,\\s*["']${promptKey}["']\\)`).test(backendSource)) {
     errors.push(`AI场景未接入园所生效提示词: ${promptKey}`);
   }
 }

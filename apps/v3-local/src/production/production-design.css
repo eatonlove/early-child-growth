@@ -1177,3 +1177,44 @@
   .workspace-mode .mobile-nav { display: none !important; }
   .workspace-mode .content { padding: 0; background: #fff; }
 }
+.resource-library-section { display:grid; gap:20px; }
+.resource-library-toolbar { display:flex; justify-content:space-between; gap:20px; align-items:center; }
+.resource-library-toolbar h2 { margin:0 0 8px; }
+.resource-library-toolbar p { color:var(--tj-muted); margin:0; line-height:1.7; }
+.resource-category-menu { display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:16px; }
+.resource-category-menu button { display:flex; flex-direction:column; align-items:flex-start; gap:12px; padding:24px; background:#fffdf8; border:1px solid #deceb8; border-radius:20px; text-align:left; color:#244a40; cursor:pointer; }
+.resource-category-menu button.selected { border:2px solid #477a62; background:#edf4e9; padding:23px; }
+.resource-category-menu button strong { font-size:22px; }
+.resource-category-menu button span { font-size:13px; color:var(--tj-muted); }
+.resource-library-filter { display:flex; gap:10px; flex-wrap:wrap; }
+.resource-library-filter button { border:1px solid #deceb8; background:#fffdf8; border-radius:20px; padding:9px 16px; cursor:pointer; }
+.resource-library-filter button.selected { background:#305e4e; color:white; }
+.resource-course-grid { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:16px; }
+.resource-course-card { padding:22px; border:1px solid #dfd5c5; background:#fffdf8; border-radius:20px; min-width:0; }
+.resource-course-card > div { display:flex; justify-content:space-between; align-items:center; gap:12px; color:var(--tj-muted); font-size:13px; }
+.resource-course-title { border:0; background:none; color:#214c3d; text-align:left; padding:0; cursor:pointer; }
+.resource-course-title h3 { font-size:19px; line-height:1.5; }
+.resource-course-card > p { display:-webkit-box; -webkit-line-clamp:3; -webkit-box-orient:vertical; overflow:hidden; line-height:1.8; color:var(--tj-muted); }
+.resource-course-card > small { color:var(--tj-muted); }
+.resource-course-card footer { display:flex; gap:8px; flex-wrap:wrap; margin-top:18px; }
+.resource-course-detail { display:grid; gap:16px; }
+.resource-course-detail h3 { margin:0; }
+.resource-course-detail p { line-height:1.9; white-space:pre-wrap; }
+.resource-course-detail label { display:flex; align-items:center; gap:12px; }
+.resource-course-detail select { padding:10px; border:1px solid #dfd5c5; border-radius:10px; background:white; }
+.resource-file-row { display:flex; gap:12px; align-items:center; padding:16px; background:#f8f5ee; border:1px solid #e5dbc9; border-radius:14px; }
+.resource-file-row > div { flex:1; min-width:0; display:grid; gap:8px; }
+.resource-file-row span { overflow-wrap:anywhere; }
+.resource-file-row small { color:var(--tj-muted); }
+.resource-preview-frame { width:100%; height:65vh; border:0; }
+.resource-preview-image { max-width:100%; max-height:65vh; object-fit:contain; }
+.resource-preview-text pre { white-space:pre-wrap; overflow-wrap:anywhere; font:inherit; line-height:1.9; margin:0; }
+.resource-category-result { display:grid; gap:16px; }
+.resource-category-result h3 { margin:10px 0 0; }
+.resource-category-result article { padding:16px; border:1px solid #dfd9ca; border-radius:14px; background:#fffcf6; }
+.resource-category-result article p,.resource-category-result li { line-height:1.8; }
+.resource-analysis-meta { color:var(--tj-muted); font-size:13px; }
+.resource-analysis-sources { display:flex; gap:8px; flex-wrap:wrap; }
+.resource-analysis-sources button { border:0; color:#47765e; background:#edf3e7; border-radius:8px; padding:7px 10px; cursor:pointer; }
+.resource-upload-progress,.resource-analysis-progress { color:#3b6b54; padding:12px; background:#eef4e9; border-radius:10px; }
+@media(max-width:700px) { .resource-library-toolbar { flex-direction:column; align-items:stretch; } .resource-category-menu { gap:8px; } .resource-category-menu button { padding:16px 10px; } .resource-category-menu button.selected { padding:15px 9px; } .resource-category-menu button strong { font-size:17px; } .resource-course-grid { grid-template-columns:1fr; } .resource-file-row { flex-wrap:wrap; } .resource-file-row > div { flex-basis:100%; } }

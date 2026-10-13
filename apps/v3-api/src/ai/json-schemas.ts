@@ -447,3 +447,17 @@ export const curriculumJsonSchema = {
     adjustmentBasis: { ...stringArray(6), minItems: 1 },
   },
 } as const;
+export const resourceCategoryAnalysisJsonSchema = {
+  type: 'object', additionalProperties: false, required: ['directionalContent', 'indicatorFocus', 'limitations'],
+  properties: {
+    directionalContent: { type: 'array', minItems: 1, maxItems: 8, items: {
+      type: 'object', additionalProperties: false, required: ['title','description','sourcePackageIds'],
+      properties: { title: { type:'string', maxLength:100 }, description: { type:'string', maxLength:1600 }, sourcePackageIds: { type:'array', minItems:1, maxItems:100, items:{type:'string'} } },
+    } },
+    indicatorFocus: { type: 'array', minItems: 1, maxItems: 10, items: {
+      type: 'object', additionalProperties: false, required: ['name','focus','observableBehaviors','sourcePackageIds'],
+      properties: { name: {type:'string',maxLength:100}, focus:{type:'string',maxLength:1600}, observableBehaviors:{type:'array',minItems:1,maxItems:5,items:{type:'string',maxLength:300}}, sourcePackageIds:{type:'array',minItems:1,maxItems:100,items:{type:'string'}} },
+    } },
+    limitations: {type:'array',maxItems:10,items:{type:'string',maxLength:600}},
+  },
+} as const;

@@ -457,3 +457,26 @@ test("教研员保留账号、提示词与教研入口且不出现审批模块",
   await page.getByRole("link", { name: "教研活动" }).click();
   await expect(page.getByRole("heading", { name: "教研活动模式" })).toBeVisible();
 });
+
+test('课程资源按分类阅读且分类AI必须主动触发',async({page}) => {
+  await mockApi(page,'teacher');
+  const resource={id:'31313131-3131-4131-8131-313131313131',title:'小瓶子里的大世界',summary:'幼儿探索不同瓶子的用途',activity_origin:'幼儿探索不同瓶子的用途',category:'creation',applicable_grades:['small'],themes:['瓶子'],status:'active',created_by:'teacher-id',creator_name:'陈老师',created_at:'2026-10-13T09:00:00+08:00',updated_at:'2026-10-13T09:00:00+08:00',assets:[{id:'32323232-3232-4232-8232-323232323232',asset_type:'plan',file_name:'小瓶子课程计划.docx',mime_type:'application/vnd.openxmlformats-officedocument.wordprocessingml.document',size_bytes:4096}]};
+  let requests=0;
+  await page.route('**/api/curriculum-resource-packages',route=>route.fulfill({json:{items:[resource]}}));
+  await page.route('**/api/resource-categories/creation/analysis',route=>route.fulfill({json:{item:requests ? {id:'33333333-3333-4333-8333-333333333333',category:'creation',status:'completed',provider:'QianwenAIProvider',source_package_ids:[resource.id],created_at:'2026-10-13T09:10:00+08:00',completed_at:'2026-10-13T09:11:00+08:00',result:{directionalContent:[{title:'材料与功能探究',description:'从瓶子的不同用途提出问题。',sourcePackageIds:[resource.id]}],indicatorFocus:[{name:'比较与调整',focus:'关注幼儿调整材料的依据。',observableBehaviors:['记录选择和替换材料的理由。'],sourcePackageIds:[resource.id]}],limitations:[]}} : null}}));
+  await page.route('**/api/resource-categories/creation/analyze',route=>{requests++;return route.fulfill({status:202,json:{item:{id:'33333333-3333-4333-8333-333333333333',category:'creation',status:'queued'}}});});
+  await page.route(`**/api/curriculum-resource-assets/${resource.assets[0].id}/preview`,route=>route.fulfill({json:{kind:'text',fileName:resource.assets[0].file_name,text:'课程活动：比较不同瓶子的使用方法。',note:''}}));
+  await page.goto('/memories');
+  await page.locator('.resource-category-menu').getByRole('button',{name:/慧创生/}).click();
+  await expect(page.getByText('尚未分析。上传和分类资料不会自动调用AI。')).toBeVisible();
+  expect(requests).toBe(0);
+  await page.getByRole('button',{name:'分析当前分类'}).click();
+  await expect(page.getByText('材料与功能探究',{exact:true})).toBeVisible();
+  await expect(page.getByRole('heading',{name:'指标侧重',exact:true})).toBeVisible();
+  expect(requests).toBe(1);
+  await page.getByRole('button',{name:'查看课程资料'}).click();
+  await expect(page.getByRole('heading',{name:'活动来源',exact:true})).toBeVisible();
+  await page.getByRole('button',{name:'在线查阅'}).click();
+  await expect(page.getByRole('dialog',{name:'小瓶子课程计划.docx'})).toBeVisible();
+  await expect(page.getByText('课程活动：比较不同瓶子的使用方法。')).toBeVisible();
+});

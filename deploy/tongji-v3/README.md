@@ -55,6 +55,7 @@ apps/v3-api/supabase/migrations/20260829160000_curriculum_resource_packages.sql
 apps/v3-api/supabase/migrations/20260829190000_async_analysis_and_media_optimization.sql
 apps/v3-api/supabase/migrations/20260830092020_tenant_ai_model_config.sql
 apps/v3-api/supabase/migrations/20260830144512_add_observation_focus_category.sql
+apps/v3-api/supabase/migrations/20261013095606_resource_library_categories.sql
 ```
 
 托管 Supabase：
@@ -109,6 +110,17 @@ systemctl reload nginx
 ```
 
 不要删除、覆盖或重启其他应用的 server block。
+
+### 课程资源单文件500MB
+
+2026-10-13版本新增课程分类、活动来源、正文缓存和主动触发的分类分析；只为同迹的私有bucket提高文件上限。文件上传采用有大小校验的流式传输，不在API中缓存整个500MB文件。部署时须同时核对：
+
+- 应用与数据库：524288000字节；迁移会设置同迹bucket的`file_size_limit`。
+- 同迹内外两层Nginx：`client_max_body_size 510m`；代理关闭请求缓冲，上传超时1800秒。外层现有站点必须单独更新，不会被镜像部署覆盖。
+- 自托管Storage：服务的`FILE_SIZE_LIMIT`至少524288000字节。先备份共享Storage配置，再只更新和重建其`storage`服务；禁止重启整个共享Supabase。其他bucket维持原限额。
+- 大文件解析：DOCX流式提取正文；超过32MB的PDF/旧版DOC保留查阅下载能力，需补充可解析DOCX文字参与分类分析。图片不自动OCR。页面及AI分析提醒必须显示这些边界。
+
+分类分析只在点击“分析当前分类”或“重新分析”后执行，不在上传、分类或打开页面时自动调用模型。新增`resource_category_analysis`提示词可由教研员编辑，沿用园所统一模型配置。分析只汇总已入库课程，不形成幼儿评价或新国家指标。
 
 Certbot 使用 Webroot 签发时，将 `certbot-nginx-reload.sh` 安装到 `/etc/letsencrypt/renewal-hooks/deploy/`，并启用 `certbot-renew.timer`，确保证书续期成功后平滑重载 Nginx。
 

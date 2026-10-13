@@ -200,6 +200,16 @@ else
   echo "媒体无损优化与AI后台任务结构已就绪，跳过8.29异步迁移。"
 fi
 
+resource_categories_ready="$(docker exec "$DB_CONTAINER" psql -U postgres -d postgres -Atc \
+  "select to_regclass('tongji_v3.resource_category_analyses') is not null;")"
+if [ "$resource_categories_ready" != "t" ]; then
+  docker exec -i "$DB_CONTAINER" psql -U postgres -d postgres \
+    -v ON_ERROR_STOP=1 --single-transaction \
+    < "$ROOT_DIR/apps/v3-api/supabase/migrations/20261013095606_resource_library_categories.sql"
+else
+  echo "课程分类、500MB资源和分类分析结构已就绪。"
+fi
+
 docker exec -i "$DB_CONTAINER" psql -U postgres -d postgres \
   -v ON_ERROR_STOP=1 --single-transaction \
   < "$ROOT_DIR/apps/v3-api/supabase/migrations/20260828084501_reload_ai_prompt_config_schema.sql"

@@ -1,4 +1,7 @@
 import { createHmac, randomUUID, timingSafeEqual } from "node:crypto";
+import { createReadStream, createWriteStream } from "node:fs";
+import { Readable } from "node:stream";
+import { pipeline } from "node:stream/promises";
 import { mkdir, readFile, readdir, stat, unlink, writeFile } from "node:fs/promises";
 import { dirname, extname, resolve, sep } from "node:path";
 import { config } from "../config.js";
@@ -18,6 +21,8 @@ interface MediaStorage {
   createSignedUploadUrl(path: string): Promise<{ data: { path: string; token: string } | null; error: StorageError | null }>;
   list(folder: string, options: { search?: string; limit?: number }): Promise<{ data: Array<{ name: string }> | null; error: StorageError | null }>;
   upload(path: string, body: Buffer, options: UploadOptions): Promise<{ error: StorageError | null }>;
+  uploadStream(path: string, body: Readable, options: UploadOptions): Promise<{ error: StorageError | null }>;
+  openReadStream(path: string): Promise<Readable>;
   remove(path: string): Promise<{ error: StorageError | null }>;
   download(path: string): Promise<{ data: Buffer | null; error: StorageError | null }>;
   createSignedUrl(path: string, expiresIn: number): Promise<{ data: { signedUrl: string } | null; error: StorageError | null }>;
@@ -42,6 +47,19 @@ class SupabaseMediaStorage implements MediaStorage {
   async upload(path: string, body: Buffer, options: UploadOptions) {
     const { error } = await this.bucket().upload(path, body, options);
     return { error };
+  }
+
+  async uploadStream(path: string, body: Readable, options: UploadOptions) {
+    const { error } = await this.bucket().upload(path, body, { ...options, duplex: 'half' });
+    return { error };
+  }
+
+  async openReadStream(path: string) {
+    const response = await fetch(`${config.SUPABASE_INTERNAL_URL ?? config.SUPABASE_URL}/storage/v1/object/authenticated/${config.SUPABASE_STORAGE_BUCKET}/${path.split('/').map(encodeURIComponent).join('/')}`, {
+      headers: { Authorization: `Bearer ${config.SUPABASE_SERVICE_ROLE_KEY}`, apikey: config.SUPABASE_SERVICE_ROLE_KEY },
+    });
+    if (!response.ok || !response.body) throw new Error('课程资源文件暂时无法读取');
+    return Readable.fromWeb(response.body as import('node:stream/web').ReadableStream);
   }
 
   async download(path: string) {
@@ -111,6 +129,23 @@ class LocalMediaStorage implements MediaStorage {
     } catch (error) {
       return { error: { message: error instanceof Error ? error.message : "Local media upload failed" } };
     }
+  }
+
+  async uploadStream(path: string, body: Readable, options: UploadOptions) {
+    const target = this.filePath(path);
+    try {
+      await mkdir(dirname(target), { recursive: true });
+      await pipeline(body, createWriteStream(target, { flags: options.upsert ? 'w' : 'wx' }));
+      return { error: null };
+    } catch (reason) {
+      return { error: { message: reason instanceof Error ? reason.message : '课程资源上传失败' } };
+    }
+  }
+
+  async openReadStream(path: string) {
+    const target = this.filePath(path);
+    await stat(target);
+    return createReadStream(target);
   }
 
   async download(path: string) {

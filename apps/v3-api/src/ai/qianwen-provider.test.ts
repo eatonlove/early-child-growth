@@ -95,7 +95,7 @@ describe("QianwenAIProvider", () => {
     expect(() => assertNoForbiddenJudgment({ conclusion: "该幼儿能力差，需要重点纠正。" })).toThrow("幼儿标签化风险守卫：能力差");
   });
   it("registers every configurable AI scene with a distinct code default", () => {
-    expect(aiPromptDefinitions()).toHaveLength(10);
+    expect(aiPromptDefinitions()).toHaveLength(11);
     expect(Object.keys(AI_PROMPT_DEFINITIONS)).toEqual([
       "observation_document_extraction",
       "observation_analysis",
@@ -107,8 +107,9 @@ describe("QianwenAIProvider", () => {
       "curriculum_draft",
       "curriculum_activity_options",
       "curriculum_plan",
+      "resource_category_analysis",
     ]);
-    expect(new Set(aiPromptDefinitions().map((item) => item.defaultVersion)).size).toBe(10);
+    expect(new Set(aiPromptDefinitions().map((item) => item.defaultVersion)).size).toBe(11);
   });
 
   it("applies the individual observation standard to text, image and video evidence without sending the child's identity", async () => {

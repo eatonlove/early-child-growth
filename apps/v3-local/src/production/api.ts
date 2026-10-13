@@ -30,6 +30,7 @@ import type {
   RemoteProfessionalMemory,
   RemoteResponsePlan,
   RemoteUser,
+  ResourceCategory, ResourcePreview, RemoteResourceCategoryAnalysis,
 } from "./types";
 
 const baseUrl = (import.meta.env.VITE_API_BASE_URL || "").replace(/\/$/, "");
@@ -391,14 +392,41 @@ export const remoteApi = {
   updateProfessionalMemory: (id: string, value: { status: "active" | "disabled"; qualityScore?: number }) =>
     request<{ item: RemoteProfessionalMemory }>(`/api/professional-memories/${id}`, { method: "PATCH", body: body(value) }),
   curriculumResourcePackages: () => request<{ items: RemoteCurriculumResourcePackage[] }>("/api/curriculum-resource-packages"),
-  createCurriculumResourcePackage: (value: { title: string; summary: string; applicableGrades: string[]; themes: string[] }) =>
+  createCurriculumResourcePackage: (value: { title: string; summary?: string; activityOrigin?: string; category?: ResourceCategory; applicableGrades: string[]; themes: string[] }) =>
     request<{ item: RemoteCurriculumResourcePackage }>("/api/curriculum-resource-packages", { method: "POST", body: body(value) }),
-  uploadCurriculumResourceAsset: (packageId: string, assetType: RemoteCurriculumResourceAsset["asset_type"], file: File) => {
+  uploadCurriculumResourceAsset: async (packageId: string, assetType: RemoteCurriculumResourceAsset["asset_type"], file: File, onProgress?: (percent:number) => void) => {
+    if (file.size < 1 || file.size > 500 * 1024 * 1024) throw new RemoteApiError(422, 'RESOURCE_FILE_TOO_LARGE', `${file.name}：单文件不能超过500MB，且不能为空`);
     const extension = file.name.toLowerCase().split(".").pop();
     const inferredMime = ({ doc: "application/msword", docx: "application/vnd.openxmlformats-officedocument.wordprocessingml.document", pdf: "application/pdf", jpg: "image/jpeg", jpeg: "image/jpeg", png: "image/png" } as Record<string, string>)[extension ?? ""];
-    const params = new URLSearchParams({ assetType, fileName: file.name, mimeType: file.type || inferredMime || "application/octet-stream" });
-    return request<{ item: RemoteCurriculumResourceAsset }>(`/api/curriculum-resource-packages/${packageId}/assets?${params}`, { method: "POST", headers: { "Content-Type": "application/octet-stream" }, body: file });
+    const params = new URLSearchParams({ assetType, fileName: file.name, mimeType: file.type || inferredMime || "application/octet-stream", sizeBytes:String(file.size) });
+    const path = `/api/curriculum-resource-packages/${packageId}/assets?${params}`;
+    const upload = () => new Promise<{item:RemoteCurriculumResourceAsset}>((resolve,reject) => {
+      const xhr = new XMLHttpRequest();
+      xhr.open('POST',`${baseUrl}${path}`); xhr.withCredentials = true;
+      xhr.setRequestHeader('Content-Type','application/x-tongji-resource-stream');
+      xhr.upload.onprogress = (event) => { if(event.lengthComputable) onProgress?.(Math.round(event.loaded/event.total*100)); };
+      xhr.onerror = () => reject(new RemoteApiError(0,'RESOURCE_NETWORK_ERROR',`${file.name}：网络中断，已上传文件保留，请继续上传`));
+      xhr.onload = () => {
+        let payload:Record<string,any> = {};
+        try { payload = JSON.parse(xhr.responseText); } catch { /* The proxy can return a non-JSON error page. */ }
+        if(xhr.status >= 200 && xhr.status < 300) resolve(payload as {item:RemoteCurriculumResourceAsset});
+        else reject(new RemoteApiError(xhr.status,payload.code || 'RESOURCE_UPLOAD_FAILED',`${file.name}：${xhr.status === 413 ? '文件超过500MB上限' : payload.message || '上传失败，请重试当前文件'}`));
+      };
+      xhr.send(file);
+    });
+    try { return await upload(); } catch(reason) {
+      if(reason instanceof RemoteApiError && reason.status === 401) {
+        const refreshed = await fetch(`${baseUrl}/api/auth/refresh`,{method:'POST',credentials:'include'});
+        if(refreshed.ok) return upload();
+      }
+      throw reason;
+    }
   },
+  updateCurriculumResourcePackage: (id:string,value:{title?:string;activityOrigin?:string;category?:ResourceCategory | null;applicableGrades?:string[];themes?:string[]}) => request<{item:RemoteCurriculumResourcePackage}>(`/api/curriculum-resource-packages/${id}`,{method:'PATCH',body:body(value)}),
+  deleteCurriculumResourcePackage: (id:string) => request<void>(`/api/curriculum-resource-packages/${id}`,{method:'DELETE'}),
+  previewCurriculumResourceAsset: (id:string) => request<ResourcePreview>(`/api/curriculum-resource-assets/${id}/preview`),
+  resourceCategoryAnalysis: (category:ResourceCategory) => request<{item:RemoteResourceCategoryAnalysis | null}>(`/api/resource-categories/${category}/analysis`),
+  analyzeResourceCategory: (category:ResourceCategory) => request<{item:RemoteResourceCategoryAnalysis}>(`/api/resource-categories/${category}/analyze`,{method:'POST'}),
   submitCurriculumResourcePackage: (id: string) => request<{ item: RemoteCurriculumResourcePackage }>(`/api/curriculum-resource-packages/${id}/submit`, { method: "POST" }),
   reviewCurriculumResourcePackage: (id: string, value: { decision: "active" | "rejected"; comment?: string }) => request<{ item: RemoteCurriculumResourcePackage }>(`/api/curriculum-resource-packages/${id}/review`, { method: "PATCH", body: body(value) }),
   downloadCurriculumResourceAsset: (id: string, fileName: string) => download(`/api/curriculum-resource-assets/${id}/download`, fileName),
