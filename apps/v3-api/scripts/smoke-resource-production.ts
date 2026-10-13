@@ -5,6 +5,7 @@ import { Document, Packer, Paragraph } from 'docx';
 import { config, internalEmail } from '../src/config.js';
 import { mediaStorage } from '../src/runtime/media-storage.js';
 import { serviceClient } from '../src/supabase.js';
+import { postStream } from '../src/runtime/stream-upload.js';
 
 if (config.isLocalLite || !process.argv.includes('--authorized-production-fixtures')) {
   throw new Error('仅在已授权生产验收时传入 --authorized-production-fixtures');
@@ -24,6 +25,13 @@ async function call(path:string, init:RequestInit={}, expected=200) {
 const json = (value:unknown,method='POST') => ({method,headers:{'Content-Type':'application/json'},body:JSON.stringify(value)});
 async function upload(id:string,type:string,name:string,mime:string,body:Buffer | Readable,size:number) {
   const query = new URLSearchParams({assetType:type,fileName:name,mimeType:mime,sizeBytes:String(size)});
+  if(body instanceof Readable) {
+    const response=await postStream(new URL(`${base}/api/curriculum-resource-packages/${id}/assets?${query}`),body,{
+      Cookie:cookie,'Content-Type':'application/x-tongji-resource-stream','Content-Length':String(size),
+    });
+    assert.equal(response.statusCode,201,response.body);
+    return JSON.parse(response.body);
+  }
   return call(`/api/curriculum-resource-packages/${id}/assets?${query}`,{
     method:'POST',headers:{'Content-Type':'application/x-tongji-resource-stream'},body:body as unknown as BodyInit,
     ...(body instanceof Readable ? {duplex:'half'} : {}),
@@ -53,7 +61,9 @@ try {
   assert.equal(login.status,200);
   cookie = login.headers.getSetCookie().map((value) => value.split(';',1)[0]).join('; ');
   const prompts = await call('/api/ai-prompts');
-  assert.ok(prompts.items.some((item:any) => item.key === 'resource_category_analysis'));
+  const categoryPrompt=prompts.items.find((item:any) => item.key === 'resource_category_analysis');
+  assert.ok(categoryPrompt);
+  const customized=await call('/api/ai-prompts/resource_category_analysis',json({systemPrompt:categoryPrompt.defaultPrompt,expectedRevision:0,changeNote:'隔离验收：验证自定义提示词生效'},'PUT'));
   const created = await call('/api/curriculum-resource-packages',json({title:marker,category:'life',activityOrigin:'幼儿发现瓶子可以装物品，讨论生活中的材料如何分类整理。',applicableGrades:['middle'],themes:['瓶子探究']}),201);
   const id = created.item.id;
   const document = await Packer.toBuffer(new Document({sections:[{children:[
@@ -93,6 +103,7 @@ try {
   }
   assert.equal(analysis.item?.id,start.item.id);
   assert.equal(analysis.item?.status,'completed',analysis.item?.error_message);
+  assert.equal(analysis.item.prompt_version,customized.item.effectiveVersion);
   assert.notEqual(analysis.item.provider,'ScenarioAIProvider','生产不得用模拟结果通过验收');
   assert.ok(analysis.item.result.directionalContent.length);
   assert.ok(analysis.item.result.indicatorFocus.length);
@@ -105,7 +116,7 @@ try {
     const {data:assets,error} = await schema.from('curriculum_resource_assets').select('storage_path').eq('tenant_id',tenantId);
     if(error) throw new Error(`验收目录清理失败: ${error.message}`);
     for(const asset of assets ?? []) {const {error:storageError} = await mediaStorage.remove(asset.storage_path);if(storageError) throw new Error(`验收文件清理失败: ${storageError.message}`);}
-    for(const table of ['resource_category_analyses','professional_memories','curriculum_resource_packages','ai_model_configs','audit_events','profiles']) {
+    for(const table of ['resource_category_analyses','professional_memories','curriculum_resource_packages','ai_prompt_configs','ai_model_configs','audit_events','profiles']) {
       const {error:cleanupError} = await schema.from(table).delete().eq('tenant_id',tenantId);
       if(cleanupError) throw new Error(`验收数据${table}清理失败: ${cleanupError.message}`);
     }

@@ -672,7 +672,7 @@ export async function evolutionRoutes(app: FastifyInstance) {
     const path = `${auth.tenantId}/resources/${id}/${randomUUID()}.${extension}`;
     const source = Buffer.isBuffer(request.body) ? Readable.from([request.body]) : request.body as Readable;
     const guarded = boundedUploadStream(source, sizeBytes);
-    const { error: uploadError } = await mediaStorage.uploadStream(path, guarded, { contentType: query.mimeType, cacheControl: '3600', upsert: false });
+    const { error: uploadError } = await mediaStorage.uploadStream(path, guarded, { contentType: query.mimeType, cacheControl: '3600', upsert: false, sizeBytes });
     if (uploadError) {
       guarded.destroy(); source.destroy();
       await mediaStorage.remove(path);

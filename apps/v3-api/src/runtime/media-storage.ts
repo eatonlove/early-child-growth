@@ -6,6 +6,7 @@ import { mkdir, readFile, readdir, stat, unlink, writeFile } from "node:fs/promi
 import { dirname, extname, resolve, sep } from "node:path";
 import { config } from "../config.js";
 import { publicSupabaseUrl, serviceClient } from "../supabase.js";
+import { postStream } from './stream-upload.js';
 
 interface StorageError {
   message: string;
@@ -15,6 +16,7 @@ interface UploadOptions {
   contentType?: string;
   cacheControl?: string;
   upsert?: boolean;
+  sizeBytes?: number;
 }
 
 interface MediaStorage {
@@ -50,8 +52,17 @@ class SupabaseMediaStorage implements MediaStorage {
   }
 
   async uploadStream(path: string, body: Readable, options: UploadOptions) {
-    const { error } = await this.bucket().upload(path, body, { ...options, duplex: 'half' });
-    return { error };
+    try {
+      const url = new URL(`/storage/v1/object/${config.SUPABASE_STORAGE_BUCKET}/${path.split('/').map(encodeURIComponent).join('/')}`,config.SUPABASE_INTERNAL_URL ?? config.SUPABASE_URL);
+      const result = await postStream(url,body,{
+        Authorization:`Bearer ${config.SUPABASE_SERVICE_ROLE_KEY}`,apikey:config.SUPABASE_SERVICE_ROLE_KEY,
+        'Content-Type':options.contentType || 'application/octet-stream','Cache-Control':`max-age=${options.cacheControl || '3600'}`,
+        'x-upsert':String(options.upsert || false),...(options.sizeBytes !== undefined && {'Content-Length':String(options.sizeBytes)}),
+      });
+      if(result.statusCode >= 200 && result.statusCode < 300) return {error:null};
+      const payload = JSON.parse(result.body);
+      return {error:{message:payload.message || payload.error || '课程资源存储失败'}};
+    } catch(reason) {return {error:{message:reason instanceof Error ? reason.message : '课程资源上传失败'}};}
   }
 
   async openReadStream(path: string) {

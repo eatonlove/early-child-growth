@@ -1,0 +1,7 @@
+services:
+  api:
+    # Opt-in one-off verification: same HTTPS proxy, without public-network hairpin bandwidth.
+    extra_hosts:
+      - "tongji.meidaquan.com:host-gateway"
+    mem_limit: 256m
+    cpus: 0.25

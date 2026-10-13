@@ -122,6 +122,14 @@ systemctl reload nginx
 
 分类分析只在点击“分析当前分类”或“重新分析”后执行，不在上传、分类或打开页面时自动调用模型。新增`resource_category_analysis`提示词可由教研员编辑，沿用园所统一模型配置。分析只汇总已入库课程，不形成幼儿评价或新国家指标。
 
+经明确授权的生产写操作验收使用独立临时容器，禁止在API业务容器内同时运行500MB上传客户端。以下命令建立隔离验收园所和临时教研身份，不创建教师账号；正常结束自动清理测试资料、身份和文件。HTTPS域名在测试容器内解析至宿主网关，仍经过真实TLS和两层Nginx，不消耗公网回环带宽。
+
+```bash
+docker compose --env-file .env -f docker-compose.yml -f acceptance.compose.yml run --rm --no-deps --entrypoint node api dist/scripts/smoke-resource-production.js https://tongji.meidaquan.com --authorized-production-fixtures
+```
+
+测试被外部强制终止时必须按本次验收园所编号定向清理，不能删除真实客户园所或使用宽泛的历史数据删除命令。
+
 Certbot 使用 Webroot 签发时，将 `certbot-nginx-reload.sh` 安装到 `/etc/letsencrypt/renewal-hooks/deploy/`，并启用 `certbot-renew.timer`，确保证书续期成功后平滑重载 Nginx。
 
 ## 6. 上线验证
