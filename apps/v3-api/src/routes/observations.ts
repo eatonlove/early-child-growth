@@ -193,17 +193,18 @@ export async function observationRoutes(app: FastifyInstance) {
       throw new ApiError(500,'OBSERVATION_DELETE_FAILED','观察删除失败，请稍后重试');
     }
     const pendingPaths:string[]=[];
+    const blockedPaths:string[]=[];
     for(const path of data.storagePaths as string[]) {
       const prefix:string|undefined=data.storagePrefixes[path];
       const basename=prefix ? path.slice(prefix.length) : '';
-      if(!prefix?.startsWith(`${auth.tenantId}/${visible.classroom_id}/`) || !path.startsWith(prefix) || !basename || basename==='.' || basename==='..' || basename.includes('/')) {pendingPaths.push(path);continue;}
+      if(!prefix?.startsWith(`${auth.tenantId}/${visible.classroom_id}/`) || !path.startsWith(prefix) || !basename || basename==='.' || basename==='..' || basename.includes('/')) {blockedPaths.push(path);continue;}
       try {const {error:removeError}=await mediaStorage.remove(path);if(removeError) pendingPaths.push(path);}
       catch {pendingPaths.push(path);}
     }
-    const {error:auditError}=await schema.from('audit_events').update({detail:{classroomId:visible.classroom_id,pendingStoragePaths:pendingPaths,attachmentCount:data.storagePaths.length}})
+    const {error:auditError}=await schema.from('audit_events').update({detail:{classroomId:visible.classroom_id,pendingStoragePaths:pendingPaths,blockedStoragePaths:blockedPaths,attachmentCount:data.storagePaths.length}})
       .eq('id',data.auditId).eq('tenant_id',auth.tenantId);
-    if(auditError || pendingPaths.length) request.log.warn({auditId:data.auditId,pendingAttachments:pendingPaths.length,auditCode:auditError?.code},'observation deleted; attachment cleanup requires attention');
-    return {ok:true,warning:pendingPaths.length ? '观察记录已删除；部分附件待清理，已记录待办供管理员处理' : null};
+    if(auditError || pendingPaths.length || blockedPaths.length) request.log.warn({auditId:data.auditId,pendingAttachments:pendingPaths.length,blockedAttachments:blockedPaths.length,auditCode:auditError?.code},'observation deleted; attachment cleanup requires attention');
+    return {ok:true,warning:blockedPaths.length ? '观察记录已删除；部分附件路径异常，已跳过并记录，请管理员核验' : pendingPaths.length ? '观察记录已删除；部分附件待清理，已记录待办供管理员处理' : null};
   });
 
   app.get("/api/analysis-jobs/:id", async (request) => {
