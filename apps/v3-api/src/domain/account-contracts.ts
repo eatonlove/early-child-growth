@@ -10,9 +10,12 @@ export const accountPasswordSchema = z.string()
 const classroomIds = z.array(z.string().uuid('班级编号无效')).max(20,'最多分配20个班级')
   .refine(value => new Set(value).size === value.length,'不能重复选择同一班级');
 
+export const accountDisplayNameSchema = z.string().trim().min(1,'请填写显示姓名').max(40,'显示姓名不能超过40字');
+export const accountDisplayNameInput = z.object({displayName:accountDisplayNameSchema}).strict();
+
 export const createAccountInput = z.object({
   username:z.string().trim().toLowerCase().regex(/^[a-z0-9._-]{3,40}$/,'账号需为3至40位字母、数字或 . _ -'),
-  displayName:z.string().trim().min(1,'请填写显示姓名').max(40,'显示姓名不能超过40字'),
+  displayName:accountDisplayNameSchema,
   role:z.enum(['teacher','researcher']),
   password:accountPasswordSchema,
   classroomIds:classroomIds.default([]),

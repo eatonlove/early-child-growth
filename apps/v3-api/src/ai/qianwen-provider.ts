@@ -47,12 +47,13 @@ export interface QianwenProviderOptions {
   visionModel: string;
   timeoutMs: number;
   visionTimeoutMs?: number;
+  observationTimeoutMs?: number;
   webSearchEnabled?: boolean;
   supportResearchTimeoutMs?:number;
 }
 
 const DOCUMENT_EXTRACTION_PROMPT_VERSION = "observation-document-extraction.qwen.v2";
-const OBSERVATION_PROMPT_VERSION = "observation-analysis.qwen.v8";
+const OBSERVATION_PROMPT_VERSION = "observation-analysis.qwen.v9";
 const ANALYSIS_REVISION_PROMPT_VERSION = "observation-analysis-revision.qwen.v1";
 const REPORT_PROMPT_VERSION = "period-report.qwen.v2";
 const REPORT_REVISION_PROMPT_VERSION = "period-report-revision.qwen.v1";
@@ -93,7 +94,8 @@ const observationSystemPrompt = `你是幼儿园“观察·识别·应答·拓�
 15. externalSupportReferences只能使用输入approvedExternalSupportReferences中已有的标题、网址、来源和建议，不得编造链接。外部资料只用于启发活动、材料和经验支持，不得作为该幼儿发展判断证据。
 
 【安全与格式】
-16. 不得补写未发生的行为、原话、次数、时长或因果关系；不得输出达标/不达标、优秀/落后、正常/异常、聪明/能力差等标签。输出3个responsePlans、1-2个observationCut和2-5个observationFocus，并完全符合JSON Schema，不要输出Markdown。`;
+16. domainExperiences中每项missingEvidence必须说明本次证据边界；已有领域线索也须提醒不能据单次观察判断稳定能力，不得留空。每套应答的suggestedQuestions不得包含空白项，participationMode必须写明教师如何参与且不少于2字。
+17. 不得补写未发生的行为、原话、次数、时长或因果关系；不得输出达标/不达标、优秀/落后、正常/异常、聪明/能力差等标签。输出3个responsePlans、1-2个observationCut和2-5个observationFocus，并完全符合JSON Schema，不要输出Markdown。`;
 
 const documentExtractionSystemPrompt = `你是幼儿园观察记录表字段提取助手。你只负责从教师上传的文档或图片中提取已有内容，不分析幼儿发展，不补写事实。
 优先匹配输入提供的当前班级幼儿姓名；重名、不确定姓名和日期必须降低fieldConfidence并加入warnings。幼儿特征只能提取本次情境描述，不得生成性格标签。若表格明确勾选或写明“材料与工具、认知与经验、交往与规则”（兼容旧表“交往与经验”），分别映射为materials_tools、cognition_experience、social_experience；未明确出现时observationFocusCategory必须为null。没有找到的其他文本字段输出空字符串，不得猜测。warnings必须用简短中文说明教师需要校对的内容，不得输出英文字段名、枚举值、内部编号或置信度百分比。正常的中文日期格式无须作为警告。输出必须完全符合JSON Schema，不要输出Markdown。`;
@@ -653,6 +655,7 @@ export class QianwenAIProvider implements AIAnalysisProvider {
 
   async analyzeObservation(input: ObservationAnalysisInput): Promise<AIGeneration<AnalysisResult>> {
     const startedAt=Date.now();
+    const outputRepairFields = new Set<string>();
     const prompt = configuredPrompt(input, "observation_analysis");
     const cards = rankKnowledgeCards(input.observation, input.knowledge, 12);
     const research=await this.researchSupport(input,cards);
@@ -748,7 +751,8 @@ export class QianwenAIProvider implements AIAnalysisProvider {
       schemaName: "tongji_observation_analysis",
       jsonSchema: analysisJsonSchema,
       validator: analysisResultSchema,
-      timeoutMs: input.media.length ? this.options.visionTimeoutMs : undefined,
+      timeoutMs: input.media.length ? this.options.visionTimeoutMs : this.options.observationTimeoutMs,
+      onOutputRepair: (fields: string[]) => fields.forEach(field => outputRepairFields.add(field)),
     } satisfies Parameters<QwenClient["structuredCompletion"]>[0];
     let result = await this.client.structuredCompletion<AnalysisResult>(request);
     let validated: AnalysisResult;
@@ -785,6 +789,10 @@ export class QianwenAIProvider implements AIAnalysisProvider {
         ...validated.warnings,
       ])].slice(0, 8);
     }
+    if (outputRepairFields.size) validated.warnings = [...new Set([
+      '部分空白证据边界说明或应答细节已按保守规则补充；补充内容不作为幼儿事实证据，请教师重点核对。',
+      ...validated.warnings,
+    ])].slice(0, 8);
     validated.externalSupportReferences = externalSupportReferences;
     assertDistinctAnalysis(validated);
     flagPeerSimilarity(validated, input);
@@ -794,7 +802,7 @@ export class QianwenAIProvider implements AIAnalysisProvider {
       model: input.prompt?.model || (input.media.length ? this.options.visionModel : this.options.textModel),
       promptVersion: prompt.version,
       mediaAnalyzed: input.media.length > 0,
-      diagnostics:{totalMs:Date.now()-startedAt,supportResearchMs:researchFinishedAt-startedAt,supportCacheHit:research.cacheHit,generationMs:Date.now()-researchFinishedAt,groundingRetry},
+      diagnostics:{totalMs:Date.now()-startedAt,supportResearchMs:researchFinishedAt-startedAt,supportCacheHit:research.cacheHit,generationMs:Date.now()-researchFinishedAt,groundingRetry,outputRepairFields:[...outputRepairFields]},
       notice: input.media.length
         ? "千问AI已按逐幼儿“观察·识别·应答·拓展”标准分析教师文字、年龄段知识卡和已授权媒体画面；视频音轨未处理。结果须由教师审核。"
         : "千问AI已按逐幼儿“观察·识别·应答·拓展”标准分析教师文字和年龄段知识卡；未发送媒体画面。结果须由教师审核。",

@@ -205,6 +205,7 @@ export const remoteApi = {
   observation: (id: string) =>
     request<{
       item: RemoteObservation;
+      canDelete: boolean;
       evidence: RemoteEvidence[];
       analyses: RemoteAnalysis[];
       subjects: RemoteObservationSubject[];
@@ -212,6 +213,7 @@ export const remoteApi = {
       observers: RemoteObserver[];
       analysisJob: RemoteAnalysisJob | null;
     }>(`/api/observations/${id}`),
+  deleteObservation: (id:string) => request<{ok:true;warning:string|null}>(`/api/observations/${id}`,{method:'DELETE'}),
   createObservation: (value: Record<string, unknown>) =>
     request<{ item: RemoteObservation }>("/api/observations", {
       method: "POST",
@@ -310,6 +312,8 @@ export const remoteApi = {
     }>(`/api/observation-templates${params.size ? `?${params}` : ""}`);
   },
   accounts: () => request<{ items: RemoteAccount[] }>("/api/accounts"),
+  updateAccountDisplayName: (userId:string,displayName:string) =>
+    request<{item:RemoteAccount}>(`/api/accounts/${userId}/display-name`,{method:'PATCH',body:body({displayName})}),
   createAccount: (value: Record<string, unknown>) =>
     request<{ item: RemoteAccount }>("/api/accounts", {
       method: "POST",

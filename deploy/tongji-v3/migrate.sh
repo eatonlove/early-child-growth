@@ -220,6 +220,17 @@ else
   echo "教师班级范围原子更新函数已就绪。"
 fi
 
+account_name_and_deletion_ready="$(docker exec "$DB_CONTAINER" psql -U postgres -d postgres -Atc \
+  "select to_regprocedure('tongji_v3.set_account_display_name(uuid,uuid,uuid,text)') is not null
+      and to_regprocedure('tongji_v3.delete_observation(uuid,uuid,uuid)') is not null;")"
+if [ "$account_name_and_deletion_ready" != "t" ]; then
+  docker exec -i "$DB_CONTAINER" psql -U postgres -d postgres \
+    -v ON_ERROR_STOP=1 --single-transaction \
+    < "$ROOT_DIR/apps/v3-api/supabase/migrations/20261014133239_account_display_name_and_observation_deletion.sql"
+else
+  echo "账号显示名称与观察安全删除函数已就绪。"
+fi
+
 docker exec -i "$DB_CONTAINER" psql -U postgres -d postgres \
   -v ON_ERROR_STOP=1 --single-transaction \
   < "$ROOT_DIR/apps/v3-api/supabase/migrations/20260828084501_reload_ai_prompt_config_schema.sql"

@@ -40,6 +40,7 @@
 | PATCH | `/accounts/:id/status` | 教研员 | 停用或恢复账号 |
 | PATCH | `/accounts/:id/password` | 教研员 | 重置账号密码 |
 | PATCH | `/accounts/:id/classrooms` | 教研员 | 原子替换本园教师的班级范围；教研员固定为全园 |
+| PATCH | `/accounts/:id/display-name` | 教研员 | `{displayName}`，1至40字，原子修改本园显示名称并记录审计；返回完整账号及班级范围，不改变登录账号、角色、密码或历史观察者快照 |
 
 登录请求：
 
@@ -94,11 +95,16 @@
 
 `POST /observations`
 
+`GET /observations/:id` 返回 `canDelete`，标明当前账号是否为教研员或记录创建者；实际删除还会验证班级访问权限和引用状态。
+
+`DELETE /observations/:id`：教师只能删除本人创建且仍负责的活动班级观察，教研员可删除本园观察。排队/执行中的AI任务、已有周期报告或课程引用返回 `409` 并说明原因。观察、参与幼儿关联、分析、应答及派生经验按事务删除，模板导入原文件保留并回到待校对。删除后清理该观察的私有附件，返回 `{ok:true,warning:null|string}`；清理失败路径记录于删除审计，页面明确提示，不把已成功删除伪装成失败。跨园/无权访问返回404，非创建教师返回403。
+
+
 ```json
 {
   "classroomId": "uuid",
-  "childId": "uuid",
-  "title": "会转弯的桥",
+  "observerName": "观察教师署名",
+  "subjects": [{"childId": "uuid", "role": "primary", "contextualFeature": "", "evidenceAnchors": []}],
   "occurredAt": "2026-08-21T09:30:00+08:00",
   "durationMinutes": 25,
   "scene": "建构区",
@@ -107,7 +113,6 @@
   "observationFocusCategory": "materials_tools",
   "observationFocus": ["材料选择与使用", "问题解决"],
   "teacherObservation": "客观白描，至少10字",
-  "childQuote": "这块更稳。",
   "teacherIdentification": "教师的初步专业识别",
   "teacherResponse": {
     "category": "material",
@@ -122,6 +127,15 @@
 `observationFocusCategory` 为教师必选的单一观察聚焦：`materials_tools`（材料与工具）、`cognition_experience`（认知与经验）、`social_experience`（交往与规则）。枚举值不变，模板解析兼容旧表述“交往与经验”。历史记录可以为空，不做追溯性猜测。
 
 `teacherResponse.category`：`experience | material | activity`。
+
+提交校验（网页填写与导入校对共用真实 `POST /observations` 契约）：
+
+- `subjects`：1–30名且不能重复，必须且只能有1名 `primary`；兼容仅传 `childId` 的单人旧请求。
+- `observerName`：1–80字；`scene`：1–80字；`theme`：1–120字。
+- `durationMinutes`：选填；填写时为1–240的整数。留空必须省略该字段，不能转换为0。
+- `teacherObservation`：10–12000字；`teacherIdentification`：5–6000字；`teacherResponse.strategy`：2–2000字；`teacherResponse.nextObservationFocus`：2–1000字。字数在去掉首尾空白后校验。
+- `observationFocus`：最多12项，每项1–80字；`groupContext`：最多2000字；幼儿情境特征最多500字、每条媒体定位最多160字且每名幼儿最多20条。
+- 校验失败返回422 / `VALIDATION_ERROR`，`fields`包含具体字段及可读原因。页面须在仍打开的草稿弹窗中显示这些原因并保留已填内容。服务日志仅记字段路径与校验错误码，不记录教师原稿或幼儿内容。
 
 ### 4.2 媒体证据
 
@@ -161,6 +175,14 @@
 `analysis_runs.input_snapshot` 保留 `mediaAnalyzed`、`mediaExclusionReason` 与可选 `diagnostics`（总耗时、公开资料检索耗时、缓存命中、生成耗时和安全校验重试标记）。教师页面明确显示本版是否读取媒体，不能把“已上传”当成“已分析”。后台日志记录各阶段耗时，不记录密钥、签名URL或幼儿原始内容。
 
 公开支持资料检索是辅助拓展，不替代《指南》知识卡：检索与候选摘要共同使用30秒总截止时间，超时返回空的补充来源并继续核心分析；同班、同观察、同模型和知识主题的公开支持资料最多缓存10分钟，最多32项，避免逐幼儿重复检索。个体事实、历史与应答分析仍逐幼儿独立执行，不缓存或复制其他幼儿结论。未改变用户选择的模型。
+
+观察分析输出兼容与故障处理（2026-10-14）：
+
+- 仅对空白的领域证据边界说明、未来应答中的教师提问与参与方式执行保守补全；说明当前证据仅支持情境内线索、仍需复察，或保留教师观察和最小必要支持。原始事实、幼儿原话、经验判断、指标和证据ID不会由该补全器生成。
+- 空白提问项会移除；仍有有效提问时保持其内容，全部为空时补充中性的未来开放问题。错误字段类型和缺失判断标志仍须通过业务校验或报错，不被静默改写。
+- 接受过保守补全的草稿在 `warnings` 提示教师重点核对，`diagnostics.outputRepairFields` 保存字段路径供审计；不记录原始文本。
+- `QWEN_OBSERVATION_TIMEOUT_MS` 为文字观察单次生成独立超时，默认240000毫秒，上限300000毫秒；图片/视频沿用 `QWEN_VISION_TIMEOUT_MS`。结构纠错至多一次，超时不自动重复昂贵请求。
+- 未通过最终输出校验的任务返回 `AI_ANALYSIS_OUTPUT_INVALID`，明确说明错误来自AI草稿；超时返回 `AI_ANALYSIS_TIMEOUT`，不把文字任务误报为图片/视频问题。原始教师观察保留。
 
 固定输出：
 

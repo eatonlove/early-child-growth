@@ -1,5 +1,63 @@
 import { expect, test, type Page } from "@playwright/test";
 
+test('observation deletion is confirmed, errors stay visible and a successful delete refreshes the list',async({page})=>{
+  await mockApi(page,'teacher',true);
+  let exists=true,attempts=0;
+  await page.route('**/api/observations',route=>route.fulfill({json:{items:exists?[observation]:[]}}));
+  await page.route(`**/api/observations/${observation.id}`,route=>{
+    if(route.request().method()!=='DELETE') return route.fulfill({json:{item:observation,canDelete:true,evidence:[],analyses:[],subjects:[],responsePlans:[],observers:[],analysisJob:null}});
+    attempts++;
+    if(attempts===1) return route.fulfill({status:409,json:{code:'OBSERVATION_USED_IN_REPORT',message:'该观察已被周期报告引用，请先删除相关报告后重试'}});
+    exists=false;return route.fulfill({json:{ok:true,warning:null}});
+  });
+  await page.goto('/observations');
+  await page.getByRole('button',{name:'删除观察',exact:true}).click();
+  let dialog=page.getByRole('dialog',{name:'删除观察记录'});
+  await dialog.getByRole('button',{name:'取消',exact:true}).click();
+  expect(attempts).toBe(0);
+  await page.getByRole('button',{name:'删除观察',exact:true}).click();
+  dialog=page.getByRole('dialog',{name:'删除观察记录'});
+  await dialog.getByRole('button',{name:'确认删除观察',exact:true}).click();
+  await expect(dialog.getByRole('alert')).toContainText('周期报告引用');
+  await expect(page.getByRole('heading',{name:observation.title})).toBeVisible();
+  await dialog.getByRole('button',{name:'确认删除观察',exact:true}).click();
+  await expect(page.getByRole('dialog')).toHaveCount(0);
+  await expect(page.getByText('还没有观察记录',{exact:true})).toBeVisible();
+  await page.reload();
+  await expect(page.getByText('还没有观察记录',{exact:true})).toBeVisible();
+  expect(attempts).toBe(2);
+});
+
+test('observation deletion is disabled for non-creators and while AI analysis runs',async({page})=>{
+  await mockApi(page,'teacher',true,false,true);
+  await page.goto('/observations');
+  await expect(page.getByRole('button',{name:'删除观察',exact:true})).toBeDisabled();
+  await page.route(`**/api/observations/${observation.id}`,route=>route.fulfill({json:{item:observation,canDelete:false,evidence:[],analyses:[],subjects:[],responsePlans:[],observers:[],analysisJob:null}}));
+  await page.reload();
+  await expect(page.getByRole('button',{name:'删除观察',exact:true})).toBeDisabled();
+});
+
+test('growth cards have real horizontal and vertical spacing on desktop and phone',async({page},testInfo)=>{
+  await mockApi(page,'teacher');
+  await page.setViewportSize({width:1440,height:1000});
+  await page.goto('/growth');
+  await expect(page.locator('.growth-compact-card')).toHaveCount(3);
+  const metrics=await page.locator('.growth-page .metrics-row').boundingBox();
+  const theme=await page.locator('.growth-page > .panel').boundingBox();
+  const interests=await page.locator('.growth-interest-grid').boundingBox();
+  const cards=await page.locator('.growth-card-grid').boundingBox();
+  expect(theme!.y-metrics!.y-metrics!.height).toBeGreaterThanOrEqual(20);
+  expect(interests!.y-theme!.y-theme!.height).toBeGreaterThanOrEqual(20);
+  expect(cards!.y-interests!.y-interests!.height).toBeGreaterThanOrEqual(20);
+  await page.screenshot({path:testInfo.outputPath('growth-desktop.png'),fullPage:true});
+  await page.setViewportSize({width:390,height:844});
+  const first=await page.locator('.growth-compact-card').nth(0).boundingBox();
+  const second=await page.locator('.growth-compact-card').nth(1).boundingBox();
+  expect(second!.y-first!.y-first!.height).toBeGreaterThanOrEqual(16);
+  expect(await page.evaluate(()=>document.documentElement.scrollWidth<=window.innerWidth+1)).toBe(true);
+  await page.screenshot({path:testInfo.outputPath('growth-phone.png'),fullPage:true});
+});
+
 test('import ledger opens an observation outside the current date filter and focuses its details',async({page})=>{
   await mockApi(page,'teacher',true);
   const archivedClass={...classroom,id:'32323232-3232-4232-8232-323232323232',academic_year:'2025-2026',status:'archived',name:'历史中班'};
@@ -62,10 +120,10 @@ test('failed evidence upload leaves a saved observation and retries only the med
   await page.getByRole('button',{name:'网页直接填写'}).click();
   const dialog=page.getByRole('dialog');
   await dialog.getByLabel('游戏主题',{exact:true}).fill('桥梁搭建');
-  await dialog.getByLabel('客观白描（含关键幼儿原话）').fill('幼儿先移动桥墩，再放上积木并再次测试桥面的稳定情况。');
-  await dialog.getByLabel('教师识别',{exact:true}).fill('幼儿正在比较不同支撑位置。');
-  await dialog.getByLabel('教师原始应答',{exact:true}).fill('提供不同长度积木。');
-  await dialog.getByLabel('下一次观察重点',{exact:true}).fill('观察是否主动比较位置。');
+  await dialog.getByLabel(/^客观白描/).fill('幼儿先移动桥墩，再放上积木并再次测试桥面的稳定情况。');
+  await dialog.getByLabel(/^教师识别/).fill('幼儿正在比较不同支撑位置。');
+  await dialog.getByLabel(/^教师原始应答/).fill('提供不同长度积木。');
+  await dialog.getByLabel(/^下一次观察重点/).fill('观察是否主动比较位置。');
   await dialog.locator('.evo-child-select').getByRole('checkbox').check();
   await dialog.locator('input[type="file"]').setInputFiles({name:'证据.pdf',mimeType:'application/pdf',buffer:Buffer.from('%PDF-1.4')});
   await dialog.getByRole('button',{name:'保存教师观察'}).click();
@@ -269,7 +327,7 @@ async function mockApi(page: Page, role: "teacher" | "researcher", withAnalysis 
       : path === "/api/classrooms" ? { items: [classroom] }
       : path === "/api/children" ? { items: [child] }
       : path === "/api/observations" ? { items: withAnalysis ? [observation] : [] }
-      : path === `/api/observations/${observation.id}` ? { item: observation, evidence: [], analyses: [analysis], subjects: [{ id: "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb", child_id: child.id, role: "primary", contextual_feature: "主动调整桥墩", display_name: child.display_name }], responsePlans: [], observers: [], analysisJob: withActiveAnalysisJob ? analysisJob : null }
+      : path === `/api/observations/${observation.id}` ? { item: observation, canDelete:true, evidence: [], analyses: [analysis], subjects: [{ id: "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb", child_id: child.id, role: "primary", contextual_feature: "主动调整桥墩", display_name: child.display_name }], responsePlans: [], observers: [], analysisJob: withActiveAnalysisJob ? analysisJob : null }
       : path === `/api/analysis-jobs/${analysisJob.id}` ? { item: analysisJob }
       : path === "/api/observers" ? { items: [{ userId: "teacher-id", displayName: "陈老师", role: "teacher" }] }
       : path === "/api/observation-imports" && method === "POST" ? { item: { ...observationImport, status: "pending_upload" } }

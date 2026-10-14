@@ -85,6 +85,41 @@ const response = {
 };
 
 describe("QianwenAIProvider", () => {
+  it('recovers the production blank-field failure in one model call and exposes the repair for teacher review', async () => {
+    const draft = structuredClone(expandedResponse);
+    draft.domainExperiences.push({...draft.domainExperiences[0]!, domain: '社会', noJudgment: true, evidence: '', evidenceIds: [], indicatorCodes: []});
+    draft.domainExperiences[0]!.missingEvidence = '';
+    draft.domainExperiences[1]!.missingEvidence = '  ';
+    draft.responsePlans[0]!.experienceSupport.suggestedQuestions = [''];
+    draft.responsePlans[0]!.experienceSupport.participationMode = '';
+    const facts = structuredClone(draft.facts);
+    const fetcher = vi.fn(async () => new Response(JSON.stringify({choices: [{message: {content: JSON.stringify(draft)}}]})));
+    const provider = new QianwenAIProvider({apiKey: 'sk-test-only', baseUrl: 'https://dashscope.aliyuncs.com/compatible-mode/v1', textModel: 'qwen3.7-plus', visionModel: 'qwen3.7-plus', timeoutMs: 5000, webSearchEnabled: false}, fetcher);
+    const result = await provider.analyzeObservation({
+      observation: {child_quote: '这样更稳。', teacher_observation: '幼儿将较长积木换到下层并继续搭建。', teacher_identification: '幼儿开始比较材料与稳定性的关系。', teacher_response: {category: 'material', strategy: '增加不同长度积木', nextObservationFocus: '观察主动比较'}, scene: '建构区', theme: '桥梁建构', organization_stage: 'process'},
+      child: {id: 'child-1', display_name: '虚构幼儿', birth_month: '2022-05'}, classroom: {id: 'class-1', grade: 'middle'}, knowledge: [card], evidence: [], media: [], history: [],
+    });
+    expect(fetcher).toHaveBeenCalledTimes(1);
+    expect(result.data.facts.map(({evidenceIds: _, ...fact}) => fact)).toEqual(facts.map(({evidenceIds: _, ...fact}) => fact));
+    expect(result.data.facts.flatMap(fact => fact.evidenceIds).every(id => ["teacher-observation", "child-quote"].includes(id))).toBe(true);
+    expect(result.data.warnings.join(' ')).toContain('补充内容不作为幼儿事实证据');
+    expect(result.diagnostics?.outputRepairFields).toHaveLength(4);
+  });
+
+  it('uses a separate observation timeout without repeating the request', async () => {
+    const fetcher = vi.fn(async (_url: string | URL | Request, init?: RequestInit) => new Promise<Response>((_resolve, reject) => {
+      const signal = init!.signal!;
+      if (signal.aborted) reject(signal.reason);
+      else signal.addEventListener('abort', () => reject(signal.reason), {once: true});
+    }));
+    const provider = new QianwenAIProvider({apiKey: 'sk-test-only', baseUrl: 'https://dashscope.aliyuncs.com/compatible-mode/v1', textModel: 'qwen3.7-plus', visionModel: 'qwen3.7-plus', timeoutMs: 5000, observationTimeoutMs: 15, webSearchEnabled: false}, fetcher);
+    await expect(provider.analyzeObservation({
+      observation: {teacher_observation: '幼儿将较长积木换到下层并继续搭建。', teacher_identification: '幼儿开始比较材料与稳定性的关系。', teacher_response: {category: 'material', strategy: '增加不同长度积木', nextObservationFocus: '观察主动比较'}, scene: '建构区', theme: '桥梁建构', organization_stage: 'process'},
+      child: {id: 'child-1', display_name: '虚构幼儿', birth_month: '2022-05'}, classroom: {id: 'class-1', grade: 'middle'}, knowledge: [card], evidence: [], media: [], history: [],
+    })).rejects.toThrow('千问请求超时');
+    expect(fetcher).toHaveBeenCalledTimes(1);
+  });
+
   it('bounds optional web research and reuses it for the same observation, not another class',async()=>{
     let searches=0;
     const fetcher=vi.fn(async(url:string|URL|Request,init?:RequestInit)=>{
@@ -213,7 +248,7 @@ describe("QianwenAIProvider", () => {
     expect(requestBody).toContain("video_url");
     expect(requestBody).toContain("image_url");
     expect(requestBody).not.toContain("不应发送的姓名");
-    expect(generated.promptVersion).toBe("observation-analysis.qwen.v8");
+    expect(generated.promptVersion).toBe("observation-analysis.qwen.v9");
 
     const apiRequest = JSON.parse(requestBody);
     expect(apiRequest.model).toBe("qwen3.7-flash");

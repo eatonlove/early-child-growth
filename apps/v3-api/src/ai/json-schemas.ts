@@ -1,4 +1,4 @@
-const string = (maxLength: number) => ({ type: "string", minLength: 1, maxLength });
+const string = (maxLength: number, minLength = 1) => ({ type: "string", minLength, maxLength });
 const stringArray = (maxItems: number, maxLength = 2000) => ({
   type: "array",
   items: string(maxLength),
@@ -11,15 +11,15 @@ const responsePlanJsonSchema = {
   additionalProperties: false,
   required: ["title", "rationale", "targetExperience", "activitySupport", "materialSupport", "experienceSupport", "observationCut", "observationFocus", "adjustmentCondition", "evidenceIds"],
   properties: {
-    title: string(160),
-    rationale: string(2000),
+    title: string(160, 2),
+    rationale: string(2000, 2),
     targetExperience: { ...stringArray(6), minItems: 1 },
     activitySupport: {
       type: "object", additionalProperties: false,
       required: ["activityName", "timing", "objective", "steps", "teacherRole", "suggestedDuration"],
       properties: {
-        activityName: string(160), timing: string(500), objective: string(1000),
-        steps: { ...stringArray(8), minItems: 2 }, teacherRole: string(1000), suggestedDuration: string(120),
+        activityName: string(160, 2), timing: string(500, 2), objective: string(1000, 2),
+        steps: { ...stringArray(8), minItems: 2 }, teacherRole: string(1000, 2), suggestedDuration: string(120),
       },
     },
     materialSupport: {
@@ -34,20 +34,20 @@ const responsePlanJsonSchema = {
             properties: { name: string(120), quantity: { type: "string", maxLength: 120 }, variable: { type: "string", maxLength: 300 } },
           },
         },
-        placement: string(600), purpose: string(1000), safetyNotes: stringArray(6),
+        placement: string(600, 2), purpose: string(1000, 2), safetyNotes: stringArray(6),
       },
     },
     experienceSupport: {
       type: "object", additionalProperties: false,
       required: ["suggestedQuestions", "participationMode", "demonstration", "withdrawalCondition"],
       properties: {
-        suggestedQuestions: { ...stringArray(8), minItems: 1 }, participationMode: string(1000),
-        demonstration: { type: "string", maxLength: 1000 }, withdrawalCondition: string(1000),
+        suggestedQuestions: { ...stringArray(8), minItems: 1 }, participationMode: string(1000, 2),
+        demonstration: { type: "string", maxLength: 1000 }, withdrawalCondition: string(1000, 2),
       },
     },
-    observationCut: string(1000),
+    observationCut: string(1000, 2),
     observationFocus: { ...stringArray(6), minItems: 2 },
-    adjustmentCondition: string(1000),
+    adjustmentCondition: string(1000, 2),
     evidenceIds,
   },
 };

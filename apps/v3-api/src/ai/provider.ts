@@ -240,6 +240,7 @@ export function createAIProvider(config: AIProviderConfig): AIAnalysisProvider {
     visionModel: config.visionModel,
     timeoutMs: config.timeoutMs,
     visionTimeoutMs: config.visionTimeoutMs,
+    observationTimeoutMs: config.observationTimeoutMs,
     webSearchEnabled: config.webSearchEnabled,
   });
   return new ResilientAIProvider(qianwen, scenario, config.fallbackToSimulated);

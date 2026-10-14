@@ -534,7 +534,7 @@ export interface InterestClusteringInput {
 }
 
 export interface AIGeneration<T> {
-  diagnostics?:{totalMs:number;supportResearchMs:number;supportCacheHit:boolean;generationMs:number;groundingRetry:boolean};
+  diagnostics?:{totalMs:number;supportResearchMs:number;supportCacheHit:boolean;generationMs:number;groundingRetry:boolean;outputRepairFields?:string[]};
   data: T;
   provider: "QianwenAIProvider" | "ScenarioAIProvider";
   model: string;

@@ -755,7 +755,9 @@
 .simple-response-list p { margin: 0 0 5px; }
 
 /* Growth, reports, curriculum, school memory, research and accounts */
-.growth-page .metrics-row { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+.growth-page { display: grid; gap: 24px; }
+.growth-page .growth-interest-grid,.growth-page .growth-card-grid { gap: 20px; min-width: 0; }
+.growth-page .metrics-row { grid-template-columns: repeat(3, minmax(0, 1fr)); margin-bottom: 0; }
 .growth-page .detail-stack { position: relative; gap: 16px; }
 .growth-page .detail-stack::before { content: ""; position: absolute; top: 10px; bottom: 10px; left: 18px; width: 2px; background: #dfcbb7; }
 .growth-page .detail-stack > .panel { position: relative; margin-left: 36px; }
@@ -840,6 +842,13 @@
 .accounts-page .remote-account-table article { min-height: 64px; }
 .accounts-page .remote-account-table .remote-row-actions { justify-content: flex-end; flex-wrap: wrap; }
 .accounts-page .remote-account-table .remote-row-actions .btn { white-space: nowrap; }
+.account-password-control { position: relative; min-width: 0; }
+.account-password-control input { width: 100%; padding-right: 52px !important; }
+.account-password-toggle { position: absolute; right: 5px; top: 50%; transform: translateY(-50%); display: grid; place-items: center; width: 44px; height: 44px; padding: 0; border: 0; border-radius: 10px; color: var(--tj-muted); background: transparent; cursor: pointer; }
+.account-password-toggle svg { width: 20px; height: 20px; }
+.account-password-toggle:hover { color: var(--tj-green); background: #f1f5ef; }
+.account-password-toggle:focus-visible { outline: 2px solid var(--tj-green); outline-offset: 1px; }
+.account-password-toggle:disabled { cursor: wait; opacity: .5; }
 .accounts-page .remote-form fieldset { min-width: 0; }
 .account-create-form .remote-class-checks label {
   display: inline-flex;
@@ -1072,6 +1081,8 @@
   .simple-response-list article { align-items: flex-start; flex-direction: column; }
   .simple-response-list article .btn { width: 100%; }
   .growth-page .metrics-row { grid-template-columns: 1fr; }
+  .growth-page { gap: 16px; }
+  .growth-page .growth-interest-grid,.growth-page .growth-card-grid { gap: 16px; }
   .growth-filters { align-items: stretch; flex-direction: column; width: 100%; }
   .growth-filters label { min-width: 0; }
   .reports-page .report-layout,

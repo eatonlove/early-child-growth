@@ -157,7 +157,7 @@ function BadgeMark() {
 }
 
 function RemoteShell() {
-  const { user, logout } = useRemoteAuth();
+  const { user, logout, updateDisplayName } = useRemoteAuth();
   const [menuOpen, setMenuOpen] = useState(false);
   const location = useLocation();
   const navigate = useNavigate();
@@ -306,7 +306,7 @@ function RemoteShell() {
               path="/accounts"
               element={
                 user.role === "researcher" ? (
-                  <RemoteAccountsPage currentUser={user} />
+                  <RemoteAccountsPage currentUser={user} onCurrentUserNameChange={updateDisplayName} />
                 ) : (
                   <Navigate to="/" replace />
                 )

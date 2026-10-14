@@ -69,10 +69,10 @@ export async function audit(auth: Pick<AuthContext, "tenantId" | "userId" | "rol
 export function registerErrorHandler(app: { setErrorHandler: (handler: (error: Error & { statusCode?: number; code?: string }, request: FastifyRequest, reply: FastifyReply) => void) => void }) {
   app.setErrorHandler((error, request, reply) => {
     if (error instanceof ZodError) {
-      if(request.routeOptions.url?.startsWith('/api/accounts')) request.log.warn({
+      if(request.routeOptions.url?.startsWith('/api/accounts') || request.routeOptions.url === '/api/observations') request.log.warn({
         validationFields:Object.keys(error.flatten().fieldErrors),
         issueCodes:error.issues.map(issue => ({field:issue.path.join('.'),code:issue.code})),
-      },'account input validation failed');
+      },'request input validation failed');
       void reply.status(422).send({ code: "VALIDATION_ERROR", message: "提交内容不完整或格式不正确", fields: error.flatten().fieldErrors });
       return;
     }

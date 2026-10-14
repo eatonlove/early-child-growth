@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import { observationInput } from "../domain/observation-contracts.js";
 import {createReadStream,createWriteStream} from 'node:fs';
 import {mkdtemp,rm} from 'node:fs/promises';
 import {tmpdir} from 'node:os';
@@ -21,43 +22,6 @@ import { mediaStorage } from "../runtime/media-storage.js";
 import { serviceClient } from "../supabase.js";
 
 const uuid = z.string().uuid();
-const responseSchema = z.object({
-  category: z.enum(["experience", "material", "activity"]),
-  strategy: z.string().trim().min(2).max(2000),
-  nextObservationFocus: z.string().trim().min(2).max(1000),
-});
-const observationSubjectSchema = z.object({
-  childId: uuid,
-  role: z.enum(["primary", "participant", "incidental"]),
-  contextualFeature: z.string().trim().max(500).default(""),
-  evidenceAnchors: z.array(z.string().trim().min(1).max(160)).max(20).default([]),
-});
-const observationInput = z.object({
-  classroomId: uuid,
-  childId: uuid.optional(),
-  subjects: z.array(observationSubjectSchema).min(1).max(30).optional(),
-  templateId: uuid.optional(),
-  sourceImportId: uuid.optional(),
-  observerName: z.string().trim().min(1).max(80),
-  observerIds: z.array(uuid).max(12).default([]),
-  groupContext: z.string().trim().max(2000).default(""),
-  unlistedParticipantCount: z.number().int().min(0).max(99).default(0),
-  occurredAt: z.string().datetime({ offset: true }),
-  durationMinutes: z.number().int().min(1).max(240).optional(),
-  scene: z.string().trim().min(1).max(80),
-  theme: z.string().trim().min(1).max(120),
-  organizationStage: z.enum(["plan", "introduction", "process", "sharing", "evaluation"]),
-  observationFocusCategory: z.enum(["materials_tools", "cognition_experience", "social_experience"]),
-  observationFocus: z.array(z.string().trim().min(1).max(80)).max(12).default([]),
-  teacherObservation: z.string().trim().min(10).max(12000),
-  teacherIdentification: z.string().trim().min(5).max(6000),
-  teacherResponse: responseSchema,
-}).superRefine((value, context) => {
-  const subjects = value.subjects ?? (value.childId ? [{ childId: value.childId, role: "primary" as const, contextualFeature: "", evidenceAnchors: [] }] : []);
-  if (!subjects.length) context.addIssue({ code: "custom", path: ["subjects"], message: "请至少选择一名观察幼儿" });
-  if (new Set(subjects.map((item) => item.childId)).size !== subjects.length) context.addIssue({ code: "custom", path: ["subjects"], message: "观察幼儿不能重复" });
-  if (subjects.filter((item) => item.role === "primary").length !== 1) context.addIssue({ code: "custom", path: ["subjects"], message: "必须且只能设置一名主要观察幼儿" });
-});
 
 const mimeTypes = new Map([
   ["image/jpeg", { type: "photo", ext: "jpg", max: 10 * 1024 * 1024 }],
@@ -76,6 +40,7 @@ const aiProvider = createAIProvider({
   visionModel: config.QWEN_VISION_MODEL,
   timeoutMs: config.QWEN_TIMEOUT_MS,
   visionTimeoutMs: config.QWEN_VISION_TIMEOUT_MS,
+  observationTimeoutMs: config.QWEN_OBSERVATION_TIMEOUT_MS,
   webSearchEnabled: config.qwenWebSearchEnabled,
   fallbackToSimulated: config.aiFallbackToSimulated,
 });
@@ -193,6 +158,7 @@ export async function observationRoutes(app: FastifyInstance) {
     });
     return {
       item: observation,
+      canDelete: auth.role === 'researcher' || observation.created_by === auth.userId,
       evidence: evidence ?? [],
       analyses: analysesWithClaims,
       subjects: (subjectRows ?? []).map((item) => ({ ...item, display_name: childMap.get(item.child_id) ?? "园内幼儿" })),
@@ -200,6 +166,44 @@ export async function observationRoutes(app: FastifyInstance) {
       observers: (observers ?? []).map((item) => ({ userId: item.user_id, displayName: item.display_name, role: item.role })),
       analysisJob: analysisJobs?.[0] ?? null,
     };
+  });
+
+  app.delete('/api/observations/:id',async(request) => {
+    const auth=await authenticate(request);
+    const {id}=z.object({id:uuid}).parse(request.params);
+    const {data:visible,error:readError}=await auth.data.from('observations').select('id,classroom_id').eq('id',id).maybeSingle();
+    if(readError) throw new ApiError(500,'OBSERVATION_LOOKUP_FAILED','观察记录读取失败');
+    if(!visible) throw new ApiError(404,'OBSERVATION_NOT_FOUND','观察记录不存在或无权访问');
+    const schema=serviceClient.schema(config.SUPABASE_SCHEMA);
+    const {data,error}=await schema.rpc('delete_observation',{
+      target_tenant_id:auth.tenantId,target_observation_id:id,actor_user_id:auth.userId,
+    });
+    if(error) {
+      if(error.code === 'P0002') throw new ApiError(404,'OBSERVATION_NOT_FOUND','观察记录不存在或无权访问');
+      if(error.code === '42501') throw new ApiError(403,'OBSERVATION_DELETE_FORBIDDEN','教师只能删除本人创建且仍负责班级的观察，教研员可删除本园观察');
+      const conflicts:Record<string,string>={
+        OBSERVATION_ANALYSIS_ACTIVE:'该观察正在等待或进行AI分析，请分析结束后再删除',
+        OBSERVATION_USED_IN_REPORT:'该观察已被周期报告引用，请先删除相关报告后重试',
+        OBSERVATION_USED_IN_CURRICULUM:'该观察已被课程引用，请先删除相关课程后重试',
+        OBSERVATION_USED_IN_RESEARCH:'该观察已被教研活动引用，请先处理相关教研活动后重试',
+      };
+      const conflictMessage = conflicts[error.message];
+      if(error.code === 'P0001' && conflictMessage) throw new ApiError(409,error.message,conflictMessage);
+      request.log.error({dbCode:error.code},'observation deletion failed');
+      throw new ApiError(500,'OBSERVATION_DELETE_FAILED','观察删除失败，请稍后重试');
+    }
+    const pendingPaths:string[]=[];
+    for(const path of data.storagePaths as string[]) {
+      const prefix:string|undefined=data.storagePrefixes[path];
+      const basename=prefix ? path.slice(prefix.length) : '';
+      if(!prefix?.startsWith(`${auth.tenantId}/${visible.classroom_id}/`) || !path.startsWith(prefix) || !basename || basename==='.' || basename==='..' || basename.includes('/')) {pendingPaths.push(path);continue;}
+      try {const {error:removeError}=await mediaStorage.remove(path);if(removeError) pendingPaths.push(path);}
+      catch {pendingPaths.push(path);}
+    }
+    const {error:auditError}=await schema.from('audit_events').update({detail:{classroomId:visible.classroom_id,pendingStoragePaths:pendingPaths,attachmentCount:data.storagePaths.length}})
+      .eq('id',data.auditId).eq('tenant_id',auth.tenantId);
+    if(auditError || pendingPaths.length) request.log.warn({auditId:data.auditId,pendingAttachments:pendingPaths.length,auditCode:auditError?.code},'observation deleted; attachment cleanup requires attention');
+    return {ok:true,warning:pendingPaths.length ? '观察记录已删除；部分附件待清理，已记录待办供管理员处理' : null};
   });
 
   app.get("/api/analysis-jobs/:id", async (request) => {
@@ -483,6 +487,13 @@ export async function observationRoutes(app: FastifyInstance) {
         .select()
         .single();
       if (updateError) {
+        const {data:stillExists,error:readError}=await serviceClient.schema(config.SUPABASE_SCHEMA)
+          .from('evidence_assets').select('id').eq('id',id).eq('tenant_id',auth.tenantId).maybeSingle();
+        if(!readError && !stillExists) {
+          const {error:cleanupError}=await mediaStorage.remove(evidence.storage_path);
+          if(cleanupError) request.log.warn({evidenceId:id},'deleted observation upload cleanup failed');
+          throw new ApiError(410,'OBSERVATION_DELETED','观察记录已被删除，本次媒体不再保存，请勿重复上传');
+        }
         throw new ApiError(500, "EVIDENCE_CONFIRM_FAILED", "媒体已上传，但证据状态确认失败");
       }
 
@@ -730,7 +741,10 @@ export async function observationRoutes(app: FastifyInstance) {
       if (reason instanceof ApiError) throw reason;
       request.log.error({ err: reason, observationId: id }, "multi-subject AI analysis failed");
       if (reason instanceof QwenRequestError && reason.message === "千问请求超时") {
-        throw new ApiError(504, "AI_ANALYSIS_TIMEOUT", "本次图片或视频分析耗时较长，观察记录已保留，请稍后重试");
+        throw new ApiError(504, "AI_ANALYSIS_TIMEOUT", "本次AI分析请求超时，观察记录已保留，请稍后重试");
+      }
+      if (reason instanceof QwenRequestError && reason.message.startsWith("千问结构化输出未通过业务校验")) {
+        throw new ApiError(502, "AI_ANALYSIS_OUTPUT_INVALID", "AI生成的草稿仍有未完成或格式不正确的内容，观察记录已保留，请重新分析");
       }
       throw new ApiError(502, "AI_ANALYSIS_FAILED", "AI分析暂时不可用，请稍后重试");
     }

@@ -4,7 +4,7 @@ import { config, internalEmail } from "../config.js";
 import { ApiError, audit, authenticate, requireResearcher } from "../http.js";
 import { authProvider } from "../runtime/auth-provider.js";
 import { serviceClient } from "../supabase.js";
-import { accountPasswordSchema,createAccountInput,teacherClassroomsInput } from '../domain/account-contracts.js';
+import { accountDisplayNameInput,accountPasswordSchema,createAccountInput,teacherClassroomsInput } from '../domain/account-contracts.js';
 
 const uuid = z.string().uuid();
 const password = accountPasswordSchema;
@@ -337,6 +337,24 @@ export async function managementRoutes(app: FastifyInstance) {
     }
     await audit(auth, "account.created", "account", created.user.id, { username: input.username, role: input.role, classroomIds: input.classroomIds });
     return reply.status(201).send({ item: { user_id: created.user.id, username: input.username, display_name: input.displayName, role: input.role, status: "active", classroom_ids: input.classroomIds } });
+  });
+
+  app.patch('/api/accounts/:userId/display-name',async(request) => {
+    const auth=await authenticate(request);
+    requireResearcher(auth);
+    const {userId}=z.object({userId:uuid}).parse(request.params);
+    const {displayName}=accountDisplayNameInput.parse(request.body);
+    const {data,error}=await serviceClient.schema(config.SUPABASE_SCHEMA).rpc('set_account_display_name',{
+      target_tenant_id:auth.tenantId,target_user_id:userId,actor_user_id:auth.userId,target_display_name:displayName,
+    });
+    if(error) {
+      if(error.code === 'P0002') throw new ApiError(404,'ACCOUNT_NOT_FOUND','账号不存在或不属于本园');
+      if(error.code === '42501') throw new ApiError(403,'ACCOUNT_NAME_FORBIDDEN','无权修改该账号的显示名称');
+      if(error.code === '22023') throw new ApiError(422,'INVALID_DISPLAY_NAME','显示姓名必须为1至40字');
+      request.log.error({dbCode:error.code},'account display name update failed');
+      throw new ApiError(500,'ACCOUNT_NAME_UPDATE_FAILED','显示名称保存失败，请稍后重试');
+    }
+    return {item:data};
   });
 
   app.patch('/api/accounts/:userId/classrooms',async(request) => {

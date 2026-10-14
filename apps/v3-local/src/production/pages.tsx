@@ -10,6 +10,8 @@ import {
   CircleAlert,
   Database,
   Download,
+  Eye,
+  EyeOff,
   FileVideo,
   Home,
   KeyRound,
@@ -2099,8 +2101,10 @@ export function RemoteKnowledgePage() {
 
 export function RemoteAccountsPage({
   currentUser,
+  onCurrentUserNameChange,
 }: {
   currentUser: RemoteUser;
+  onCurrentUserNameChange?: (displayName: string) => void;
 }) {
   const [accounts, setAccounts] = useState<RemoteAccount[]>([]);
   const [classrooms, setClassrooms] = useState<RemoteClassroom[]>([]);
@@ -2110,6 +2114,9 @@ export function RemoteAccountsPage({
   const [scopeClassroomIds,setScopeClassroomIds] = useState<string[]>([]);
   const [formError,setFormError] = useState('');
   const [newPassword, setNewPassword] = useState("");
+  const [passwordVisible,setPasswordVisible] = useState(false);
+  const [nameTarget,setNameTarget] = useState<RemoteAccount|null>(null);
+  const [displayName,setDisplayName] = useState('');
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const [form, setForm] = useState({
@@ -2140,6 +2147,7 @@ export function RemoteAccountsPage({
       const {item}=await remoteApi.createAccount({...form,username:form.username.trim(),displayName:form.displayName.trim(),classroomIds:form.role === 'researcher' ? [] : form.classroomIds});
       setAccounts(current => [...current,item]);
       setModal(false);
+      setPasswordVisible(false);
       setForm({
         username: "",
         displayName: "",
@@ -2199,6 +2207,20 @@ export function RemoteAccountsPage({
     }catch(reason) {setFormError(accountErrorMessage(reason));}
     finally {setBusy(false);}
   };
+  const saveDisplayName=async(event:FormEvent) => {
+    event.preventDefault();
+    if(!nameTarget) return;
+    const trimmed=displayName.trim();
+    if(!trimmed || [...trimmed].length>40) {setFormError('显示姓名必须为1至40字');return;}
+    setBusy(true);setFormError('');
+    try {
+      const {item}=await remoteApi.updateAccountDisplayName(nameTarget.user_id,trimmed);
+      setAccounts(current=>current.map(account=>account.user_id===item.user_id?item:account));
+      if(item.user_id===currentUser.id) onCurrentUserNameChange?.(item.display_name);
+      setNameTarget(null);
+    }catch(reason) {setFormError(accountErrorMessage(reason));}
+    finally {setBusy(false);}
+  };
   return (
     <div className="page remote-page accounts-page">
       <PageHeader
@@ -2206,7 +2228,7 @@ export function RemoteAccountsPage({
         title="账号与权限管理"
         description="只保留教师和教研员。教研员新增账号并为教师分配班级；停用后历史数据保留，旧会话立即失去业务权限。"
         actions={
-          <button className="btn btn-primary" disabled={busy} onClick={() => {setFormError('');setModal(true);}}>
+          <button className="btn btn-primary" disabled={busy} onClick={() => {setFormError('');setPasswordVisible(false);setModal(true);}}>
             <UserPlus />
             新增账号
           </button>
@@ -2260,6 +2282,7 @@ export function RemoteAccountsPage({
                 {statusLabel[account.status]}
               </Badge>
               <div className="remote-row-actions">
+                <button className="btn btn-secondary" disabled={busy} onClick={()=>{setNameTarget(account);setDisplayName(account.display_name);setFormError('');}}><Pencil/>修改名称</button>
                 {account.role === 'teacher' && <button className="btn btn-secondary" disabled={busy} onClick={() => {setScopeTarget(account);setScopeClassroomIds([...account.classroom_ids]);setFormError('');}}>编辑班级范围</button>}
                 <button className="btn btn-secondary" disabled={busy} onClick={() => { setPasswordTarget(account); setNewPassword("");setFormError(''); }}>重置密码</button>
                 <button
@@ -2278,7 +2301,7 @@ export function RemoteAccountsPage({
         <Modal
           title="新增系统账号"
           description="账号只能由教研员创建，不开放自主注册。"
-          onClose={() => {if(!busy) setModal(false);}}
+          onClose={() => {if(!busy) {setModal(false);setPasswordVisible(false);}}}
         >
           <form className="remote-form account-create-form" onSubmit={create} noValidate>
             {formError && <div className="remote-error full-field" role="alert">{formError}</div>}
@@ -2322,8 +2345,10 @@ export function RemoteAccountsPage({
             </label>
             <label>
               <span id="account-initial-password-label">初始密码</span>
+              <div className="account-password-control">
               <input
-                type="password"
+                id="account-initial-password"
+                type={passwordVisible ? 'text' : 'password'}
                 required
                 minLength={10}
                 maxLength={128}
@@ -2335,6 +2360,10 @@ export function RemoteAccountsPage({
                   setForm({ ...form, password: event.target.value })
                 }
               />
+              <button type="button" disabled={busy} className="account-password-toggle" aria-controls="account-initial-password" aria-pressed={passwordVisible} aria-label={passwordVisible ? '隐藏初始密码' : '显示初始密码'} onClick={()=>setPasswordVisible(current=>!current)}>
+                {passwordVisible ? <EyeOff aria-hidden="true"/> : <Eye aria-hidden="true"/>}
+              </button>
+              </div>
               <small id="account-password-requirements">10至128位，必须同时包含大写字母、小写字母和数字</small>
             </label>
             {form.role === "teacher" && (
@@ -2368,6 +2397,14 @@ export function RemoteAccountsPage({
           </form>
         </Modal>
       )}
+      {nameTarget && <Modal title={`修改${nameTarget.display_name}的显示名称`} description="只修改界面显示名称，登录账号、密码、角色、班级范围和历史观察者记录均保持不变。" onClose={()=>{if(!busy) setNameTarget(null);}}>
+        <form className="remote-form" onSubmit={saveDisplayName} noValidate>
+          {formError && <div className="remote-error full-field" role="alert">{formError}</div>}
+          <label className="full-field"><span>显示姓名</span><input required maxLength={40} disabled={busy} value={displayName} onChange={event=>setDisplayName(event.target.value)}/></label>
+          <small className="full-field">教研员仍为全园权限，教师仍按现有班级范围访问。</small>
+          <button className="btn btn-primary" disabled={busy} type="submit"><Save/>{busy ? '正在保存…' : '保存显示名称'}</button>
+        </form>
+      </Modal>}
       {passwordTarget && (
         <Modal title={`重置${passwordTarget.display_name}的密码`} description="新密码只提交给后端身份服务，不写入同迹业务表。" onClose={() => {if(!busy) setPasswordTarget(null);}}>
           <form className="remote-form" onSubmit={resetPassword} noValidate>

@@ -17,6 +17,7 @@ interface AuthValue {
   retry(): Promise<void>;
   login(username: string, password: string): Promise<void>;
   logout(): Promise<void>;
+  updateDisplayName(displayName: string): void;
 }
 
 const AuthContext = createContext<AuthValue | null>(null);
@@ -75,6 +76,7 @@ export function RemoteAuthProvider({ children }: { children: ReactNode }) {
       loading,
       error,
       retry: verify,
+      updateDisplayName: (displayName) => setUser(current => current ? {...current,displayName} : null),
       login: async (username, password) => {
         const result = await remoteApi.login(username, password);
         setCurrentTabLogin(true);
