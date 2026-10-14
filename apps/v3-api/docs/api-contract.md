@@ -24,6 +24,7 @@
 - `POST /api/resource-categories/:category/analyze`：人工主动触发，以该分类已入库资料生成后台任务，返回202。上传、归类、打开页面不会自动调用AI。
 - 分类AI固定输出 `directionalContent[{title,description,sourcePackageIds}]`、`indicatorFocus[{name,focus,observableBehaviors,sourcePackageIds}]`、`limitations[]`。来源ID必须属于本次输入；指标侧重描述课程经验，不评定具体幼儿。
 - 新增 `resource_category_analysis` 提示词场景，使用现有园所统一模型、可配置提示词和固定安全规则。
+- 分类输出若触发幼儿标签化校验，仅依据原始课程资料自动修订一次，修订后仍须通过相同Schema、资源来源白名单和安全校验；仍失败时返回可理解的提示，不发布违规结果、不静默降级模拟，也不由上传或打开页面自动重试。
 - DOCX正文按流提取，500MB含图Word无需整份载入内存；大于32MB的PDF/旧DOC可阅读或下载，分类分析提示补充DOCX文字版。扫描PDF和图片未OCR时明确记录文字缺口。
 
 ## 2. 身份与账号

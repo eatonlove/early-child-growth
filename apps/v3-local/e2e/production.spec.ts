@@ -564,3 +564,22 @@ test('课程资源按分类阅读且分类AI必须主动触发',async({page}) =>
   await expect(ageLabel).toHaveCSS('white-space','nowrap');
   await expect(ageLabel.getByRole('checkbox')).toHaveCSS('width','16px');
 });
+
+test('历史分类安全错误可读且查看页面不会自动重试AI',async({page}) => {
+  await mockApi(page,'teacher');
+  let requests=0;
+  const resource={id:'41414141-4141-4141-8141-414141414141',title:'虚构合作搭桥',summary:'材料比较与协商',activity_origin:'材料比较与协商',category:'growth',applicable_grades:['middle'],themes:['搭桥'],status:'active',created_by:'teacher-id',creator_name:'虚构老师',created_at:'2026-10-14T09:00:00+08:00',updated_at:'2026-10-14T09:00:00+08:00',assets:[]};
+  await page.route('**/api/curriculum-resource-packages',route=>route.fulfill({json:{items:[resource]}}));
+  await page.route('**/api/resource-categories/growth/analysis',route=>route.fulfill({json:{item:{id:'42424242-4242-4242-8242-424242424242',category:'growth',status:'failed',source_package_ids:[resource.id],created_at:'2026-10-14T09:01:00+08:00',completed_at:'2026-10-14T09:02:00+08:00',provider:null,model:'selected-model',prompt_version:'resource-category-analysis.qwen.v1',error_message:'千问输出触发幼儿标签化风险守卫：落后',result:null}}}));
+  await page.route('**/api/resource-categories/growth/analyze',route=>{requests++;return route.fulfill({status:202,json:{item:{id:'test',category:'growth',status:'queued'}}});});
+  await page.goto('/memories');
+  await page.locator('.resource-category-menu').getByRole('button',{name:/悦生长/}).click();
+  await expect(page.getByRole('alert')).toContainText('课程资料已保留');
+  await expect(page.getByRole('alert')).not.toContainText('千问输出触发');
+  await expect(page.getByRole('button',{name:'分析当前分类'})).toBeEnabled();
+  expect(requests).toBe(0);
+  await page.setViewportSize({width:390,height:844});
+  await expect(page.getByRole('alert')).toBeVisible();
+  expect(await page.evaluate(()=>document.documentElement.scrollWidth<=window.innerWidth)).toBe(true);
+  expect(requests).toBe(0);
+});
