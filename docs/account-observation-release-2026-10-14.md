@@ -23,11 +23,17 @@
 
 ## 验证
 
-- `npm run check`：97个后端契约、95个前端接入路由；72项后端及37项前端测试通过；正式生产构建不包含演示数据。
+- 2026-10-15合并最终AI修复后，`npm run check`：98个后端契约、96个前端接入路由；88项后端及40项前端测试通过；正式生产构建不包含演示数据。
 - Chrome流程测试20项通过，覆盖删除取消、删除失败提示、删除后刷新持久化、非创建者及活动AI限制、桌面/手机卡片间距和原有主要流程。
 - `scripts/smoke-account-observation.ts` 使用隔离虚构园所进行真实API/PostgreSQL/Auth/Storage验收，覆盖名称修改及即时会话更新、角色和范围保持、跨园权限、观察字数错误、级联删除、引用保护、媒体及Word导出清理、导入稿回到校对。无真实AI调用，不变更模型配置。所有测试身份与资料自动清理。
 - 新RPC均为security invoker，仅service_role可执行；authenticated和anon无执行权限。
 
 ## 运维边界
 
-新增迁移：`20261014133239_account_display_name_and_observation_deletion.sql`。生产迁移前仅备份`tongji_v3`和`tongji_v3_private`；代码回滚点为`17c2ded`。只更新同迹Web/API，保留共用Supabase和其他项目；不删除现有客户观察或报告。
+新增迁移：`20261014133239_account_display_name_and_observation_deletion.sql`与`20261014143254_observation_subject_evidence_and_supplements.sql`。生产迁移前仅备份`tongji_v3`和`tongji_v3_private`；代码回滚点为`17c2ded`。只更新同迹Web/API，保留共用Supabase和其他项目；不删除现有客户观察或报告。
+
+## 最终AI改动
+
+独立工作树提交`c39834b`已合并为`074acf3`。提示词升级至v10，拦截纯标点操作步骤；逐名判断材料充分性，支持单独补充与重试，保留其他幼儿的结果。成长、个人/班级报告和课程只计入对应幼儿已采用的分析，不借用同伴结论。本地真实数据库与API完整验收通过，覆盖部分完成、全部不足、补充重试、同伴轨迹/报告保留及历史逗号稿不能直接采用。
+
+线上模型的两份虚构文本检查已通过，仅验证证据充分性判别，不代表真实客户媒体全流程验收；未修改当前模型选择。完整交接见`observation-ai-recovery-2026-10-14.md`。
