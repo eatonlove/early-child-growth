@@ -7,6 +7,7 @@ import {
   aiPromptDefinitions,
   assertNoForbiddenJudgment,
 } from "./qianwen-provider.js";
+import { InsufficientObservationEvidenceError } from "./subject-evidence.js";
 import { buildScenarioAnalysis } from "./scenario-provider.js";
 
 const card: KnowledgeRow = {
@@ -85,6 +86,13 @@ const response = {
 };
 
 describe("QianwenAIProvider", () => {
+  it('stops an insufficient child before requesting a full analysis or support research', async () => {
+    const fetcher = vi.fn(async () => new Response(JSON.stringify({choices: [{message: {content: JSON.stringify({canAnalyze: false, reason: '本次只有名单与群体描述，缺少目标幼儿动作。', missingInformation: ['补充该幼儿的具体动作或关键原话。'], directEvidence: [], mediaEvidenceIds: []})}}]})));
+    const provider = new QianwenAIProvider({apiKey: 'sk-test-only', baseUrl: 'https://dashscope.aliyuncs.com/compatible-mode/v1', textModel: 'qwen3.7-plus', visionModel: 'qwen3.7-plus', timeoutMs: 5000, assessIndividualEvidence: true, webSearchEnabled: true}, fetcher);
+    await expect(provider.analyzeObservation({observation: {teacher_observation: '几名幼儿一起搭桥。', teacher_identification: '出现建构兴趣。', teacher_response: {category: 'material', strategy: '保留材料', nextObservationFocus: '观察各自的尝试'}, scene: '建构区', theme: '搭桥', organization_stage: 'process', subject_count: 2}, child: {id: 'b', display_name: '不发送的幼儿姓名', birth_month: '2022-01'}, classroom: {id: 'class', grade: 'middle'}, knowledge: [card], evidence: [], media: [], history: []})).rejects.toThrow(InsufficientObservationEvidenceError);
+    expect(fetcher).toHaveBeenCalledTimes(1);
+  });
+
   it('recovers the production blank-field failure in one model call and exposes the repair for teacher review', async () => {
     const draft = structuredClone(expandedResponse);
     draft.domainExperiences.push({...draft.domainExperiences[0]!, domain: '社会', noJudgment: true, evidence: '', evidenceIds: [], indicatorCodes: []});
@@ -248,7 +256,7 @@ describe("QianwenAIProvider", () => {
     expect(requestBody).toContain("video_url");
     expect(requestBody).toContain("image_url");
     expect(requestBody).not.toContain("不应发送的姓名");
-    expect(generated.promptVersion).toBe("observation-analysis.qwen.v9");
+    expect(generated.promptVersion).toBe("observation-analysis.qwen.v10");
 
     const apiRequest = JSON.parse(requestBody);
     expect(apiRequest.model).toBe("qwen3.7-flash");

@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { hasMeaningfulText } from "./text-quality.js";
 
 export interface KnowledgeRow {
   id: string;
@@ -32,6 +33,10 @@ export interface ObservationForAnalysis {
   subject_context?: string | null;
   subject_role?: "primary" | "participant" | "incidental";
   subject_evidence_anchors?: string[];
+  subject_additional_observation?: string;
+  subject_count?: number;
+  subject_identification_cues?: string[];
+  unlisted_participant_count?: number;
 }
 
 export interface MediaForAnalysis {
@@ -80,7 +85,7 @@ export interface ResolvedAIPrompt {
   model?: string;
 }
 
-const shortText = z.string().trim().min(1).max(2000);
+const shortText = z.string().trim().min(1).max(2000).refine(hasMeaningfulText, "内容不能仅包含标点、数字或空白");
 const confidence = z.number().min(0).max(1);
 const evidenceIds = z.array(z.string().trim().min(1).max(100)).max(8).default([]);
 

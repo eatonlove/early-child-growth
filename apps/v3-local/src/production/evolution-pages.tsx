@@ -5,6 +5,8 @@ import {
 } from "lucide-react";
 import { Badge, EmptyState, LoadingState, Modal, PageHeader, Panel } from "../components/ui";
 import { remoteApi, RemoteApiError } from "./api";
+import { ObservationSubjectResults } from "./observation-subject-results";
+import { meaningfulSupportText, invalidSupportInstructions } from "./analysis-text-quality";
 import { ResourceLibrarySection } from './resource-library-section';
 import {importReviewNotes,matchImportedSubjects,type SubjectDraft} from './observation-import';
 import {changeObservationSubjectRole,observationSubmitError} from './observation-form';
@@ -13,7 +15,7 @@ import type {
   RemoteCurriculumPlan, RemoteCurriculumTemplate, RemoteCurriculumWorkspace, RemoteEvidence,
   RemoteCurriculumResourcePackage,
   RemoteObservation, RemoteObservationImport, RemoteObservationSubject, RemoteObservationTemplate,
-  RemoteObserver, RemoteProfessionalMemory, RemoteResponsePlan, RemoteUser, RemoteAnalysisJob,
+  RemoteAnalysisSubjectResult, RemoteObserver, RemoteProfessionalMemory, RemoteResponsePlan, RemoteUser, RemoteAnalysisJob,
 } from "./types";
 
 const showError = (reason: unknown) => reason instanceof RemoteApiError ? reason.message : "操作失败，请稍后重试";
@@ -49,6 +51,8 @@ const emptyObservation = () => ({
 type ObservationDetail = {
   item: RemoteObservation;
   canDelete: boolean;
+  canSupplement: boolean;
+  analysisSubjectResults: RemoteAnalysisSubjectResult[];
   evidence: RemoteEvidence[];
   analyses: RemoteAnalysis[];
   subjects: RemoteObservationSubject[];
@@ -64,6 +68,8 @@ const analysisStageLabel: Record<RemoteAnalysisJob["stage"], string> = {
   analyzing_subject: "生成当前幼儿的专业分析",
   saving_subject: "保存证据链和应答建议",
   completed: "分析完成",
+  partially_completed: "已完成部分幼儿分析",
+  needs_more_evidence: "待补充个人证据",
   failed: "分析失败",
 };
 
@@ -230,6 +236,7 @@ function SimpleAnalysisBoard({
     ...(result.responseSuggestions?.material ?? []),
     ...(result.responseSuggestions?.activity ?? []),
   ];
+  const invalidInstructions = invalidSupportInstructions(analysis.structured_result.responsePlans ?? []);
   return (
     <div className="simple-analysis-board">
       <Panel className="simple-ai-heading">
@@ -283,12 +290,12 @@ function SimpleAnalysisBoard({
         </Panel>
         <Panel title="教师确认" subtitle="确认后，这份分析才会进入成长轨迹、周期报告和课程线索。">
           <textarea rows={3} value={note} onChange={(event) => setNote(event.target.value)} placeholder="确认说明（选填）" />
-          <div className="evo-review-actions"><button className="btn btn-primary" disabled={busy} onClick={() => void run(() => remoteApi.decideAnalysis(analysis.id, "adopted", note))}><CheckCircle2 />确认并采用</button><button className="btn btn-secondary" disabled={busy} onClick={() => void run(() => remoteApi.decideAnalysis(analysis.id, "abandoned", note || "本次暂不采用"))}>本次不采用</button></div>
+          <div className="evo-review-actions"><button className="btn btn-primary" disabled={busy || invalidInstructions} onClick={() => void run(() => remoteApi.decideAnalysis(analysis.id, "adopted", note))}><CheckCircle2 />确认并采用</button><button className="btn btn-secondary" disabled={busy} onClick={() => void run(() => remoteApi.decideAnalysis(analysis.id, "abandoned", note || "本次暂不采用"))}>本次不采用</button></div>
         </Panel>
       </div>}
 
       <Panel title="完整应答方案" subtitle="活动、材料、经验支持均来自本次证据；教师确认AI分析后可选择一套进入实施与复察。">
-        <div className="simple-response-list detailed">{responsePlans.map((plan) => <article key={plan.id}><div className="response-plan-heading"><div><Badge tone={tone(plan.status)}>{statusLabel[plan.status] ?? plan.status}</Badge><h3>{plan.title}</h3></div>{plan.status === "suggested" && <button className="btn btn-primary" disabled={busy || analysis.decision !== "adopted"} onClick={() => void run(() => remoteApi.selectResponsePlan(plan.id))}>采用该应答</button>}</div><p>{plan.rationale}</p><div className="response-support-grid"><section><h4>活动支持</h4><p><b>{plan.activity_support.activityName}</b></p><small>时机：{plan.activity_support.timing} · 时长：{plan.activity_support.suggestedDuration}</small><p>{plan.activity_support.objective}</p><ol>{plan.activity_support.steps.map((step) => <li key={step}>{step}</li>)}</ol><small>教师角色：{plan.activity_support.teacherRole}</small></section><section><h4>材料支持</h4>{plan.material_support.materials.map((material) => <p key={`${material.name}-${material.variable}`}><b>{material.name}</b> · {material.quantity || "按现场需要"}<br /><small>变量/用法：{material.variable || "由幼儿自主选择"}</small></p>)}<p>摆放：{plan.material_support.placement}</p><p>用途：{plan.material_support.purpose}</p>{plan.material_support.safetyNotes.map((note) => <small key={note}>• {note}</small>)}</section><section><h4>经验支持</h4>{plan.experience_support.suggestedQuestions.map((question) => <p key={question}>“{question}”</p>)}<p>参与方式：{plan.experience_support.participationMode}</p><p>示范方式：{plan.experience_support.demonstration || "优先不示范"}</p><small>退出条件：{plan.experience_support.withdrawalCondition}</small></section></div><footer><b>复察切口：</b>{plan.observation_cut}<br /><b>调整条件：</b>{plan.adjustment_condition}</footer></article>)}</div>
+        {invalidInstructions && <p className="warning-card" role="alert">本版部分步骤或提问只有标点，不能作为操作建议。请生成新版本并核对后再采用。</p>}<div className="simple-response-list detailed">{responsePlans.map((plan) => <article key={plan.id}><div className="response-plan-heading"><div><Badge tone={tone(plan.status)}>{statusLabel[plan.status] ?? plan.status}</Badge><h3>{plan.title}</h3></div>{plan.status === "suggested" && <button className="btn btn-primary" disabled={busy || analysis.decision !== "adopted"} onClick={() => void run(() => remoteApi.selectResponsePlan(plan.id))}>采用该应答</button>}</div><p>{plan.rationale}</p><div className="response-support-grid"><section><h4>活动支持</h4><p><b>{plan.activity_support.activityName}</b></p><small>时机：{plan.activity_support.timing} · 时长：{plan.activity_support.suggestedDuration}</small><p>{plan.activity_support.objective}</p><ol>{plan.activity_support.steps.filter(meaningfulSupportText).map((step) => <li key={step}>{step}</li>)}</ol><small>教师角色：{plan.activity_support.teacherRole}</small></section><section><h4>材料支持</h4>{plan.material_support.materials.map((material) => <p key={`${material.name}-${material.variable}`}><b>{material.name}</b> · {material.quantity || "按现场需要"}<br /><small>变量/用法：{material.variable || "由幼儿自主选择"}</small></p>)}<p>摆放：{plan.material_support.placement}</p><p>用途：{plan.material_support.purpose}</p>{plan.material_support.safetyNotes.map((note) => <small key={note}>• {note}</small>)}</section><section><h4>经验支持</h4>{plan.experience_support.suggestedQuestions.filter(meaningfulSupportText).map((question) => <p key={question}>“{question}”</p>)}<p>参与方式：{plan.experience_support.participationMode}</p><p>示范方式：{plan.experience_support.demonstration || "优先不示范"}</p><small>退出条件：{plan.experience_support.withdrawalCondition}</small></section></div><footer><b>复察切口：</b>{plan.observation_cut}<br /><b>调整条件：</b>{plan.adjustment_condition}</footer></article>)}</div>
       </Panel>
       {result.externalSupportReferences.length > 0 && <Panel title="公开资料补充" subtitle="联网资料只用于启发支持方法，不作为幼儿发展判断证据；题名、作者和网址来自已验证检索结果。"><div className="external-support-list">{result.externalSupportReferences.map((item) => <a href={item.url} target="_blank" rel="noreferrer" key={item.url}><strong>{item.title}</strong><span>{item.authors?.length ? `${item.authors.join("、")} · ` : ""}{item.publication || item.source}{item.publicationYear ? ` · ${item.publicationYear}` : ""}</span><small>{item.sourceType === "academic" ? "学术资料" : item.sourceType === "policy" ? "政策文件" : item.sourceType === "institutional" ? "机构资料" : "实践资料"}{item.verified ? " · 来源已核验" : ""}</small><p>{item.appliedSuggestion}</p></a>)}</div></Panel>}
       <Panel title="证据索引" subtitle="所有分析均可回到教师原稿和本次媒体证据。"><div className="remote-file-list">{evidence.map((item) => <span className="badge" key={item.id}><FileVideo />{item.file_name || item.id.slice(0, 8)}</span>)}</div></Panel>
@@ -374,7 +381,10 @@ export function RemoteObservationV32Page({ user }: { user: RemoteUser }) {
       try {
         const result = await remoteApi.analysisJob(job.id);
         if (cancelled) return;
-        setDetail((current) => current ? { ...current, analysisJob: result.item } : current);
+        setDetail((current) => current ? { ...current, analysisJob: result.item, analysisSubjectResults: [
+          ...(current.analysisSubjectResults ?? []).filter(item => !(result.item.subject_results ?? []).some(next => next.childId === item.childId)),
+          ...(result.item.subject_results ?? []),
+        ] } : current);
         if (result.item.status === "completed") {
           await Promise.all([refreshDetail(), load()]);
         } else if (result.item.status === "failed") {
@@ -508,14 +518,18 @@ export function RemoteObservationV32Page({ user }: { user: RemoteUser }) {
     const result = await remoteApi.createObservationDocument(detail.item.id, variant);
     await remoteApi.documentExportDownload(result.documentExport.id);
   });
-  const runAnalysis = async () => {
+  const runAnalysis = async (childIds?: string[]) => {
     if (!detail || busy) return;
     setBusy(true); setError("");
     try {
-      const result = await remoteApi.analyze(detail.item.id);
-      setDetail((current) => current ? { ...current, analysisJob: result.item } : current);
+      const result = await remoteApi.analyze(detail.item.id, childIds);
+      setDetail((current) => current ? { ...current, analysisJob: result.item, analysisSubjectResults: [
+          ...(current.analysisSubjectResults ?? []).filter(item => !(result.item.subject_results ?? []).some(next => next.childId === item.childId)),
+          ...(result.item.subject_results ?? []),
+        ] } : current);
     } catch (reason) {
       setError(showError(reason));
+      if (childIds) throw reason;
     } finally {
       setBusy(false);
     }
@@ -560,11 +574,12 @@ export function RemoteObservationV32Page({ user }: { user: RemoteUser }) {
         </Panel>
         <div className="observation-record-list"><Panel className="observation-record-item observation"><Badge tone="blue">观察</Badge><p>{detail.item.teacher_observation}</p></Panel><Panel className="observation-record-item identification"><Badge tone="green">识别</Badge><p>{detail.item.teacher_identification}</p></Panel><Panel className="observation-record-item response"><Badge tone="orange">教师原始应答</Badge><p>{detail.item.teacher_response.strategy}</p><small>复察：{detail.item.teacher_response.nextObservationFocus}</small></Panel></div>
         {detail.evidence.length > 0 && <Panel title="照片、视频与作品证据"><div className="remote-file-list">{detail.evidence.map((item) => <button className="btn btn-secondary evidence-file-button" key={item.id} disabled={item.upload_status !== "ready"} onClick={() => void withBusy(async () => { const result = await remoteApi.evidenceDownload(item.id); window.open(result.url, "_blank", "noopener,noreferrer"); })}><FileVideo /><span><strong>{item.file_name || "未命名证据"}</strong><small>{item.optimization_status === "optimized" ? `无损优化 ${formatBytes(item.original_size_bytes)} → ${formatBytes(item.optimized_size_bytes)}` : item.optimization_status === "not_applicable" ? "原样私有存储" : item.optimization_status === "legacy" ? "历史媒体" : item.optimization_status === "failed" ? "无损优化失败" : "等待处理"}</small></span></button>)}</div></Panel>}
-        {(!latest || latest.decision !== "pending") && !["queued", "processing"].includes(detail.analysisJob?.status ?? "") && <Panel className="remote-ai-launch"><Sparkles /><div><Badge tone="purple">按幼儿独立分析</Badge><h2>为{detail.subjects.length}名幼儿分别生成专业第二视角</h2><p>会读取该幼儿已采用的历史观察，并结合可归属的文字、图片或视频证据生成差异化应答；个体证据不足时会明确提示。</p></div><button className="btn btn-primary" disabled={busy} onClick={() => void runAnalysis()}><BrainCircuit />{latest ? "生成新版本" : "运行AI分析"}</button></Panel>}
+        {(!latest || latest.decision !== "pending" || invalidSupportInstructions(latest.structured_result.responsePlans ?? [])) && !["queued", "processing"].includes(detail.analysisJob?.status ?? "") && <Panel className="remote-ai-launch"><Sparkles /><div><Badge tone="purple">按幼儿独立分析</Badge><h2>为{detail.subjects.length}名幼儿分别生成专业第二视角</h2><p>会读取该幼儿已采用的历史观察，并结合可归属的文字、图片或视频证据生成差异化应答；个体证据不足时会明确提示。</p></div><button className="btn btn-primary" disabled={busy} onClick={() => void runAnalysis()}><BrainCircuit />{latest ? "生成新版本" : "运行AI分析"}</button></Panel>}
         {detail.analysisJob && ["queued", "processing"].includes(detail.analysisJob.status) && <Panel className="ai-progress-panel"><div className="ai-progress-heading"><div><Badge tone="purple">后台AI分析</Badge><strong>{analysisStageLabel[detail.analysisJob.stage]}</strong></div><span>{detail.analysisJob.progress}%</span></div><div className="ai-progress-track"><i style={{ width: `${detail.analysisJob.progress}%` }} /></div><p>任务已保存到后台，可以离开或关闭本页面；再次进入后会继续显示真实进度。</p></Panel>}
+        <ObservationSubjectResults observationId={detail.item.id} subjects={detail.subjects} results={detail.analysisSubjectResults ?? []} canSupplement={detail.canSupplement} active={busy || ['queued', 'processing'].includes(detail.analysisJob?.status ?? '')} onRefresh={refreshDetail} onAnalyze={runAnalysis} />
         {detail.analysisJob?.status === "failed" && <Panel className="ai-progress-panel ai-progress-failed"><div className="ai-progress-heading"><div><Badge tone="red">上次分析失败</Badge><strong>{detail.analysisJob.error_message || "AI分析暂时不可用"}</strong></div></div><p>失败原因已保留，可直接重新发起，不会把未完成内容写入正式分析。</p></Panel>}
         <Panel title="补充照片或视频" subtitle="已有观察无需重新导入；可在这里补充或重新上传失败的媒体。"><input aria-label="补充照片或视频" disabled={busy} type="file" multiple accept="image/jpeg,image/png,image/webp,video/mp4,video/quicktime,application/pdf" onChange={event=>{const chosen=Array.from(event.target.files??[]).slice(0,5);event.target.value='';if(chosen.length)void withBusy(()=>uploadMedia(detail.item.id,chosen));}}/><small>图片或文档10MB/份，视频100MB/段。上传进度结束后还需要完成文件处理与私有存储。</small>{detail.evidence.some(item=>item.upload_status==='failed')&&<p className="warning-card">有历史媒体未上传成功，可重新选择该文件补充上传，已保存的观察文字不受影响。</p>}{mediaWithoutConsent&&<p className="warning-card">部分参与幼儿尚未取得完整监护授权。对应幼儿的AI分析只使用文字，不会读取照片或视频画面；授权确认后需重新发起分析。</p>}</Panel>
-        {detail.analysisJob&&['queued','processing'].includes(detail.analysisJob.status)&&<p className="analysis-runtime-note" role="status">已完成{detail.analysisJob.analysis_run_ids?.length??0}/{detail.subjects.length}名幼儿 · 已运行{Math.floor(jobSeconds/60)}分{jobSeconds%60}秒。任务在后台继续执行，可离开本页。</p>}
+        {detail.analysisJob&&['queued','processing'].includes(detail.analysisJob.status)&&<p className="analysis-runtime-note" role="status">已处理{detail.analysisJob.subject_results?.filter(item => ["completed", "needs_more_evidence", "failed"].includes(item.status)).length ?? detail.analysisJob.analysis_run_ids?.length ?? 0}/{detail.analysisJob.subject_results?.length || detail.subjects.length}名幼儿 · 已运行{Math.floor(jobSeconds/60)}分{jobSeconds%60}秒。任务在后台继续执行，可离开本页。</p>}
         {latest?.input_snapshot&&<p className="analysis-runtime-note">{latest.input_snapshot.mediaAnalyzed?'本版AI已读取授权媒体画面；视频音轨未处理。':'本版AI仅使用文字，未读取照片或视频画面。'}{latest.input_snapshot.mediaExclusionReason?` ${latest.input_snapshot.mediaExclusionReason}`:''}</p>}
         {latest && <SimpleAnalysisBoard analysis={latest} observation={detail.item} childName={childMap.get(analysisChildId)?.display_name ?? "幼儿"} responsePlans={responsePlans} evidence={detail.evidence} busy={busy} onRefresh={async () => { await Promise.all([refreshDetail(), load()]); }} onError={setError} />}
       </div> : <EmptyState title="还没有观察记录" description="教师可网页填写，也可上传现有观察表由AI提取字段后校对。" />}
@@ -616,7 +631,7 @@ export function RemoteCurriculumV32Page({ user }: { user: RemoteUser }) {
   useEffect(() => { loadWorkspace().catch((reason) => setError(showError(reason))); }, [selectedId]);
   const visible = clues.filter((item) => item.classroom_id === classroomId); const selected = visible.find((item) => item.id === selectedId) ?? visible[0];
   useEffect(() => { if (selected && selected.id !== selectedId) setSelectedId(selected.id); }, [classroomId, selected?.id]);
-  const adoptedEvidence = observations.filter((item) => item.classroom_id === classroomId && item.status === "adopted");
+  const adoptedEvidence = observations.filter((item) => item.classroom_id === classroomId && (item.status === "adopted" || item.has_adopted_analysis));
   const run = async (operation: () => Promise<void>) => { setBusy(true); setError(""); try { await operation(); } catch (reason) { setError(showError(reason)); } finally { setBusy(false); } };
   const latestPlan = workspace?.plans[0]; const selectedTemplate = templates.find((item) => item.id === templateId) ?? templates[0];
   const exportCurriculum = () => void run(async () => {

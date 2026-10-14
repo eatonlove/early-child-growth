@@ -53,6 +53,20 @@ describe('conservative analysis output repair', () => {
     expect(support.suggestedQuestions).toEqual(['你接下来想先试哪一种办法？为什么？']);
   });
 
+  it('replays the eight-comma activity-step and question arrays without accepting punctuation as content', () => {
+    const draft = fixture();
+    draft.responsePlans[0]!.activitySupport.steps = Array(8).fill(',');
+    draft.responsePlans[0]!.experienceSupport.suggestedQuestions = Array(8).fill(',');
+    expect(analysisResultSchema.safeParse(draft).success).toBe(false);
+    const facts = structuredClone(draft.facts);
+    const repaired = repairAnalysisOutput(draft);
+    expect(analysisResultSchema.safeParse(repaired.value).success).toBe(true);
+    expect(draft.responsePlans[0]!.activitySupport.steps).toHaveLength(3);
+    expect(draft.responsePlans[0]!.activitySupport.steps.every(step => /\p{L}/u.test(step))).toBe(true);
+    expect(draft.responsePlans[0]!.experienceSupport.suggestedQuestions).toEqual(['你接下来想先试哪一种办法？为什么？']);
+    expect(draft.facts).toEqual(facts);
+  });
+
   it('does not repair empty observed facts, wrong field types, or missing judgment flags', () => {
     const draft = fixture();
     draft.facts[0]!.content = '';

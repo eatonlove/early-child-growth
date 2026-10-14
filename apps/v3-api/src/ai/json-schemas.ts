@@ -1,7 +1,7 @@
 const string = (maxLength: number, minLength = 1) => ({ type: "string", minLength, maxLength });
 const stringArray = (maxItems: number, maxLength = 2000) => ({
   type: "array",
-  items: string(maxLength),
+  items: { ...string(maxLength), pattern: "[A-Za-z\\u3400-\\u9FFF]" },
   maxItems,
 });
 const confidence = { type: "number", minimum: 0, maximum: 1 };

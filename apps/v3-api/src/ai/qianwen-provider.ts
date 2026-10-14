@@ -34,6 +34,7 @@ import {
 } from "./contracts.js";
 import { analysisJsonSchema, classroomReportJsonSchema, curriculumActivityOptionsJsonSchema, curriculumJsonSchema, curriculumPlanContentJsonSchema, interestClusterJsonSchema, observationDocumentExtractionJsonSchema, reportJsonSchema, supportResearchJsonSchema } from "./json-schemas.js";
 import { QwenClient, type QwenContentPart } from "./qianwen-client.js";
+import { requireAttributedEvidence, subjectEvidenceSchema, subjectEvidenceJsonSchema, SUBJECT_EVIDENCE_PROMPT } from "./subject-evidence.js";
 import { normalizeAnalysisResult } from "./analysis-compatibility.js";
 import { rankKnowledgeCards } from "./scenario-provider.js";
 import { mergeVerifiedSources, searchAcademicSources, verifiedWebSources } from "./support-sources.js";
@@ -48,12 +49,13 @@ export interface QianwenProviderOptions {
   timeoutMs: number;
   visionTimeoutMs?: number;
   observationTimeoutMs?: number;
+  assessIndividualEvidence?: boolean;
   webSearchEnabled?: boolean;
   supportResearchTimeoutMs?:number;
 }
 
 const DOCUMENT_EXTRACTION_PROMPT_VERSION = "observation-document-extraction.qwen.v2";
-const OBSERVATION_PROMPT_VERSION = "observation-analysis.qwen.v9";
+const OBSERVATION_PROMPT_VERSION = "observation-analysis.qwen.v10";
 const ANALYSIS_REVISION_PROMPT_VERSION = "observation-analysis-revision.qwen.v1";
 const REPORT_PROMPT_VERSION = "period-report.qwen.v2";
 const REPORT_REVISION_PROMPT_VERSION = "period-report-revision.qwen.v1";
@@ -88,13 +90,16 @@ const observationSystemPrompt = `你是幼儿园“观察·识别·应答·拓�
 11.1 三套方案不得使用只有“继续探索、加强合作、提供丰富材料”等泛化表述。应优先采用approvedSchoolMemories和approvedExternalSupportReferences中的可执行做法，并结合本次场景写明材料规格或可改变变量、教师介入时机和能够观察到的后续行为；公开资料不能代替幼儿事实证据。
 12. 教师互动方式应在观察、平行游戏、提问、同伴支持、示范之间说明选择依据；只有幼儿持续受阻或主动求助时才建议最小必要示范，幼儿恢复计划、协商或验证后教师退出。
 
+【多人观察与证据不足】
+只分析target-child的直接证据。名单、衣着、群体评价、其他幼儿行为或已采用历史不能补足本次个人事实。前置核对判为不足时应停止生成个人分析，逐项提示缺少的动作、原话、互动过程或媒体定位；资料充分幼儿的结果独立保留。补充资料只用于对应目标幼儿，不能扩散成其他幼儿的事实。即使证据足以形成情境内线索，也不得推断稳定能力或制造与同伴的差异。
+
 【拓展与成长判断】
 13. learningPossibilities和gamePossibilities用于提出可生成的新问题、材料变量、表达表征或游戏延续方向，必须弱于核心“观察·识别·应答”，并保留开放性。
 14. 仅在adoptedHistory存在时进行跨时间比较；变化必须同时引用历史和当前证据。没有历史证据时明确不能判断成长变化或稳定模式。
 15. externalSupportReferences只能使用输入approvedExternalSupportReferences中已有的标题、网址、来源和建议，不得编造链接。外部资料只用于启发活动、材料和经验支持，不得作为该幼儿发展判断证据。
 
 【安全与格式】
-16. domainExperiences中每项missingEvidence必须说明本次证据边界；已有领域线索也须提醒不能据单次观察判断稳定能力，不得留空。每套应答的suggestedQuestions不得包含空白项，participationMode必须写明教师如何参与且不少于2字。
+16. domainExperiences中每项missingEvidence必须说明本次证据边界；已有领域线索也须提醒不能据单次观察判断稳定能力，不得留空。所有操作步骤、提问和观察重点都必须有可执行的文字，禁止用逗号、句号、序号或空白占位。每套应答的suggestedQuestions不得包含空白项，participationMode必须写明教师如何参与且不少于2字。
 17. 不得补写未发生的行为、原话、次数、时长或因果关系；不得输出达标/不达标、优秀/落后、正常/异常、聪明/能力差等标签。输出3个responsePlans、1-2个observationCut和2-5个observationFocus，并完全符合JSON Schema，不要输出Markdown。`;
 
 const documentExtractionSystemPrompt = `你是幼儿园观察记录表字段提取助手。你只负责从教师上传的文档或图片中提取已有内容，不分析幼儿发展，不补写事实。
@@ -656,6 +661,27 @@ export class QianwenAIProvider implements AIAnalysisProvider {
   async analyzeObservation(input: ObservationAnalysisInput): Promise<AIGeneration<AnalysisResult>> {
     const startedAt=Date.now();
     const outputRepairFields = new Set<string>();
+    if (this.options.assessIndividualEvidence) {
+      const content: QwenContentPart[] = [{type: 'text', text: JSON.stringify({
+        targetReference: 'target-child', subjectCount: input.observation.subject_count ?? 1,
+        objectiveObservation: input.observation.teacher_observation,
+        additionalObservation: input.observation.subject_additional_observation ?? '',
+        targetContext: input.observation.subject_context ?? '', targetIdentificationCues: input.observation.subject_identification_cues ?? [],
+        groupContext: input.observation.group_context ?? '', unlistedParticipantCount: input.observation.unlisted_participant_count ?? 0, targetMediaAnchors: input.observation.subject_evidence_anchors ?? [],
+        mediaEvidenceIds: input.media.map(item => item.id),
+      })}];
+      for (const media of input.media) {
+        content.push(media.evidenceType === 'photo' ? {type: 'image_url', image_url: {url: media.signedUrl, detail: 'auto'}} : {type: 'video_url', video_url: {url: media.signedUrl}, fps: 1});
+        content.push({type: 'text', text: `上一项媒体证据ID：${media.id}`});
+      }
+      const assessment = await this.client.structuredCompletion({
+        model: input.prompt?.model || (input.media.length ? this.options.visionModel : this.options.textModel),
+        messages: [{role: 'system', content: SUBJECT_EVIDENCE_PROMPT}, {role: 'user', content}],
+        schemaName: 'tongji_subject_evidence_assessment', jsonSchema: subjectEvidenceJsonSchema, validator: subjectEvidenceSchema,
+        timeoutMs: Math.min(input.media.length ? this.options.visionTimeoutMs ?? 240000 : this.options.observationTimeoutMs ?? this.options.timeoutMs, 60000),
+      });
+      requireAttributedEvidence(assessment, input);
+    }
     const prompt = configuredPrompt(input, "observation_analysis");
     const cards = rankKnowledgeCards(input.observation, input.knowledge, 12);
     const research=await this.researchSupport(input,cards);
@@ -691,6 +717,7 @@ export class QianwenAIProvider implements AIAnalysisProvider {
         observationFocusCategory: input.observation.observation_focus_category ?? null,
         observationFocus: input.observation.observation_focus ?? [],
         teacherObservation: input.observation.teacher_observation,
+        targetAdditionalObservation: input.observation.subject_additional_observation ?? "",
         childQuote: input.observation.child_quote || null,
         teacherIdentification: input.observation.teacher_identification,
         teacherResponse: input.observation.teacher_response,
@@ -732,7 +759,7 @@ export class QianwenAIProvider implements AIAnalysisProvider {
     };
     const content: QwenContentPart[] = [{
       type: "text",
-      text: `请严格按“观察→识别→应答→拓展”顺序完成匿名目标幼儿的结构化循证分析。先校验证据能否归属于target-child，再写客观白描；视频只分析可见画面，不推断未提供的音频内容。\n${JSON.stringify(promptData)}`,
+      text: `请严格按“观察→识别→应答→拓展”顺序完成匿名目标幼儿的结构化循证分析。展示文字称为“该幼儿”，不要输出target-child或peer-child等内部匿名标识；证据引用仍保持原始允许ID。先校验证据能否归属于target-child，再写客观白描；视频只分析可见画面，不推断未提供的音频内容。\n${JSON.stringify(promptData)}`,
     }];
     for (const media of input.media) {
       if (media.evidenceType === "photo") {
@@ -790,7 +817,7 @@ export class QianwenAIProvider implements AIAnalysisProvider {
       ])].slice(0, 8);
     }
     if (outputRepairFields.size) validated.warnings = [...new Set([
-      '部分空白证据边界说明或应答细节已按保守规则补充；补充内容不作为幼儿事实证据，请教师重点核对。',
+      '部分空白或标点占位的证据边界说明、操作步骤或应答细节已按保守规则补充；补充内容不作为幼儿事实证据，请教师重点核对。',
       ...validated.warnings,
     ])].slice(0, 8);
     validated.externalSupportReferences = externalSupportReferences;

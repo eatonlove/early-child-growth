@@ -1,3 +1,4 @@
+import { confirmedObservations, confirmedParticipantIds, latestAdoptedAnalyses } from "../domain/confirmed-evidence.js";
 import type { FastifyInstance } from "fastify";
 import { z } from "zod";
 import { resolveTenantPrompt } from "../ai/prompt-config.js";
@@ -131,44 +132,43 @@ export async function outcomeRoutes(app: FastifyInstance) {
     const { data: subjectRows, error: subjectError } = await auth.data.from("observation_subjects").select("observation_id").eq("child_id", id);
     if (subjectError) throw new ApiError(500, "GROWTH_SUBJECT_READ_FAILED", "幼儿观察关联读取失败");
     const observationIds = (subjectRows ?? []).map((item) => item.observation_id);
-    const [{ data: observations, error: observationError }, { data: analyses, error: analysisError }, { data: supports, error: supportError }, { data: classroomObservations, error: classroomObservationError }] = await Promise.all([
-      observationIds.length ? auth.data.from("observations").select("*").in("id", observationIds).eq("status", "adopted").order("occurred_at") : Promise.resolve({ data: [], error: null }),
+    const [{ data: observations, error: observationError }, { data: analyses, error: analysisError }, { data: supports, error: supportError }, { data: classroomObservations, error: classroomObservationError }, {data: classroomAnalyses, error: classroomAnalysisError}] = await Promise.all([
+      observationIds.length ? auth.data.from("observations").select("*").in("id", observationIds).order("occurred_at") : Promise.resolve({ data: [], error: null }),
       auth.data.from("analysis_runs").select("*").eq("child_id", id).eq("decision", "adopted").order("generated_at"),
       auth.data.from("support_actions").select("*").eq("child_id", id).order("created_at"),
-      auth.data.from("observations").select("id, child_id, scene, theme, occurred_at").eq("classroom_id", child.classroom_id).eq("status", "adopted").order("occurred_at"),
+      auth.data.from("observations").select("id, child_id, scene, theme, occurred_at").eq("classroom_id", child.classroom_id).order("occurred_at"),
+      auth.data.from('analysis_runs').select('id, observation_id, child_id, decision, generated_at').eq('classroom_id', child.classroom_id).eq('decision', 'adopted'),
     ]);
-    if (observationError || analysisError || supportError || classroomObservationError) throw new ApiError(500, "GROWTH_READ_FAILED", "成长轨迹读取失败");
-    const analysisIds = (analyses ?? []).map((item) => item.id);
+    if (observationError || analysisError || supportError || classroomObservationError || classroomAnalysisError) throw new ApiError(500, "GROWTH_READ_FAILED", "成长轨迹读取失败");
+    const officialAnalyses = latestAdoptedAnalyses(analyses ?? []);
+    const officialObservations = confirmedObservations(observations ?? [], officialAnalyses, id);
+    const officialClassObservations = confirmedObservations(classroomObservations ?? [], classroomAnalyses ?? []);
+    const analysisIds = officialAnalyses.map((item) => item.id);
     const { data: claimReviews, error: reviewError } = analysisIds.length
       ? await auth.data.from("analysis_claim_reviews").select("*").in("analysis_run_id", analysisIds)
       : { data: [], error: null };
     if (reviewError) throw new ApiError(500, "GROWTH_REVIEW_READ_FAILED", "成长轨迹正式审核结论读取失败");
-    const classroomObservationIds = (classroomObservations ?? []).map((item) => item.id);
-    const { data: classroomSubjects, error: classroomSubjectError } = classroomObservationIds.length
-      ? await auth.data.from("observation_subjects").select("observation_id, child_id").in("observation_id", classroomObservationIds)
-      : { data: [], error: null };
-    if (classroomSubjectError) throw new ApiError(500, "GROWTH_CLASSROOM_INTEREST_FAILED", "班级共同兴趣证据读取失败");
-    const analysisMap = new Map((analyses ?? []).map((item) => [item.observation_id, {
+    const analysisMap = new Map(officialAnalyses.map((item) => [item.observation_id, {
       ...item,
       structured_result: effectiveAnalysisResult(item.structured_result, (claimReviews ?? []).filter((review) => review.analysis_run_id === item.id)),
       claim_reviews: (claimReviews ?? []).filter((review) => review.analysis_run_id === item.id),
     }]));
     return {
       child,
-      timeline: (observations ?? []).map((observation) => ({
+      timeline: officialObservations.map((observation) => ({
         observation,
         analysis: analysisMap.get(observation.id) ?? null,
         supports: (supports ?? []).filter((item) => item.observation_id === observation.id),
       })),
       coverage: {
-        observations: observations?.length ?? 0,
-        scenes: [...new Set((observations ?? []).map((item) => item.scene))],
-        themes: mostFrequent((observations ?? []).map((item) => item.theme)),
+        observations: officialObservations.length,
+        scenes: [...new Set(officialObservations.map((item) => item.scene))],
+        themes: mostFrequent(officialObservations.map((item) => item.theme)),
         verifiedSupports: (supports ?? []).filter((item) => ["verified", "closed"].includes(item.status)).length,
       },
-      interestInsights: buildInterestInsights((classroomObservations ?? []).map((observation) => ({
+      interestInsights: buildInterestInsights(officialClassObservations.map((observation) => ({
         ...observation,
-        participant_child_ids: (classroomSubjects ?? []).filter((subject) => subject.observation_id === observation.id).map((subject) => subject.child_id),
+        participant_child_ids: confirmedParticipantIds(classroomAnalyses ?? [], observation.id),
       })), id),
     };
   });
@@ -203,7 +203,7 @@ export async function outcomeRoutes(app: FastifyInstance) {
         { data: children, error: childrenError },
         { data: curriculumClues, error: curriculumError },
       ] = await Promise.all([
-        auth.data.from("observations").select("*").eq("classroom_id", classroom.id).eq("status", "adopted").gte("occurred_at", `${input.periodStart}T00:00:00+08:00`).lte("occurred_at", `${input.periodEnd}T23:59:59+08:00`).order("occurred_at"),
+        auth.data.from("observations").select("*").eq("classroom_id", classroom.id).gte("occurred_at", `${input.periodStart}T00:00:00+08:00`).lte("occurred_at", `${input.periodEnd}T23:59:59+08:00`).order("occurred_at"),
         auth.data.from("analysis_runs").select("*").eq("classroom_id", classroom.id).eq("decision", "adopted"),
         auth.data.from("support_actions").select("*").eq("classroom_id", classroom.id),
         auth.data.from("children").select("id").eq("classroom_id", classroom.id).eq("status", "active"),
@@ -212,21 +212,18 @@ export async function outcomeRoutes(app: FastifyInstance) {
       if (observationError || analysisError || supportError || childrenError || curriculumError) {
         throw new ApiError(500, "CLASSROOM_REPORT_CONTEXT_FAILED", "班级周期报告证据读取失败");
       }
-      const adoptedObservations = observations ?? [];
+      const officialAnalyses = latestAdoptedAnalyses(analyses ?? []);
+      const adoptedObservations = confirmedObservations(observations ?? [], officialAnalyses);
       const observationIds = adoptedObservations.map((item) => item.id);
-      const { data: subjectRows, error: subjectError } = observationIds.length
-        ? await auth.data.from("observation_subjects").select("observation_id, child_id").in("observation_id", observationIds)
-        : { data: [], error: null };
-      if (subjectError) throw new ApiError(500, "CLASSROOM_REPORT_SUBJECTS_FAILED", "班级报告参与幼儿读取失败");
       const reportObservations = adoptedObservations.map((item) => ({
         ...item,
-        participant_child_ids: (subjectRows ?? []).filter((subject) => subject.observation_id === item.id).map((subject) => subject.child_id),
+        participant_child_ids: confirmedParticipantIds(officialAnalyses, item.id),
       }));
       const coverage = classroomReportEvidenceCoverage(reportObservations);
       if (!coverage.eligible) {
         throw new ApiError(409, "CLASSROOM_REPORT_COVERAGE_REQUIRED", "班级报告至少需要覆盖2名幼儿、2条观察、2个不同日期，且观察均已完成教师终审");
       }
-      const usedAnalyses = (analyses ?? []).filter((item) => observationIds.includes(item.observation_id));
+      const usedAnalyses = officialAnalyses.filter((item) => observationIds.includes(item.observation_id));
       const analysisIds = usedAnalyses.map((item) => item.id);
       const { data: claimReviews, error: reviewError } = analysisIds.length
         ? await auth.data.from("analysis_claim_reviews").select("*").in("analysis_run_id", analysisIds)
@@ -310,18 +307,20 @@ export async function outcomeRoutes(app: FastifyInstance) {
     const reportObservationIds = (reportSubjects ?? []).map((item) => item.observation_id);
     const [{ data: observations, error: observationError }, { data: analyses, error: analysisError }, { data: supports, error: supportError }] = await Promise.all([
       reportObservationIds.length
-        ? auth.data.from("observations").select("*").in("id", reportObservationIds).eq("status", "adopted").gte("occurred_at", `${input.periodStart}T00:00:00+08:00`).lte("occurred_at", `${input.periodEnd}T23:59:59+08:00`).order("occurred_at")
+        ? auth.data.from("observations").select("*").in("id", reportObservationIds).gte("occurred_at", `${input.periodStart}T00:00:00+08:00`).lte("occurred_at", `${input.periodEnd}T23:59:59+08:00`).order("occurred_at")
         : Promise.resolve({ data: [], error: null }),
       auth.data.from("analysis_runs").select("*").eq("child_id", child.id).eq("decision", "adopted"),
       auth.data.from("support_actions").select("*").eq("child_id", child.id),
     ]);
     if (observationError || analysisError || supportError) throw new ApiError(500, "REPORT_CONTEXT_READ_FAILED", "周期报告证据读取失败");
-    const coverage = reportEvidenceCoverage(observations ?? []);
+    const officialAnalyses = latestAdoptedAnalyses(analyses ?? []);
+    const officialObservations = confirmedObservations(observations ?? [], officialAnalyses, child.id);
+    const coverage = reportEvidenceCoverage(officialObservations);
     if (!coverage.eligible) {
       throw new ApiError(409, "REPORT_MULTI_TIMEPOINT_REQUIRED", "周期报告至少需要2条、跨2个不同日期且经教师终审采用的观察证据");
     }
-    const observationIds = (observations ?? []).map((item) => item.id);
-    const usedAnalyses = (analyses ?? []).filter((item) => observationIds.includes(item.observation_id));
+    const observationIds = officialObservations.map((item) => item.id);
+    const usedAnalyses = officialAnalyses.filter((item) => observationIds.includes(item.observation_id));
     const analysisIds = usedAnalyses.map((item) => item.id);
     const { data: claimReviews, error: reviewError } = analysisIds.length
       ? await auth.data.from("analysis_claim_reviews").select("*").in("analysis_run_id", analysisIds)
@@ -339,7 +338,7 @@ export async function outcomeRoutes(app: FastifyInstance) {
         childName: child.display_name,
         periodStart: input.periodStart,
         periodEnd: input.periodEnd,
-        observations: observations ?? [],
+        observations: officialObservations,
         analyses: effectiveAnalyses,
         supports: usedSupports,
         prompt: await resolveTenantPrompt(auth.tenantId, "individual_period_report"),
@@ -356,7 +355,7 @@ export async function outcomeRoutes(app: FastifyInstance) {
     }
     const content = {
       ...generated.data,
-      developmentProfile: buildIndividualDevelopmentProfile(observations ?? [], effectiveAnalyses),
+      developmentProfile: buildIndividualDevelopmentProfile(officialObservations, effectiveAnalyses),
       aiMeta: {
         provider: generated.provider,
         model: generated.model,
@@ -497,8 +496,12 @@ export async function outcomeRoutes(app: FastifyInstance) {
   app.post("/api/curriculum-clues/scan", { config: { rateLimit: { max: 10, timeWindow: "1 hour" } } }, async (request) => {
     const auth = await authenticate(request);
     const { classroomId } = z.object({ classroomId: uuid }).parse(request.body);
-    const { data: observations, error } = await auth.data.from("observations").select("id, child_id, scene, theme, occurred_at, teacher_identification, teacher_response").eq("classroom_id", classroomId).eq("status", "adopted").order("occurred_at");
+    const { data: rawObservations, error } = await auth.data.from("observations").select("id, child_id, scene, theme, occurred_at, teacher_identification, teacher_response").eq("classroom_id", classroomId).order("occurred_at");
     if (error) throw new ApiError(500, "CURRICULUM_SCAN_FAILED", "课程线索扫描失败");
+    const {data: acceptedRows, error: acceptedError} = await auth.data.from('analysis_runs').select('id, observation_id, child_id, decision, generated_at').eq('classroom_id', classroomId).eq('decision', 'adopted');
+    if (acceptedError) throw new ApiError(500, 'CURRICULUM_CONFIRMED_EVIDENCE_FAILED', '课程已采用证据读取失败');
+    const accepted = latestAdoptedAnalyses(acceptedRows ?? []);
+    const observations = confirmedObservations(rawObservations ?? [], accepted);
     if (!observations?.length) return { items: [] };
     const [clusteringPrompt, curriculumPrompt] = await Promise.all([
       resolveTenantPrompt(auth.tenantId, "curriculum_interest_clustering"),
@@ -524,9 +527,7 @@ export async function outcomeRoutes(app: FastifyInstance) {
       const group = cluster.observationIds.map((id) => observationMap.get(id)).filter((item): item is NonNullable<typeof item> => Boolean(item));
       if (!group || group.length < 2) continue;
       const groupObservationIds = group.map((item) => item.id);
-      const { data: groupSubjects, error: groupSubjectError } = await auth.data.from("observation_subjects").select("child_id").in("observation_id", groupObservationIds);
-      if (groupSubjectError) throw new ApiError(500, "CURRICULUM_SUBJECTS_FAILED", "课程参与幼儿读取失败");
-      const childIds = [...new Set((groupSubjects?.length ? groupSubjects : group).map((item) => item.child_id))];
+      const childIds = [...new Set(accepted.filter(item => groupObservationIds.includes(item.observation_id)).map(item => item.child_id))];
       const timePoints = [...new Set(group.map((item) => chinaCalendarDate(item.occurred_at)))];
       const thresholdMet = (childIds.length >= 2 || group.length >= 3) && timePoints.length >= 2;
       const scope = childIds.length === 1 ? "individual_support" as const : "classroom_curriculum" as const;

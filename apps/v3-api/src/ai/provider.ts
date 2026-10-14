@@ -22,6 +22,7 @@ import type {
   ReportGenerationInput,
   ReportRevisionInput,
 } from "./contracts.js";
+import { InsufficientObservationEvidenceError, hasExplicitTargetBehavior } from "./subject-evidence.js";
 import { QianwenAIProvider, type QianwenProviderOptions } from "./qianwen-provider.js";
 import { buildScenarioActivityOptions, buildScenarioAnalysis, buildScenarioClassroomReport, buildScenarioCurriculum, buildScenarioCurriculumPlan, buildScenarioInterestClusters, buildScenarioObservationExtraction, buildScenarioReport, buildScenarioRevision } from "./scenario-provider.js";
 
@@ -31,6 +32,7 @@ export interface AIProviderConfig extends QianwenProviderOptions {
 }
 
 class ScenarioAIProvider implements AIAnalysisProvider {
+  constructor(private readonly assessIndividualEvidence = false) {}
   async analyzeResourceCategory(input: ResourceCategoryAnalysisInput): Promise<AIGeneration<ResourceCategoryAnalysis>> {
     const ids = input.resources.map((item) => item.packageId);
     return {
@@ -52,8 +54,11 @@ class ScenarioAIProvider implements AIAnalysisProvider {
   }
 
   async analyzeObservation(input: ObservationAnalysisInput): Promise<AIGeneration<AnalysisResult>> {
+    if (this.assessIndividualEvidence && (input.observation.subject_count ?? 1) > 1 && !hasExplicitTargetBehavior(input.observation.teacher_observation) && !hasExplicitTargetBehavior(input.observation.subject_additional_observation ?? '', true)) {
+      throw new InsufficientObservationEvidenceError('本次文字未记录可明确归属该幼儿的行为。', ['补充该幼儿的具体动作、关键原话或互动过程。']);
+    }
     return {
-      data: buildScenarioAnalysis(input.observation, input.knowledge, input.history),
+      data: buildScenarioAnalysis({...input.observation, teacher_observation: input.observation.subject_additional_observation || input.observation.teacher_observation}, input.knowledge, input.history),
       provider: "ScenarioAIProvider",
       model: "simulated-ai-v3",
       promptVersion: "observation-analysis.v3.2",
@@ -218,7 +223,7 @@ class ResilientAIProvider implements AIAnalysisProvider {
     try {
       return await runPrimary();
     } catch (error) {
-      if (!this.fallbackEnabled) throw error;
+      if (error instanceof InsufficientObservationEvidenceError || !this.fallbackEnabled) throw error;
       const fallback = await runFallback();
       const reason = error instanceof Error ? error.message : "未知错误";
       return {
@@ -231,7 +236,7 @@ class ResilientAIProvider implements AIAnalysisProvider {
 }
 
 export function createAIProvider(config: AIProviderConfig): AIAnalysisProvider {
-  const scenario = new ScenarioAIProvider();
+  const scenario = new ScenarioAIProvider(config.assessIndividualEvidence);
   if (config.mode === "simulated") return scenario;
   const qianwen = new QianwenAIProvider({
     apiKey: config.apiKey,
@@ -241,6 +246,7 @@ export function createAIProvider(config: AIProviderConfig): AIAnalysisProvider {
     timeoutMs: config.timeoutMs,
     visionTimeoutMs: config.visionTimeoutMs,
     observationTimeoutMs: config.observationTimeoutMs,
+    assessIndividualEvidence: config.assessIndividualEvidence,
     webSearchEnabled: config.webSearchEnabled,
   });
   return new ResilientAIProvider(qianwen, scenario, config.fallbackToSimulated);

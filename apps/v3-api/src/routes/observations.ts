@@ -1,3 +1,6 @@
+import { InsufficientObservationEvidenceError, anonymizeSubjectNames, uniqueSubjectCues } from "../ai/subject-evidence.js";
+import { subjectResults, replaceSubjectResult, mergeSubjectResults } from "../domain/analysis-subject-results.js";
+import { hasPlaceholderSupport } from "../ai/text-quality.js";
 import { randomUUID } from "node:crypto";
 import { observationInput } from "../domain/observation-contracts.js";
 import {createReadStream,createWriteStream} from 'node:fs';
@@ -41,6 +44,7 @@ const aiProvider = createAIProvider({
   timeoutMs: config.QWEN_TIMEOUT_MS,
   visionTimeoutMs: config.QWEN_VISION_TIMEOUT_MS,
   observationTimeoutMs: config.QWEN_OBSERVATION_TIMEOUT_MS,
+  assessIndividualEvidence: true,
   webSearchEnabled: config.qwenWebSearchEnabled,
   fallbackToSimulated: config.aiFallbackToSimulated,
 });
@@ -108,7 +112,11 @@ export async function observationRoutes(app: FastifyInstance) {
     }
     const { data, error } = await builder;
     if (error) throw new ApiError(500, "OBSERVATION_LIST_FAILED", "观察记录读取失败");
-    return { items: data ?? [] };
+    const ids = (data ?? []).map(item => item.id);
+    const {data: confirmed, error: confirmedError} = ids.length ? await auth.data.from('analysis_runs').select('observation_id').in('observation_id', ids).eq('decision', 'adopted') : {data: [], error: null};
+    if (confirmedError) throw new ApiError(500, 'OBSERVATION_CONFIRMED_READ_FAILED', '观察已采用状态读取失败');
+    const adoptedIds = new Set((confirmed ?? []).map(item => item.observation_id));
+    return {items: (data ?? []).map(item => ({...item, has_adopted_analysis: adoptedIds.has(item.id)}))};
   });
 
   app.get("/api/observations/:id", async (request) => {
@@ -124,7 +132,7 @@ export async function observationRoutes(app: FastifyInstance) {
       observation.observer_ids?.length
         ? serviceClient.schema(config.SUPABASE_SCHEMA).from("profiles").select("user_id, display_name, role").eq("tenant_id", auth.tenantId).in("user_id", observation.observer_ids)
         : Promise.resolve({ data: [], error: null }),
-      auth.data.from("analysis_jobs").select("*").eq("observation_id", id).order("created_at", { ascending: false }).limit(1),
+      auth.data.from("analysis_jobs").select("*").eq("observation_id", id).order("created_at", { ascending: false }).limit(100),
     ]);
     if (evidenceError || analysisError || subjectError || responseError || observerError || analysisJobError) throw new ApiError(500, "OBSERVATION_DETAIL_FAILED", "观察证据、参与幼儿、观察者或分析结果读取失败");
     const subjectChildIds = (subjectRows ?? []).map((item) => item.child_id);
@@ -159,6 +167,8 @@ export async function observationRoutes(app: FastifyInstance) {
     return {
       item: observation,
       canDelete: auth.role === 'researcher' || observation.created_by === auth.userId,
+      canSupplement: auth.role === 'researcher' || observation.created_by === auth.userId,
+      analysisSubjectResults: mergeSubjectResults(analysisJobs ?? []),
       evidence: evidence ?? [],
       analyses: analysesWithClaims,
       subjects: (subjectRows ?? []).map((item) => ({ ...item, display_name: childMap.get(item.child_id) ?? "园内幼儿" })),
@@ -523,9 +533,31 @@ export async function observationRoutes(app: FastifyInstance) {
     return { url: data.signedUrl, expiresIn: 300 };
   });
 
+  app.patch('/api/observations/:id/subjects/:childId/supplement', async request => {
+    const auth = await authenticate(request);
+    const {id, childId} = z.object({id: uuid, childId: uuid}).parse(request.params);
+    const input = z.object({additionalObservation: z.string().trim().max(6000), contextualFeature: z.string().trim().max(500), evidenceAnchors: z.array(z.string().trim().min(1).max(160)).max(20)}).refine(value => value.additionalObservation || value.contextualFeature || value.evidenceAnchors.length, {message: '请补充观察事实或媒体定位'}).parse(request.body);
+    const {data: visible, error: readError} = await auth.data.from('observations').select('id').eq('id', id).maybeSingle();
+    if (readError) throw new ApiError(500, 'OBSERVATION_LOOKUP_FAILED', '观察记录读取失败');
+    if (!visible) throw new ApiError(404, 'OBSERVATION_NOT_FOUND', '观察记录不存在或无权访问');
+    const {data, error} = await serviceClient.schema(config.SUPABASE_SCHEMA).rpc('supplement_observation_subject', {
+      target_tenant_id: auth.tenantId, target_observation_id: id, target_child_id: childId, actor_user_id: auth.userId,
+      target_additional_observation: input.additionalObservation, target_contextual_feature: input.contextualFeature, target_evidence_anchors: input.evidenceAnchors,
+    });
+    if (error) {
+      if (error.code === '42501') throw new ApiError(403, 'SUPPLEMENT_FORBIDDEN', '仅观察创建教师或本园教研员可以补充这份观察');
+      if (error.code === 'P0002') throw new ApiError(404, 'SUBJECT_NOT_FOUND', '观察或参与幼儿不存在');
+      if (error.code === 'P0001') throw new ApiError(409, 'OBSERVATION_ANALYSIS_ACTIVE', '本观察正在分析，请结束后再补充，避免改变分析中的证据');
+      if (error.code === '22023') throw new ApiError(422, 'SUPPLEMENT_INVALID', '补充内容超出长度限制或没有实际内容');
+      throw new ApiError(500, 'SUPPLEMENT_SAVE_FAILED', '补充观察保存失败，请重试');
+    }
+    return {item: data};
+  });
+
   app.post("/api/observations/:id/analyze", { config: { rateLimit: { max: 20, timeWindow: "1 hour" } } }, async (request, reply) => {
     const auth = await authenticate(request);
     const { id } = z.object({ id: uuid }).parse(request.params);
+    const {childIds} = z.object({childIds: z.array(uuid).min(1).max(30).refine(ids => new Set(ids).size === ids.length).optional()}).parse(request.body ?? {});
     const { data: observation, error: observationError } = await auth.data.from("observations").select("*").eq("id", id).maybeSingle();
     if (observationError) throw new ApiError(500, "OBSERVATION_LOOKUP_FAILED", "观察记录读取失败");
     if (!observation) throw new ApiError(404, "OBSERVATION_NOT_FOUND", "观察记录不存在或无权访问");
@@ -535,24 +567,17 @@ export async function observationRoutes(app: FastifyInstance) {
       .eq("observation_id", id).in("status", ["queued", "processing"]).order("created_at", { ascending: false }).limit(1).maybeSingle();
     if (activeJobError) throw new ApiError(500, "ANALYSIS_JOB_READ_FAILED", "AI分析任务状态读取失败");
     if (activeJob) return reply.status(202).send({ item: activeJob });
-    const { data: job, error: jobError } = await schema.from("analysis_jobs").insert({
-      tenant_id: auth.tenantId,
-      classroom_id: observation.classroom_id,
-      observation_id: observation.id,
-      requested_by: auth.userId,
-      status: "queued",
-      stage: "queued",
-      progress: 0,
-    }).select().single();
-    if (jobError || !job) {
-      if (jobError?.code === "23505") {
-        const { data: racedJob } = await auth.data.from("analysis_jobs").select("*")
-          .eq("observation_id", id).in("status", ["queued", "processing"]).order("created_at", { ascending: false }).limit(1).maybeSingle();
-        if (racedJob) return reply.status(202).send({ item: racedJob });
-      }
-      throw new ApiError(500, "ANALYSIS_JOB_CREATE_FAILED", "AI分析任务创建失败");
+    const {data: queued, error: jobError} = await schema.rpc('create_subject_analysis_job', {
+      target_tenant_id: auth.tenantId, target_observation_id: id, actor_user_id: auth.userId, target_child_ids: childIds ?? null,
+    });
+    if (jobError || !queued?.item) {
+      if (jobError?.code === '22023') throw new ApiError(422, 'ANALYSIS_SUBJECT_INVALID', '只能选择本观察中不重复的参与幼儿');
+      if (jobError?.code === '42501') throw new ApiError(403, 'ANALYSIS_FORBIDDEN', '无权分析这份观察');
+      if (jobError?.code === 'P0002') throw new ApiError(404, 'OBSERVATION_NOT_FOUND', '观察记录不存在');
+      throw new ApiError(500, 'ANALYSIS_JOB_CREATE_FAILED', 'AI分析任务创建失败');
     }
-    await audit(auth, "analysis.queued", "analysis_job", job.id, { observationId: id });
+    const job = queued.item;
+    if (!queued.created) return reply.status(202).send({item: job});
     reply.status(202).send({ item: job });
 
     const updateJob = async (value: Record<string, unknown>) => {
@@ -560,10 +585,12 @@ export async function observationRoutes(app: FastifyInstance) {
         .eq("id", job.id).eq("tenant_id", auth.tenantId);
       if (error) request.log.warn({ dbError: error, analysisJobId: job.id }, "analysis job progress update failed");
     };
+    let taskSubjectResults = subjectResults(job.subject_results);
+    const createdRunIds: string[] = [];
     enqueueAnalysisTask(async () => {
       await updateJob({ status: "processing", stage: "preparing", progress: 3, attempt_count: 1, started_at: new Date().toISOString() });
       try {
-    const [{ data: classroom, error: classroomError }, { data: evidence, error: evidenceError }, { data: subjectRows, error: subjectError }, { data: professionalMemories, error: memoryError }, { data: frameworkRows, error: frameworkError }] = await Promise.all([
+    const [{ data: classroom, error: classroomError }, { data: evidence, error: evidenceError }, { data: allSubjectRows, error: subjectError }, { data: professionalMemories, error: memoryError }, { data: frameworkRows, error: frameworkError }] = await Promise.all([
       schema.from("classrooms").select("id, grade").eq("tenant_id", auth.tenantId).eq("id", observation.classroom_id).single(),
       schema.from("evidence_assets").select("id, evidence_type, transcript, event_segments, upload_status, storage_path, mime_type").eq("tenant_id", auth.tenantId).eq("observation_id", id).eq("upload_status", "ready"),
       schema.from("observation_subjects").select("*").eq("tenant_id", auth.tenantId).eq("observation_id", id).order("role"),
@@ -571,8 +598,10 @@ export async function observationRoutes(app: FastifyInstance) {
       schema.from("analysis_framework_versions").select("id, framework_type, name, version, description, dimensions").eq("tenant_id", auth.tenantId).eq("status", "active").eq("is_default", true).order("framework_type"),
     ]);
     if (classroomError || evidenceError || subjectError || memoryError || frameworkError) throw new ApiError(500, "ANALYSIS_CONTEXT_READ_FAILED", "AI分析上下文读取失败");
-    if (!classroom || !subjectRows?.length) throw new ApiError(422, "ANALYSIS_CONTEXT_MISSING", "班级或观察幼儿信息不完整");
-    const subjectIds = subjectRows.map((item) => item.child_id);
+    const requestedIds = new Set(taskSubjectResults.map(item => item.childId));
+    const subjectRows = (allSubjectRows ?? []).filter(item => requestedIds.has(item.child_id));
+    if (!classroom || !subjectRows.length) throw new ApiError(422, "ANALYSIS_CONTEXT_MISSING", "班级或观察幼儿信息不完整");
+    const subjectIds = (allSubjectRows ?? []).map((item) => item.child_id);
     const { data: children, error: childError } = await schema.from("children").select("id, display_name, birth_month, guardian_consent_status").eq("tenant_id", auth.tenantId).in("id", subjectIds);
     if (childError || (children ?? []).length !== subjectIds.length) throw new ApiError(500, "ANALYSIS_CHILDREN_READ_FAILED", "观察幼儿信息读取失败");
     const { data: knowledge, error: knowledgeError } = await schema.from("knowledge_cards").select("*")
@@ -581,19 +610,16 @@ export async function observationRoutes(app: FastifyInstance) {
     if (knowledgeError || !knowledge?.length) throw new ApiError(409, "KNOWLEDGE_NOT_READY", "当前班级年龄段知识库尚未初始化");
     await updateJob({ stage: "context_ready", progress: 18 });
     const analysisPrompt = await resolveTenantPrompt(auth.tenantId, "observation_analysis");
-    const createdRunIds: string[] = [];
     const analyses: any[] = [];
     const notices = new Set<string>();
-    const cleanupCreatedAnalyses = async () => {
-      if (!createdRunIds.length) return;
-      await schema.from("response_plans").delete().in("analysis_run_id", createdRunIds).eq("tenant_id", auth.tenantId);
-      await schema.from("analysis_runs").delete().in("id", createdRunIds).eq("tenant_id", auth.tenantId);
-    };
-    try {
       for (const [subjectIndex, subject] of subjectRows.entries()) {
         const child = (children ?? []).find((item) => item.id === subject.child_id)!;
+        let currentRunId: string | null = null;
+        taskSubjectResults = replaceSubjectResult(taskSubjectResults, {childId: child.id, status: 'processing', explanation: '', missingInformation: [], analysisRunId: null});
+        try {
         await updateJob({
           stage: "analyzing_subject",
+          subject_results: taskSubjectResults,
           progress: Math.round(22 + (subjectIndex / subjectRows.length) * 62),
         });
         const { data: historySubjects, error: historySubjectError } = await schema.from("observation_subjects").select("observation_id").eq("tenant_id", auth.tenantId).eq("child_id", child.id).neq("observation_id", id).order("created_at", { ascending: false }).limit(24);
@@ -601,7 +627,7 @@ export async function observationRoutes(app: FastifyInstance) {
         const historyIds = (historySubjects ?? []).map((item) => item.observation_id);
         const { data: historicalObservations, error: historyError } = historyIds.length
           ? await schema.from("observations").select("id, occurred_at, scene, theme, teacher_observation, child_quote, teacher_identification, teacher_response")
-            .eq("tenant_id", auth.tenantId).in("id", historyIds).eq("status", "adopted").lt("occurred_at", observation.occurred_at).order("occurred_at", { ascending: true }).limit(12)
+            .eq("tenant_id", auth.tenantId).in("id", historyIds).lt("occurred_at", observation.occurred_at).order("occurred_at", { ascending: true }).limit(12)
           : { data: [], error: null };
         if (historyError) throw new ApiError(500, "ANALYSIS_HISTORY_READ_FAILED", "历史观察证据读取失败");
         const historicalIds = (historicalObservations ?? []).map((item) => item.id);
@@ -616,7 +642,8 @@ export async function observationRoutes(app: FastifyInstance) {
         if (historicalReviewError) throw new ApiError(500, "ANALYSIS_HISTORY_REVIEW_READ_FAILED", "历史审核结论读取失败");
         const latestAnalysisByObservation = new Map<string, any>();
         for (const analysis of historicalAnalyses ?? []) if (!latestAnalysisByObservation.has(analysis.observation_id)) latestAnalysisByObservation.set(analysis.observation_id, analysis);
-        const history = (historicalObservations ?? []).map((item) => {
+        const adoptedHistoryIds = new Set((historicalAnalyses ?? []).map(item => item.observation_id));
+        const history = (historicalObservations ?? []).filter(item => adoptedHistoryIds.has(item.id)).map((item) => {
           const priorAnalysis = latestAnalysisByObservation.get(item.id);
           const reviews = (historicalReviews ?? []).filter((review) => review.analysis_run_id === priorAnalysis?.id);
           const official = priorAnalysis ? effectiveAnalysisResult(priorAnalysis.structured_result, reviews) : null;
@@ -645,6 +672,10 @@ export async function observationRoutes(app: FastifyInstance) {
         }
         const observationForChild = {
           ...observation,
+          teacher_observation: anonymizeSubjectNames(observation.teacher_observation, children ?? [], child.id),
+          subject_count: (allSubjectRows ?? []).length,
+          subject_identification_cues: uniqueSubjectCues(subject.contextual_feature || '', (allSubjectRows ?? []).filter(other => other.child_id !== child.id).map(other => other.contextual_feature || '')),
+          subject_additional_observation: anonymizeSubjectNames(subject.additional_observation || '', children ?? [], child.id),
           subject_context: subject.contextual_feature || "未补充本次个体情境特征",
           subject_role: subject.role,
           subject_evidence_anchors: subject.evidence_anchors ?? [],
@@ -710,7 +741,7 @@ export async function observationRoutes(app: FastifyInstance) {
           risk_flags: structuredResult.warnings, generated_by: auth.userId,
         }).select().single();
         if (error) throw new ApiError(500, "AI_ANALYSIS_SAVE_FAILED", `${child.display_name}的AI分析结果保存失败`);
-        createdRunIds.push(analysis.id);
+        currentRunId = analysis.id;
         const claims = flattenAnalysisClaims(structuredResult).map((claim) => ({
           tenant_id: auth.tenantId, classroom_id: observation.classroom_id, child_id: child.id,
           observation_id: observation.id, analysis_run_id: analysis.id,
@@ -730,53 +761,49 @@ export async function observationRoutes(app: FastifyInstance) {
           schema.from("response_plans").insert(responsePlans),
         ]);
         if (claimError || responseError) throw new ApiError(500, "AI_REVIEW_ITEMS_SAVE_FAILED", `${child.display_name}的审核项或应答方案初始化失败`);
+        createdRunIds.push(analysis.id);
+        taskSubjectResults = replaceSubjectResult(taskSubjectResults, {childId: child.id, status: 'completed', explanation: '已生成待教师审核的个人分析。', missingInformation: [], analysisRunId: analysis.id});
         analyses.push({ ...analysis, subject: { ...subject, display_name: child.display_name } });
         await updateJob({
           stage: "saving_subject",
           progress: Math.round(22 + ((subjectIndex + 1) / subjectRows.length) * 62),
           analysis_run_ids: createdRunIds,
+          subject_results: taskSubjectResults,
         });
+        } catch (reason) {
+          if (currentRunId) {
+            await schema.from('response_plans').delete().eq('analysis_run_id', currentRunId).eq('tenant_id', auth.tenantId);
+            await schema.from('analysis_runs').delete().eq('id', currentRunId).eq('tenant_id', auth.tenantId);
+          }
+          if (reason instanceof InsufficientObservationEvidenceError) {
+            taskSubjectResults = replaceSubjectResult(taskSubjectResults, {childId: child.id, status: 'needs_more_evidence', explanation: reason.reason, missingInformation: reason.missingInformation, analysisRunId: null});
+            request.log.info({analysisJobId: job.id, observationId: id, childId: child.id}, 'subject requires more observation evidence');
+          } else {
+            const explanation = reason instanceof ApiError ? reason.message : reason instanceof QwenRequestError && reason.message === '千问请求超时'
+              ? '该幼儿的AI请求超时，可单独重试。' : reason instanceof QwenRequestError && reason.message.startsWith('千问结构化输出未通过业务校验')
+              ? '该幼儿的AI草稿内容未通过校验，可单独重试。' : '该幼儿的AI分析暂时失败，可单独重试。';
+            taskSubjectResults = replaceSubjectResult(taskSubjectResults, {childId: child.id, status: 'failed', explanation, missingInformation: [], analysisRunId: null});
+            request.log.error({err: reason, analysisJobId: job.id, observationId: id, childId: child.id}, 'individual AI analysis failed');
+          }
+          await updateJob({stage: 'saving_subject', progress: Math.round(22 + ((subjectIndex + 1) / subjectRows.length) * 62), subject_results: taskSubjectResults, analysis_run_ids: createdRunIds});
+        }
       }
-    } catch (reason) {
-      await cleanupCreatedAnalyses();
-      if (reason instanceof ApiError) throw reason;
-      request.log.error({ err: reason, observationId: id }, "multi-subject AI analysis failed");
-      if (reason instanceof QwenRequestError && reason.message === "千问请求超时") {
-        throw new ApiError(504, "AI_ANALYSIS_TIMEOUT", "本次AI分析请求超时，观察记录已保留，请稍后重试");
-      }
-      if (reason instanceof QwenRequestError && reason.message.startsWith("千问结构化输出未通过业务校验")) {
-        throw new ApiError(502, "AI_ANALYSIS_OUTPUT_INVALID", "AI生成的草稿仍有未完成或格式不正确的内容，观察记录已保留，请重新分析");
-      }
-      throw new ApiError(502, "AI_ANALYSIS_FAILED", "AI分析暂时不可用，请稍后重试");
+    if (analyses.length) {
+      const {error: statusError} = await schema.from('observations').update({status: 'ai_ready'}).eq('id', observation.id).eq('tenant_id', auth.tenantId);
+      if (statusError) throw new ApiError(500, 'AI_ANALYSIS_STATE_FAILED', '已生成个人分析，但观察状态更新失败，请刷新后查看');
     }
-    const { error: statusError } = await serviceClient
-      .schema(config.SUPABASE_SCHEMA)
-      .from("observations")
-      .update({ status: "ai_ready" })
-      .eq("id", observation.id)
-      .eq("tenant_id", auth.tenantId);
-    if (statusError) {
-      await cleanupCreatedAnalyses();
-      throw new ApiError(500, "AI_ANALYSIS_STATE_FAILED", "AI分析状态保存失败，结果已回滚");
-    }
-    try {
-      await audit(auth, "analysis.generated", "observation", observation.id, {
-        observationId: observation.id,
-        childIds: subjectIds,
-        analysisRunIds: createdRunIds,
-        analysisCount: analyses.length,
-      });
-    } catch (reason) {
-      await cleanupCreatedAnalyses();
-      await schema.from("observations").update({ status: observation.status })
-        .eq("id", observation.id).eq("tenant_id", auth.tenantId);
-      throw reason;
-    }
-    const notice = [...notices].join("；");
-        await updateJob({
-          status: "completed", stage: "completed", progress: 100,
-          analysis_run_ids: createdRunIds, ai_notice: notice, completed_at: new Date().toISOString(),
-        });
+    const missingCount = taskSubjectResults.filter(item => item.status === 'needs_more_evidence').length;
+    const failedCount = taskSubjectResults.filter(item => item.status === 'failed').length;
+    await audit(auth, 'analysis.processed', 'observation', observation.id, {observationId: id, analysisRunIds: createdRunIds, missingChildIds: taskSubjectResults.filter(item => item.status === 'needs_more_evidence').map(item => item.childId), failedChildIds: taskSubjectResults.filter(item => item.status === 'failed').map(item => item.childId)});
+    await updateJob({
+      status: !analyses.length && failedCount ? 'failed' : 'completed',
+      stage: !analyses.length && failedCount ? 'failed' : missingCount || failedCount ? (analyses.length ? 'partially_completed' : 'needs_more_evidence') : 'completed',
+      progress: 100, analysis_run_ids: createdRunIds, subject_results: taskSubjectResults,
+      ai_notice: `${analyses.length}名幼儿已生成分析；${missingCount}名待补充资料；${failedCount}名可单独重试。${[...notices].join('；')}`,
+      error_code: !analyses.length && failedCount ? 'AI_SUBJECT_ANALYSIS_FAILED' : null,
+      error_message: !analyses.length && failedCount ? '部分幼儿分析失败，具体原因请查看逐名结果。' : null,
+      completed_at: new Date().toISOString(),
+    });
       } catch (reason) {
         const error = reason instanceof ApiError
           ? reason
@@ -784,6 +811,7 @@ export async function observationRoutes(app: FastifyInstance) {
         request.log.error({ err: reason, observationId: id, analysisJobId: job.id }, "background AI analysis job failed");
         await updateJob({
           status: "failed", stage: "failed", progress: 100,
+          subject_results: taskSubjectResults, analysis_run_ids: createdRunIds,
           error_code: error.code, error_message: error.message, completed_at: new Date().toISOString(),
         });
       }
@@ -805,6 +833,9 @@ export async function observationRoutes(app: FastifyInstance) {
       reviewed_content: null, decision: input.decision === "adopted" ? "adopted" : "rejected",
       review_note: input.note || null, reviewed_by: auth.userId, reviewed_at: now,
     }));
+    if (input.decision === 'adopted' && hasPlaceholderSupport(analysis.structured_result)) {
+      throw new ApiError(409, 'AI_ANALYSIS_OUTPUT_INVALID', '本版应答含无效步骤或提问，请生成新版本并核对后再采用');
+    }
     const { error: reviewError } = await serviceClient.schema(config.SUPABASE_SCHEMA).from("analysis_claim_reviews").upsert(rows, { onConflict: "analysis_run_id,claim_key" });
     if (reviewError) throw new ApiError(500, "ANALYSIS_REVIEW_SAVE_FAILED", "AI逐条审核结果保存失败");
     const { data, error } = await auth.data.schema(config.SUPABASE_SCHEMA).rpc("finalize_analysis_review", { target_analysis_id: id, target_note: input.note || null });

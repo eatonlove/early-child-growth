@@ -168,6 +168,17 @@
 | PATCH | `/analyses/:id/claims/:claimKey` | 兼容历史精细审阅数据，不在当前教师页面暴露 |
 | POST | `/analyses/:id/finalize` | 兼容历史精细审阅数据，不在当前教师页面暴露 |
 
+逐幼儿处理契约（2026-10-14）：
+
+- `POST /observations/:id/analyze` 请求体可省略以处理全部参与幼儿，或传 `{"childIds":["uuid"]}` 只重试指定幼儿。只接受本观察中不重复的1至30名幼儿；活动任务存在时仍返回同一任务。创建任务与排队审计在数据库事务内完成。
+- `analysis_jobs.subject_results` 保存每名请求幼儿的 `childId`、`status`（`queued | processing | completed | needs_more_evidence | failed`）、`explanation`、`missingInformation` 与可空的 `analysisRunId`。读取观察详情额外返回 `analysisSubjectResults`，按幼儿合并最近任务，保留未被本次单人重试覆盖的其他幼儿结果。
+- 逐名先核对当前客观白描、目标幼儿补充事实与实际送入模型的授权媒体；名单、衣着位置、泛化评价、同伴动作和历史结论不能单独作为本次个人分析的依据。资料不足不生成个人分析或应答方案，而是返回可操作的补充清单；其他幼儿继续处理。
+- 全部资料不足时任务 `status=completed, stage=needs_more_evidence`；部分出结果时 `stage=partially_completed`。技术失败单独记录在对应幼儿，已完成结果保留。进程重启也保留完整个人结果，只清理未完成的写入。
+- `PATCH /observations/:id/subjects/:childId/supplement` 请求 `{"additionalObservation":"本次补充事实","contextualFeature":"衣着或位置","evidenceAnchors":["视频定位"]}`；分别限6000字、500字、20条且每条160字，至少一项有内容。返回 `{item: observationSubject}`。只允许有访问权限的创建教师或本园教研员；活动任务期间返回409、其他教师403、跨园404。保存补充与审计原子完成，不改写原始观察；随后显式发起该幼儿的分析。
+- `GET /observations/:id` 返回 `canSupplement` 供页面显示补充入口；实际操作仍由RPC校验创建者、园所、当前班级范围和任务状态。新增数据库结构继承原表RLS，两个写RPC仅供服务角色执行。
+- 成长、个人报告、班级报告和课程参与人数按“幼儿与观察对应的已采用分析”过滤，不能仅依据父观察状态或参与名单。没有已采用分析的幼儿不继承群体白描作为个人轨迹；其他幼儿重试、待审核或待补充时，已有采用版本继续用于对应幼儿的正式证据。当前待审核新稿只有采用后才替代该幼儿的上一采用版本。
+- 操作步骤、教师提问和其他自然语言条目不能只有逗号、句号、序号或空白。未来支持步骤可按保守规则补全并标记教师复核；事实和证据引用保持严格校验。历史标点草稿在页面提示生成新版本，采用接口返回409 / `AI_ANALYSIS_OUTPUT_INVALID`。
+
 分析只接受已经提交的教师记录。任务入库后由服务端继续执行，不依赖浏览器页面或前端会话持续连接；页面关闭、切换或刷新不会取消任务，并可通过任务接口恢复进度。服务进程重启时，未完成任务会被安全标记为失败并删除不完整分析，教师可重新发起。
 
 `AI_MODE=qianwen` 时使用 `QianwenAIProvider`；在监护授权为 `granted` 且 `QWEN_MEDIA_ANALYSIS_ENABLED=true` 时，可将无损优化后私有图片或视频的15分钟签名链接作为多模态输入。视频只分析画面，不处理音轨。生产环境默认禁止在真实 AI 失败时静默回退到模拟结果，并返回明确的服务错误；只有显式使用 `AI_MODE=simulated` 的本地演示环境才使用 `ScenarioAIProvider`。页面必须显示实际 Provider 和模型。

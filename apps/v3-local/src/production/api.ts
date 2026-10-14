@@ -5,6 +5,7 @@ import type {
   RemoteAIPromptKey,
   RemoteAnalysisFramework,
   RemoteAnalysisJob,
+  RemoteAnalysisSubjectResult,
   AnalysisClaimDecision,
   RemoteAnalysis,
   RemoteAnalysisClaimReview,
@@ -206,6 +207,8 @@ export const remoteApi = {
     request<{
       item: RemoteObservation;
       canDelete: boolean;
+      canSupplement: boolean;
+      analysisSubjectResults: RemoteAnalysisSubjectResult[];
       evidence: RemoteEvidence[];
       analyses: RemoteAnalysis[];
       subjects: RemoteObservationSubject[];
@@ -219,10 +222,12 @@ export const remoteApi = {
       method: "POST",
       body: body(value),
     }),
-  analyze: (id: string) =>
+  supplementObservationSubject: (id: string, childId: string, value: {additionalObservation: string; contextualFeature: string; evidenceAnchors: string[]}) =>
+    request<{item: RemoteObservationSubject}>(`/api/observations/${id}/subjects/${childId}/supplement`, {method: 'PATCH', body: body(value)}),
+  analyze: (id: string, childIds?: string[]) =>
     request<{ item: RemoteAnalysisJob }>(
       `/api/observations/${id}/analyze`,
-      { method: "POST" },
+      { method: "POST", ...(childIds ? {body: body({childIds})} : {}) },
     ),
   analysisJob: (id: string) =>
     request<{ item: RemoteAnalysisJob }>(`/api/analysis-jobs/${id}`),

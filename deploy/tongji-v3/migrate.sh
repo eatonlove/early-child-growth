@@ -231,6 +231,14 @@ else
   echo "账号显示名称与观察安全删除函数已就绪。"
 fi
 
+if ! docker exec "$DB_CONTAINER" psql -U postgres -d postgres -Atc \
+  "select exists(select 1 from information_schema.columns where table_schema='tongji_v3' and table_name='analysis_jobs' and column_name='subject_results');" | grep -qx t; then
+  docker exec -i "$DB_CONTAINER" psql -U postgres -d postgres -v ON_ERROR_STOP=1 --single-transaction \
+    < "$ROOT_DIR/apps/v3-api/supabase/migrations/20261014143254_observation_subject_evidence_and_supplements.sql"
+else
+  echo "逐名分析与补充证据结构已就绪。"
+fi
+
 docker exec -i "$DB_CONTAINER" psql -U postgres -d postgres \
   -v ON_ERROR_STOP=1 --single-transaction \
   < "$ROOT_DIR/apps/v3-api/supabase/migrations/20260828084501_reload_ai_prompt_config_schema.sql"

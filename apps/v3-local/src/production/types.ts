@@ -44,6 +44,7 @@ export interface TeacherResponse {
 }
 
 export interface RemoteObservation {
+  has_adopted_analysis?: boolean;
   id: string;
   classroom_id: string;
   child_id: string;
@@ -214,6 +215,14 @@ export interface RemoteEvidence {
   optimization_error?: string | null;
 }
 
+export interface RemoteAnalysisSubjectResult {
+  childId: string;
+  status: 'queued' | 'processing' | 'completed' | 'needs_more_evidence' | 'failed';
+  explanation: string;
+  missingInformation: string[];
+  analysisRunId: string | null;
+}
+
 export interface RemoteAnalysisJob {
   id: string;
   observation_id: string;
@@ -226,9 +235,12 @@ export interface RemoteAnalysisJob {
     | "analyzing_subject"
     | "saving_subject"
     | "completed"
+    | "partially_completed"
+    | "needs_more_evidence"
     | "failed";
   progress: number;
   analysis_run_ids: string[];
+  subject_results?: RemoteAnalysisSubjectResult[];
   ai_notice?: string | null;
   error_code?: string | null;
   error_message?: string | null;
@@ -246,6 +258,7 @@ export interface RemoteObservationSubject {
   role: "primary" | "participant" | "incidental";
   contextual_feature?: string | null;
   evidence_anchors: string[];
+  additional_observation?: string;
 }
 
 export interface ResponsePlanContent {

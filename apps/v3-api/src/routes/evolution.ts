@@ -1,3 +1,4 @@
+import { confirmedObservations, latestAdoptedAnalyses } from "../domain/confirmed-evidence.js";
 import { randomUUID } from "node:crypto";
 import { Readable } from 'node:stream';
 import { boundedUploadStream, resourceCategorySchema, resourceFileLimit } from '../resource-library.js';
@@ -766,12 +767,15 @@ export async function evolutionRoutes(app: FastifyInstance) {
   app.post("/api/curriculum-clues/from-evidence", async (request, reply) => {
     const auth = await authenticate(request);
     const input = z.object({ classroomId: uuid, observationIds: z.array(uuid).min(2).max(100), theme: z.string().trim().min(2).max(160).optional() }).parse(request.body);
-    const { data: observations, error } = await auth.data.from("observations").select("*").eq("classroom_id", input.classroomId).in("id", input.observationIds).eq("status", "adopted").order("occurred_at");
+    const { data: rawObservations, error } = await auth.data.from("observations").select("*").eq("classroom_id", input.classroomId).in("id", input.observationIds).order("occurred_at");
     if (error) throw new ApiError(500, "CURRICULUM_EVIDENCE_READ_FAILED", "课程观察证据读取失败");
-    if ((observations ?? []).length !== new Set(input.observationIds).size) throw new ApiError(422, "CURRICULUM_EVIDENCE_INVALID", "课程只能使用当前班级已终审采用的观察");
-    const { data: subjectRows, error: subjectError } = await auth.data.from("observation_subjects").select("child_id").in("observation_id", input.observationIds);
-    if (subjectError) throw new ApiError(500, "CURRICULUM_SUBJECTS_FAILED", "课程参与幼儿读取失败");
-    const childIds = [...new Set((subjectRows?.length ? subjectRows : observations ?? []).map((item) => item.child_id))];
+    if ((rawObservations ?? []).length !== new Set(input.observationIds).size) throw new ApiError(422, "CURRICULUM_EVIDENCE_INVALID", "课程只能使用当前班级已终审采用的观察");
+    const {data: acceptedRows, error: acceptedError} = await auth.data.from('analysis_runs').select('id, observation_id, child_id, decision, generated_at').in('observation_id', input.observationIds).eq('decision', 'adopted');
+    if (acceptedError) throw new ApiError(500, 'CURRICULUM_CONFIRMED_EVIDENCE_FAILED', '课程已采用证据读取失败');
+    const accepted = latestAdoptedAnalyses(acceptedRows ?? []);
+    const observations = confirmedObservations(rawObservations ?? [], accepted);
+    if (observations.length !== input.observationIds.length) throw new ApiError(409, 'CURRICULUM_UNCONFIRMED_EVIDENCE', '所选观察必须包含对应幼儿已采用的分析');
+    const childIds = [...new Set(accepted.map(item => item.child_id))];
     const timePoints = [...new Set((observations ?? []).map((item) => item.occurred_at.slice(0, 10)))];
     if (!((childIds.length >= 2 || observations!.length >= 3) && timePoints.length >= 2)) throw new ApiError(409, "CURRICULUM_EVIDENCE_THRESHOLD", "课程线索至少需要2名幼儿或同一幼儿3次观察，并覆盖2个日期");
     const theme = input.theme || observations![0]!.theme;
@@ -797,7 +801,7 @@ export async function evolutionRoutes(app: FastifyInstance) {
     if (clueError) throw new ApiError(500, "CURRICULUM_CLUE_READ_FAILED", "课程线索读取失败");
     if (!clue?.threshold_met) throw new ApiError(409, "CURRICULUM_CLUE_NOT_READY", "课程线索证据尚未达到生成门槛");
     const [{ data: observations, error: observationError }, { data: classroom, error: classroomError }] = await Promise.all([
-      auth.data.from("observations").select("*").in("id", clue.evidence_observation_ids).eq("status", "adopted").order("occurred_at"),
+      auth.data.from("observations").select("*").in("id", clue.evidence_observation_ids).order("occurred_at"),
       auth.data.from("classrooms").select("grade").eq("id", clue.classroom_id).single(),
     ]);
     if (observationError || classroomError || !classroom) throw new ApiError(500, "CURRICULUM_CONTEXT_READ_FAILED", "课程生成上下文读取失败");
@@ -855,7 +859,7 @@ export async function evolutionRoutes(app: FastifyInstance) {
     templateQuery = input.templateVersionId ? templateQuery.eq("id", input.templateVersionId) : templateQuery.eq("is_default", true);
     const [{ data: template, error: templateError }, { data: observations, error: observationError }, { data: classroom, error: classroomError }] = await Promise.all([
       templateQuery.limit(1).maybeSingle(),
-      auth.data.from("observations").select("*").in("id", clue.evidence_observation_ids).eq("status", "adopted").order("occurred_at"),
+      auth.data.from("observations").select("*").in("id", clue.evidence_observation_ids).order("occurred_at"),
       auth.data.from("classrooms").select("name, grade").eq("id", clue.classroom_id).single(),
     ]);
     if (templateError || observationError || classroomError || !classroom) throw new ApiError(500, "CURRICULUM_PLAN_CONTEXT_FAILED", "课程模板或证据读取失败");
