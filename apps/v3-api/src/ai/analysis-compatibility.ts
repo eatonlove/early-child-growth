@@ -87,7 +87,7 @@ export function normalizeAnalysisResult(value: unknown): AnalysisResult {
   const raw = value as Record<string, unknown>;
   const evidenceIds = [...new Set(legacy.facts.flatMap((item) => item.evidenceIds ?? []))].slice(0, 8);
   const groundedEvidenceIds = evidenceIds.length ? evidenceIds : ["teacher-observation"];
-  const primaryFact = shorten(legacy.facts[0]!.content, 1400);
+  const primaryFact = shorten(legacy.facts[0]?.content ?? legacy.objectiveSummary, 1400);
   const primaryGap = shorten(legacy.evidenceGaps[0]!, 900);
   const references = legacy.developmentReferences;
   const fallbackPlans = buildLegacyResponsePlans(legacy, groundedEvidenceIds);

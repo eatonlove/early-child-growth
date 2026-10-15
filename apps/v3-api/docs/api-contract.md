@@ -168,15 +168,16 @@
 | PATCH | `/analyses/:id/claims/:claimKey` | 兼容历史精细审阅数据，不在当前教师页面暴露 |
 | POST | `/analyses/:id/finalize` | 兼容历史精细审阅数据，不在当前教师页面暴露 |
 
-逐幼儿处理契约（2026-10-14）：
+逐幼儿处理契约（2026-10-15）：
 
 - `POST /observations/:id/analyze` 请求体可省略以处理全部参与幼儿，或传 `{"childIds":["uuid"]}` 只重试指定幼儿。只接受本观察中不重复的1至30名幼儿；活动任务存在时仍返回同一任务。创建任务与排队审计在数据库事务内完成。
-- `analysis_jobs.subject_results` 保存每名请求幼儿的 `childId`、`status`（`queued | processing | completed | needs_more_evidence | failed`）、`explanation`、`missingInformation` 与可空的 `analysisRunId`。读取观察详情额外返回 `analysisSubjectResults`，按幼儿合并最近任务，保留未被本次单人重试覆盖的其他幼儿结果。
-- 逐名先核对当前客观白描、目标幼儿补充事实与实际送入模型的授权媒体；名单、衣着位置、泛化评价、同伴动作和历史结论不能单独作为本次个人分析的依据。资料不足不生成个人分析或应答方案，而是返回可操作的补充清单；其他幼儿继续处理。
-- 全部资料不足时任务 `status=completed, stage=needs_more_evidence`；部分出结果时 `stage=partially_completed`。技术失败单独记录在对应幼儿，已完成结果保留。进程重启也保留完整个人结果，只清理未完成的写入。
+- `analysis_jobs.subject_results` 保存每名请求幼儿的 `childId`、`status`（`queued | processing | completed | needs_more_evidence | failed`）、`explanation`、`missingInformation`、可空的 `analysisRunId`，以及新结果的 `analysisScope`（`individual | context_only`）。读取观察详情额外返回 `analysisSubjectResults`，按幼儿合并最近任务，保留未被本次单人重试覆盖的其他幼儿结果。`completed` 也可带补充建议，`missingInformation` 是可选完善清单，不代表分析失败或必须补充。
+- 取消独立AI前置核对，直接分析已提供的当前文字、已确认转写和实际送入模型的授权媒体。缺少个体特征、片段定位、原话或跨时间资料不拦截整份分析。有个人证据时只分析有依据的部分；暂不能归属个人时仍生成游戏情境分析和支持建议，保存 `structured_result.analysisScope=context_only`，个人事实、发展指标及经验判断可为空。`evidenceGaps` 明确补充什么资料能让分析更完善；展示不要求教师填写内部媒体编号。
+- 只有完全没有可读取的当前资料才返回 `needs_more_evidence`。情境分析属于成功结果 `status=completed`；全部完成时任务 `stage=completed`，部分技术失败或无可读资料时为 `partially_completed`。技术失败单独记录在对应幼儿，已完成结果保留。进程重启也保留完整个人结果，只清理未完成的写入。
 - `PATCH /observations/:id/subjects/:childId/supplement` 请求 `{"additionalObservation":"本次补充事实","contextualFeature":"衣着或位置","evidenceAnchors":["视频定位"]}`；分别限6000字、500字、20条且每条160字，至少一项有内容。返回 `{item: observationSubject}`。只允许有访问权限的创建教师或本园教研员；活动任务期间返回409、其他教师403、跨园404。保存补充与审计原子完成，不改写原始观察；随后显式发起该幼儿的分析。
 - `GET /observations/:id` 返回 `canSupplement` 供页面显示补充入口；实际操作仍由RPC校验创建者、园所、当前班级范围和任务状态。新增数据库结构继承原表RLS，两个写RPC仅供服务角色执行。
 - 成长、个人报告、班级报告和课程参与人数按“幼儿与观察对应的已采用分析”过滤，不能仅依据父观察状态或参与名单。没有已采用分析的幼儿不继承群体白描作为个人轨迹；其他幼儿重试、待审核或待补充时，已有采用版本继续用于对应幼儿的正式证据。当前待审核新稿只有采用后才替代该幼儿的上一采用版本。
+- 情境分析可由教师查看、确认和用于支持参考，但不作为该幼儿的个人发展证据，不计入个人成长、报告或课程的有效幼儿证据门槛，也不用于历史成长对比；补充本次个人资料后可单独生成个人分析。历史未保存 `analysisScope` 的结果保持原有行为，不追溯修改。
 - 操作步骤、教师提问和其他自然语言条目不能只有逗号、句号、序号或空白。未来支持步骤可按保守规则补全并标记教师复核；事实和证据引用保持严格校验。历史标点草稿在页面提示生成新版本，采用接口返回409 / `AI_ANALYSIS_OUTPUT_INVALID`。
 
 分析只接受已经提交的教师记录。任务入库后由服务端继续执行，不依赖浏览器页面或前端会话持续连接；页面关闭、切换或刷新不会取消任务，并可通过任务接口恢复进度。服务进程重启时，未完成任务会被安全标记为失败并删除不完整分析，教师可重新发起。

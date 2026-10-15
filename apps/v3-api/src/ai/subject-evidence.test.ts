@@ -1,22 +1,45 @@
 import {expect, it} from 'vitest';
-import {anonymizeSubjectNames, hasExplicitTargetBehavior, InsufficientObservationEvidenceError, requireAttributedEvidence, subjectEvidenceSchema} from './subject-evidence.js';
+import {anonymizeSubjectNames, applyEvidenceBoundary, hasExplicitTargetBehavior, InsufficientObservationEvidenceError, readableEvidenceNote, requireObservationMaterial} from './subject-evidence.js';
 import type {ObservationAnalysisInput} from './contracts.js';
+import {analysisResultSchema} from './contracts.js';
+import {buildScenarioAnalysis} from './scenario-provider.js';
 
 const input: ObservationAnalysisInput = {observation: {teacher_observation: 'target-child移动桥墩后再次推车测试。同伴在旁拿取木板。', teacher_identification: '可能比较支撑位置。', teacher_response: {category: 'material', strategy: '保留材料', nextObservationFocus: '观察再次比较'}, scene: '建构区', theme: '搭桥', organization_stage: 'process', subject_count: 2}, child: {id: 'a', display_name: '虚构幼儿', birth_month: '2022-01'}, classroom: {id: 'class', grade: 'middle'}, knowledge: [], evidence: [], media: [], history: []};
-const assessment = {canAnalyze: true, reason: '存在可归属的动作和测试过程。', missingInformation: [], directEvidence: ['target-child移动桥墩后再次推车测试。'], mediaEvidenceIds: []};
-it('requires actionable missing information and stops insufficient subjects', () => {
-  expect(subjectEvidenceSchema.safeParse({...assessment, canAnalyze: false}).success).toBe(false);
-  expect(() => requireAttributedEvidence({...assessment, canAnalyze: false, missingInformation: ['补充该幼儿具体的动作或关键原话。']}, input)).toThrow(InsufficientObservationEvidenceError);
+it('allows sparse current text without requiring personal identity cues or a complete event', () => {
+  expect(() => requireObservationMaterial({...input, observation: {...input.observation, teacher_observation: '几名幼儿一起搭桥。'}})).not.toThrow();
+  expect(() => requireObservationMaterial({...input, observation: {...input.observation, teacher_observation: '同伴在旁拿取木板。'}})).not.toThrow();
 });
-it('accepts only quoted current evidence attributable to the target, not a peer or invented snippet', () => {
-  expect(() => requireAttributedEvidence(assessment, input)).not.toThrow();
-  expect(() => requireAttributedEvidence({...assessment, directEvidence: ['同伴在旁拿取木板。']}, input)).toThrow(InsufficientObservationEvidenceError);
-  expect(() => requireAttributedEvidence({...assessment, directEvidence: ['target-child已经学会稳定搭桥。']}, input)).toThrow(InsufficientObservationEvidenceError);
+it('only stops when no readable current material is available, not because history or judgments are missing', () => {
+  const empty = {...input, observation: {...input.observation, teacher_observation: '  ，。'}};
+  expect(() => requireObservationMaterial(empty)).toThrow(InsufficientObservationEvidenceError);
+  expect(() => requireObservationMaterial({...empty, observation: {...empty.observation, subject_additional_observation: '幼儿坐在桥面旁。'}})).not.toThrow();
+  expect(() => requireObservationMaterial({...empty, evidence: [{id: 'transcript', evidence_type: 'audio', transcript: '幼儿说还想再试一次。'}]})).not.toThrow();
+  expect(() => requireObservationMaterial({...empty, media: [{id: 'video', evidenceType: 'video', mimeType: 'video/mp4', signedUrl: 'https://example.test/video'}]})).not.toThrow();
 });
-it('allows a separate teacher supplement and rejects unprovided or unidentifiable media', () => {
-  const supplement = {...input, observation: {...input.observation, subject_additional_observation: '幼儿将木板转向后又尝试了一次。'}};
-  expect(() => requireAttributedEvidence({...assessment, directEvidence: ['幼儿将木板转向后又尝试了一次。']}, supplement)).not.toThrow();
-  expect(() => requireAttributedEvidence({...assessment, directEvidence: [], mediaEvidenceIds: ['not-provided']}, input)).toThrow(InsufficientObservationEvidenceError);
+it('keeps context support plans while removing unsupported personal conclusions and growth comparisons', () => {
+  const draft = buildScenarioAnalysis(input.observation, []);
+  draft.nextObservation = ['观察幼儿的具体尝试。'];
+  const plans = structuredClone(draft.responsePlans);
+  draft.analysisScope = 'context_only';
+  const result = applyEvidenceBoundary(draft);
+  expect(result.facts).toEqual([]);
+  expect(result.interpretations).toEqual([]);
+  expect(result.developmentReferences).toEqual([]);
+  expect(result.gameExperience).toEqual([]);
+  expect(result.learningDispositions).toEqual([]);
+  expect(result.currentExperience).toContain('暂不形成个人经验结论');
+  expect(result.responsePlans.map(plan => plan.activitySupport)).toEqual(plans.map(plan => plan.activitySupport));
+  expect(result.responsePlans.every(plan => plan.rationale.includes('尚不能确认'))).toBe(true);
+  expect(result.historicalComparison.changes).toEqual([]);
+  expect(analysisResultSchema.safeParse(result).success).toBe(true);
+});
+it('uses a context-only scope when a draft has no current personal facts', () => {
+  const draft = buildScenarioAnalysis(input.observation, []);
+  draft.facts = [];
+  expect(applyEvidenceBoundary(draft).analysisScope).toBe('context_only');
+});
+it('keeps technical field names out of teacher-facing evidence notes', () => {
+  expect(readableEvidenceNote('target-child可补充mediaEvidenceIds及targetIdentificationCues。')).toBe('该幼儿可补充照片或视频及衣着、位置等识别线索。');
 });
 it('maps unique target and peer names once, while leaving ambiguous same-name children unassigned', () => {
   const children = [{id: 'a', display_name: '小明'}, {id: 'b', display_name: '小红'}];

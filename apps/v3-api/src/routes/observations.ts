@@ -1,5 +1,6 @@
 import { InsufficientObservationEvidenceError, anonymizeSubjectNames, uniqueSubjectCues } from "../ai/subject-evidence.js";
-import { subjectResults, replaceSubjectResult, mergeSubjectResults } from "../domain/analysis-subject-results.js";
+import { completedSubjectResult, subjectResults, replaceSubjectResult, mergeSubjectResults } from "../domain/analysis-subject-results.js";
+import { latestAdoptedAnalyses } from "../domain/confirmed-evidence.js";
 import { hasPlaceholderSupport } from "../ai/text-quality.js";
 import { randomUUID } from "node:crypto";
 import { observationInput } from "../domain/observation-contracts.js";
@@ -635,14 +636,15 @@ export async function observationRoutes(app: FastifyInstance) {
           ? await schema.from("analysis_runs").select("*").eq("tenant_id", auth.tenantId).in("observation_id", historicalIds).eq("child_id", child.id).eq("decision", "adopted").order("generated_at", { ascending: false })
           : { data: [], error: null };
         if (historicalAnalysisError) throw new ApiError(500, "ANALYSIS_HISTORY_READ_FAILED", "历史分析证据读取失败");
-        const historicalAnalysisIds = (historicalAnalyses ?? []).map((item) => item.id);
+        const personalHistoryAnalyses = latestAdoptedAnalyses(historicalAnalyses ?? []);
+        const historicalAnalysisIds = personalHistoryAnalyses.map((item) => item.id);
         const { data: historicalReviews, error: historicalReviewError } = historicalAnalysisIds.length
           ? await schema.from("analysis_claim_reviews").select("*").eq("tenant_id", auth.tenantId).in("analysis_run_id", historicalAnalysisIds)
           : { data: [], error: null };
         if (historicalReviewError) throw new ApiError(500, "ANALYSIS_HISTORY_REVIEW_READ_FAILED", "历史审核结论读取失败");
         const latestAnalysisByObservation = new Map<string, any>();
-        for (const analysis of historicalAnalyses ?? []) if (!latestAnalysisByObservation.has(analysis.observation_id)) latestAnalysisByObservation.set(analysis.observation_id, analysis);
-        const adoptedHistoryIds = new Set((historicalAnalyses ?? []).map(item => item.observation_id));
+        for (const analysis of personalHistoryAnalyses) latestAnalysisByObservation.set(analysis.observation_id, analysis);
+        const adoptedHistoryIds = new Set(personalHistoryAnalyses.map(item => item.observation_id));
         const history = (historicalObservations ?? []).filter(item => adoptedHistoryIds.has(item.id)).map((item) => {
           const priorAnalysis = latestAnalysisByObservation.get(item.id);
           const reviews = (historicalReviews ?? []).filter((review) => review.analysis_run_id === priorAnalysis?.id);
@@ -762,7 +764,7 @@ export async function observationRoutes(app: FastifyInstance) {
         ]);
         if (claimError || responseError) throw new ApiError(500, "AI_REVIEW_ITEMS_SAVE_FAILED", `${child.display_name}的审核项或应答方案初始化失败`);
         createdRunIds.push(analysis.id);
-        taskSubjectResults = replaceSubjectResult(taskSubjectResults, {childId: child.id, status: 'completed', explanation: '已生成待教师审核的个人分析。', missingInformation: [], analysisRunId: analysis.id});
+        taskSubjectResults = replaceSubjectResult(taskSubjectResults, completedSubjectResult(child.id, analysis.id, structuredResult));
         analyses.push({ ...analysis, subject: { ...subject, display_name: child.display_name } });
         await updateJob({
           stage: "saving_subject",

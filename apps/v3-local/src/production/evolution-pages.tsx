@@ -248,6 +248,10 @@ function SimpleAnalysisBoard({
         <Badge tone={tone(analysis.decision)}>{analysis.decision === "pending" ? "待教师确认" : analysis.decision === "adopted" ? "教师已确认" : "本次未采用"}</Badge>
       </Panel>
 
+      <Panel className="analysis-material-note" title={result.analysisScope === 'context_only' ? '本次先提供情境分析与支持建议' : '补充什么能让分析更完善'} subtitle={result.analysisScope === 'context_only' ? '暂不能把行为可靠归属到该幼儿，不形成个人发展结论。可以先参考以下支持建议，后续按需要补充资料。' : '本次已根据现有资料完成分析；以下是可选的完善建议，不是查看或使用草稿的前置条件。'}>
+        <ul>{result.evidenceGaps.map((item, index) => <li key={index}>{item}</li>)}</ul>
+      </Panel>
+
       <div className="simple-analysis-core">
         <article className="analysis-core-card observation">
           <header><span>01</span><div><strong>观察</strong><small>客观白描</small></div></header>
@@ -288,7 +292,7 @@ function SimpleAnalysisBoard({
           <textarea rows={4} value={feedback} onChange={(event) => setFeedback(event.target.value)} placeholder="填写修改意见后生成新版本" />
           <button className="btn btn-secondary" disabled={busy || feedback.trim().length < 2} onClick={() => void run(() => remoteApi.reviseAnalysis(analysis.id, [{ section: "观察-识别-应答", decision: "revise", note: feedback }]))}><RefreshCcw />生成AI修订稿</button>
         </Panel>
-        <Panel title="教师确认" subtitle="确认后，这份分析才会进入成长轨迹、周期报告和课程线索。">
+        <Panel title="教师确认" subtitle={result.analysisScope === 'context_only' ? '确认后可用于游戏支持参考；本版尚不作为该幼儿的个人成长、报告或课程证据。' : '确认后，这份分析才会进入成长轨迹、周期报告和课程线索。'}>
           <textarea rows={3} value={note} onChange={(event) => setNote(event.target.value)} placeholder="确认说明（选填）" />
           <div className="evo-review-actions"><button className="btn btn-primary" disabled={busy || invalidInstructions} onClick={() => void run(() => remoteApi.decideAnalysis(analysis.id, "adopted", note))}><CheckCircle2 />确认并采用</button><button className="btn btn-secondary" disabled={busy} onClick={() => void run(() => remoteApi.decideAnalysis(analysis.id, "abandoned", note || "本次暂不采用"))}>本次不采用</button></div>
         </Panel>
@@ -574,7 +578,7 @@ export function RemoteObservationV32Page({ user }: { user: RemoteUser }) {
         </Panel>
         <div className="observation-record-list"><Panel className="observation-record-item observation"><Badge tone="blue">观察</Badge><p>{detail.item.teacher_observation}</p></Panel><Panel className="observation-record-item identification"><Badge tone="green">识别</Badge><p>{detail.item.teacher_identification}</p></Panel><Panel className="observation-record-item response"><Badge tone="orange">教师原始应答</Badge><p>{detail.item.teacher_response.strategy}</p><small>复察：{detail.item.teacher_response.nextObservationFocus}</small></Panel></div>
         {detail.evidence.length > 0 && <Panel title="照片、视频与作品证据"><div className="remote-file-list">{detail.evidence.map((item) => <button className="btn btn-secondary evidence-file-button" key={item.id} disabled={item.upload_status !== "ready"} onClick={() => void withBusy(async () => { const result = await remoteApi.evidenceDownload(item.id); window.open(result.url, "_blank", "noopener,noreferrer"); })}><FileVideo /><span><strong>{item.file_name || "未命名证据"}</strong><small>{item.optimization_status === "optimized" ? `无损优化 ${formatBytes(item.original_size_bytes)} → ${formatBytes(item.optimized_size_bytes)}` : item.optimization_status === "not_applicable" ? "原样私有存储" : item.optimization_status === "legacy" ? "历史媒体" : item.optimization_status === "failed" ? "无损优化失败" : "等待处理"}</small></span></button>)}</div></Panel>}
-        {(!latest || latest.decision !== "pending" || invalidSupportInstructions(latest.structured_result.responsePlans ?? [])) && !["queued", "processing"].includes(detail.analysisJob?.status ?? "") && <Panel className="remote-ai-launch"><Sparkles /><div><Badge tone="purple">按幼儿独立分析</Badge><h2>为{detail.subjects.length}名幼儿分别生成专业第二视角</h2><p>会读取该幼儿已采用的历史观察，并结合可归属的文字、图片或视频证据生成差异化应答；个体证据不足时会明确提示。</p></div><button className="btn btn-primary" disabled={busy} onClick={() => void runAnalysis()}><BrainCircuit />{latest ? "生成新版本" : "运行AI分析"}</button></Panel>}
+        {(!latest || latest.decision !== "pending" || invalidSupportInstructions(latest.structured_result.responsePlans ?? [])) && !["queued", "processing"].includes(detail.analysisJob?.status ?? "") && <Panel className="remote-ai-launch"><Sparkles /><div><Badge tone="purple">按幼儿独立分析</Badge><h2>为{detail.subjects.length}名幼儿分别生成专业第二视角</h2><p>先分析已有文字、图片或视频，并参考该幼儿已采用的历史观察；资料有限时也先提供能支持的分析或情境建议，再备注哪些补充能让分析更完善。</p></div><button className="btn btn-primary" disabled={busy} onClick={() => void runAnalysis()}><BrainCircuit />{latest ? "生成新版本" : "运行AI分析"}</button></Panel>}
         {detail.analysisJob && ["queued", "processing"].includes(detail.analysisJob.status) && <Panel className="ai-progress-panel"><div className="ai-progress-heading"><div><Badge tone="purple">后台AI分析</Badge><strong>{analysisStageLabel[detail.analysisJob.stage]}</strong></div><span>{detail.analysisJob.progress}%</span></div><div className="ai-progress-track"><i style={{ width: `${detail.analysisJob.progress}%` }} /></div><p>任务已保存到后台，可以离开或关闭本页面；再次进入后会继续显示真实进度。</p></Panel>}
         <ObservationSubjectResults observationId={detail.item.id} subjects={detail.subjects} results={detail.analysisSubjectResults ?? []} canSupplement={detail.canSupplement} active={busy || ['queued', 'processing'].includes(detail.analysisJob?.status ?? '')} onRefresh={refreshDetail} onAnalyze={runAnalysis} />
         {detail.analysisJob?.status === "failed" && <Panel className="ai-progress-panel ai-progress-failed"><div className="ai-progress-heading"><div><Badge tone="red">上次分析失败</Badge><strong>{detail.analysisJob.error_message || "AI分析暂时不可用"}</strong></div></div><p>失败原因已保留，可直接重新发起，不会把未完成内容写入正式分析。</p></Panel>}

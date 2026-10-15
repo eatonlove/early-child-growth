@@ -126,13 +126,14 @@ export const responsePlanSchema = z.object({
 export type ResponsePlan = z.infer<typeof responsePlanSchema>;
 
 export const analysisResultSchema = z.object({
+  analysisScope: z.enum(["individual", "context_only"]).default("individual"),
   objectiveSummary: z.string().trim().min(1).max(4000),
   facts: z.array(z.object({
     content: shortText,
     evidence: z.string().trim().min(1).max(300),
     evidenceIds: z.array(z.string().trim().min(1).max(100)).max(5).default([]),
     confidence,
-  }).strict()).min(1).max(12),
+  }).strict()).max(12),
   interpretations: z.array(z.object({
     content: shortText,
     indicatorCode: z.string().trim().min(1).max(100),
@@ -144,7 +145,7 @@ export const analysisResultSchema = z.object({
     content: shortText,
     nextObservation: z.string().trim().min(1).max(1000),
     confidence,
-  }).strict()).min(1).max(8),
+  }).strict()).max(8),
   teacherComparison: z.object({
     teacherIdentification: z.string().max(6000),
     teacherResponse: z.object({
@@ -178,7 +179,7 @@ export const analysisResultSchema = z.object({
     evidenceIds,
     possibleExperience: z.string().trim().min(1).max(1500),
     limitation: z.string().trim().min(1).max(1000),
-  }).strict()).min(1).max(7),
+  }).strict()).max(7),
   domainExperiences: z.array(z.object({
     domain: z.enum(["健康", "语言", "社会", "科学", "艺术"]),
     evidence: z.string().trim().max(1500),
@@ -539,7 +540,7 @@ export interface InterestClusteringInput {
 }
 
 export interface AIGeneration<T> {
-  diagnostics?:{totalMs:number;supportResearchMs:number;supportCacheHit:boolean;generationMs:number;groundingRetry:boolean;outputRepairFields?:string[]};
+  diagnostics?:{totalMs:number;supportResearchMs:number;supportCacheHit:boolean;generationMs:number;groundingRetry:boolean;outputRepairFields?:string[];evidencePolicy?:string};
   data: T;
   provider: "QianwenAIProvider" | "ScenarioAIProvider";
   model: string;

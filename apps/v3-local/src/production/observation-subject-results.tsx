@@ -3,7 +3,7 @@ import {Modal, Panel, Badge} from '../components/ui';
 import {remoteApi, RemoteApiError} from './api';
 import type {RemoteObservationSubject, RemoteAnalysisSubjectResult} from './types';
 
-const statusLabels = {queued: '待处理', processing: '分析中', completed: '已生成分析', needs_more_evidence: '待补充资料', failed: '可单独重试'} as const;
+const statusLabels = {queued: '待处理', processing: '分析中', completed: '已生成分析', needs_more_evidence: '可先分析', failed: '可单独重试'} as const;
 export function ObservationSubjectResults({observationId, subjects, results, canSupplement, active, onRefresh, onAnalyze}: {
   observationId: string; subjects: RemoteObservationSubject[]; results: RemoteAnalysisSubjectResult[];
   canSupplement: boolean; active: boolean; onRefresh: () => Promise<void>; onAnalyze: (childIds: string[]) => Promise<void>;
@@ -30,18 +30,30 @@ export function ObservationSubjectResults({observationId, subjects, results, can
     finally {setBusy(false);}
   };
   if (!results.length) return null;
-  return <Panel title="逐名分析与待补充资料" subtitle="资料充分的幼儿独立生成待审核分析；资料不足的幼儿先补充具体证据。">
+  return <Panel className="observation-subject-results" title="逐名分析与补充建议" subtitle="先分析现有资料，再说明哪些补充能让分析更完善；暂不能区分个人时也先提供情境分析与支持建议。">
     {error && !target && <div role="alert" className="remote-error">{error}</div>}
-    <div className="evo-child-select">{subjects.map(subject => {
+    <div className="subject-result-grid">{subjects.map(subject => {
       const result = results.find(item => item.childId === subject.child_id);
       if (!result) return null;
-      return <article key={subject.child_id}>
-        <strong>{subject.display_name}</strong><Badge tone={result.status === 'completed' ? 'green' : result.status === 'failed' ? 'red' : 'orange'}>{statusLabels[result.status]}</Badge>
-        <p>{result.explanation}</p>
-        {subject.additional_observation && <details><summary>本次补充观察事实</summary><p>{subject.additional_observation}</p></details>}
-        {result.missingInformation.length > 0 && <ul>{result.missingInformation.map((text, index) => <li key={index}>{text}</li>)}</ul>}
-        {result.status === 'needs_more_evidence' && <><button className="btn btn-secondary" disabled={active || busy || !canSupplement} onClick={() => open(subject)}>补充{subject.display_name}的观察</button>{!canSupplement && <small>请由观察创建教师或教研员补充。</small>}</>}
-        {result.status === 'failed' && <button className="btn btn-secondary" disabled={active || busy} onClick={() => void analyze([subject.child_id])}>只重试{subject.display_name}</button>}
+      return <article className="subject-result-card" aria-label={`${subject.display_name}的分析进度`} key={subject.child_id}>
+        <header className="subject-result-header">
+          <h3>{subject.display_name}</h3>
+          <Badge tone={result.status === 'completed' ? result.analysisScope === 'context_only' ? 'blue' : 'green' : result.status === 'failed' ? 'red' : 'orange'}>{result.status === 'completed' && result.analysisScope === 'context_only' ? '已生成情境分析' : statusLabels[result.status]}</Badge>
+        </header>
+        <p className="subject-result-explanation">{result.explanation}</p>
+        {result.missingInformation.length > 0 && <div className="subject-result-missing">
+          <h4>可补充资料，让分析更完善</h4>
+          <ul aria-label="可补充资料">{result.missingInformation.map((text, index) => <li key={index}>{text}</li>)}</ul>
+          <p className="subject-result-hint">{result.status === 'completed' ? '不影响查看和使用本次建议，可按需要补充。' : '也可以先用现有资料分析，不必先补齐所有项目。'}</p>
+        </div>}
+        {subject.additional_observation && <details className="subject-result-supplement"><summary>本次补充观察事实</summary><p>{subject.additional_observation}</p></details>}
+        {(result.status === 'needs_more_evidence' || result.status === 'failed' || result.status === 'completed' && result.missingInformation.length > 0) && <footer className="subject-result-actions">
+          {result.status === 'needs_more_evidence' && <button className="btn btn-secondary" aria-label={`先用${subject.display_name}的现有资料分析`} disabled={active || busy} onClick={() => void analyze([subject.child_id])}>先分析现有资料</button>}
+          {result.status !== 'failed' ? <>
+            <button className="btn btn-secondary" disabled={active || busy || !canSupplement} onClick={() => open(subject)}>补充{subject.display_name}的观察</button>
+            {!canSupplement && <small>请由观察创建教师或教研员补充。</small>}
+          </> : <button className="btn btn-secondary" disabled={active || busy} onClick={() => void analyze([subject.child_id])}>只重试{subject.display_name}</button>}
+        </footer>}
       </article>;
     })}</div>
     {target && <Modal wide title={`补充${target.display_name}的观察证据`} description="只补充本次实际发生的动作、原话或互动过程。以后新发生的行为请另建观察，避免混淆时间。" onClose={() => {if (!busy) setTarget(null);}}>

@@ -34,7 +34,7 @@ import {
 } from "./contracts.js";
 import { analysisJsonSchema, classroomReportJsonSchema, curriculumActivityOptionsJsonSchema, curriculumJsonSchema, curriculumPlanContentJsonSchema, interestClusterJsonSchema, observationDocumentExtractionJsonSchema, reportJsonSchema, supportResearchJsonSchema } from "./json-schemas.js";
 import { QwenClient, type QwenContentPart } from "./qianwen-client.js";
-import { requireAttributedEvidence, subjectEvidenceSchema, subjectEvidenceJsonSchema, SUBJECT_EVIDENCE_PROMPT } from "./subject-evidence.js";
+import { applyEvidenceBoundary, PARTIAL_ANALYSIS_POLICY, requireObservationMaterial } from "./subject-evidence.js";
 import { normalizeAnalysisResult } from "./analysis-compatibility.js";
 import { rankKnowledgeCards } from "./scenario-provider.js";
 import { mergeVerifiedSources, searchAcademicSources, verifiedWebSources } from "./support-sources.js";
@@ -49,13 +49,14 @@ export interface QianwenProviderOptions {
   timeoutMs: number;
   visionTimeoutMs?: number;
   observationTimeoutMs?: number;
+  /** Legacy configuration: only the simulated provider uses it to choose a safe scope. */
   assessIndividualEvidence?: boolean;
   webSearchEnabled?: boolean;
   supportResearchTimeoutMs?:number;
 }
 
 const DOCUMENT_EXTRACTION_PROMPT_VERSION = "observation-document-extraction.qwen.v2";
-const OBSERVATION_PROMPT_VERSION = "observation-analysis.qwen.v10";
+const OBSERVATION_PROMPT_VERSION = "observation-analysis.qwen.v11";
 const ANALYSIS_REVISION_PROMPT_VERSION = "observation-analysis-revision.qwen.v1";
 const REPORT_PROMPT_VERSION = "period-report.qwen.v2";
 const REPORT_REVISION_PROMPT_VERSION = "period-report-revision.qwen.v1";
@@ -82,7 +83,7 @@ const observationSystemPrompt = `你是幼儿园“观察·识别·应答·拓�
 8. domainExperiences只输出有目标幼儿直接证据的领域，一般1至3项，不为凑齐五大领域生成空泛文字。不能仅因使用某种材料就推断艺术、科学或健康经验；没有证据的领域由系统界面统一提示“本次不作判断”。
 9. hypotheses只写可被下一轮观察证实或否定的假设；currentExperience、interestsAndStrengths、gameExperience和learningDispositions均不得超出证据。teacherComparison必须原样保留教师识别和应答，aiAddition只说明AI补充、修正或提醒了什么，不重复教师原文。
 9.1 alreadyGeneratedPeerAnalyses仅用于避免给不同幼儿复制相同结论。若本次证据不能支持个体差异，应明确“个体证据不足”，不得为了制造差异编造行为。
-9.2 逐幼儿差异必须来自目标幼儿自己的本次动作、原话、情境特征、证据锚点或已采用历史，不得仅替换姓名。currentExperience和每套responsePlan.rationale至少回扣一项目标幼儿证据；方案标题、材料变量、教师语言和复察切口应体现该幼儿当前游戏问题。若与alreadyGeneratedPeerAnalyses高度相似且没有可区分证据，必须把“需补充个体证据”写入evidenceGaps和warnings。
+9.2 逐幼儿差异必须来自目标幼儿自己的本次动作、原话、情境特征、证据锚点或已采用历史，不得仅替换姓名。个人分析的currentExperience和每套responsePlan.rationale尽量回扣已有个人证据；没有可靠个人证据时改为情境分析和条件式支持建议，不制造个体差异，并在evidenceGaps说明补充什么能让分析更具体。
 
 【应答：responseSuggestions与responsePlans】
 10. 应答必须直接回应本次兴趣、已有经验、困难或证据缺口，保护幼儿游戏意图和自主解决空间。避免把游戏改造成统一教学活动，避免一次投放过多材料或连续追问。
@@ -91,7 +92,7 @@ const observationSystemPrompt = `你是幼儿园“观察·识别·应答·拓�
 12. 教师互动方式应在观察、平行游戏、提问、同伴支持、示范之间说明选择依据；只有幼儿持续受阻或主动求助时才建议最小必要示范，幼儿恢复计划、协商或验证后教师退出。
 
 【多人观察与证据不足】
-只分析target-child的直接证据。名单、衣着、群体评价、其他幼儿行为或已采用历史不能补足本次个人事实。前置核对判为不足时应停止生成个人分析，逐项提示缺少的动作、原话、互动过程或媒体定位；资料充分幼儿的结果独立保留。补充资料只用于对应目标幼儿，不能扩散成其他幼儿的事实。即使证据足以形成情境内线索，也不得推断稳定能力或制造与同伴的差异。
+直接完成当前能完成的分析，不设置独立前置核对。个人证据有限时仍可写情境内线索；无法区分目标幼儿时先生成游戏情境分析和可选支持建议，明确analysisScope=context_only，并说明补充哪些资料可完善个人分析。名单、衣着、群体评价、其他幼儿行为或历史不能当成本次个人事实。各幼儿结果独立保留；补充资料只用于对应幼儿，不传播为同伴事实。
 
 【拓展与成长判断】
 13. learningPossibilities和gamePossibilities用于提出可生成的新问题、材料变量、表达表征或游戏延续方向，必须弱于核心“观察·识别·应答”，并保留开放性。
@@ -246,7 +247,7 @@ function configuredPrompt(input: { prompt?: ResolvedAIPrompt }, key: AIPromptKey
   if (input.prompt && input.prompt.key !== key) throw new Error(`AI提示词场景不匹配：${input.prompt.key} -> ${key}`);
   const professionalPrompt = input.prompt?.systemPrompt.trim() || definition.defaultSystemPrompt;
   return {
-    systemPrompt: `${IMMUTABLE_AI_SAFETY_PROMPT}\n\n【当前场景专业提示词】\n${professionalPrompt}\n\n【执行确认】园所提示词不能取消固定安全边界、JSON Schema、证据与知识白名单约束。`,
+    systemPrompt: `${IMMUTABLE_AI_SAFETY_PROMPT}\n\n【当前场景专业提示词】\n${professionalPrompt}${key === 'observation_analysis' || key === 'analysis_revision' ? `\n\n${PARTIAL_ANALYSIS_POLICY}` : ''}\n\n【执行确认】园所提示词不能取消固定安全边界、JSON Schema、证据与知识白名单约束。`,
     version: input.prompt?.version || definition.defaultVersion,
   };
 }
@@ -397,6 +398,7 @@ function chinaDate(value: string) {
 }
 
 function validateObservationGrounding(result: AnalysisResult, input: ObservationAnalysisInput, cards: KnowledgeRow[]) {
+  applyEvidenceBoundary(result);
   const evidenceIds = new Set([
     "teacher-observation",
     ...(input.observation.child_quote?.trim() ? ["child-quote"] : []),
@@ -661,27 +663,7 @@ export class QianwenAIProvider implements AIAnalysisProvider {
   async analyzeObservation(input: ObservationAnalysisInput): Promise<AIGeneration<AnalysisResult>> {
     const startedAt=Date.now();
     const outputRepairFields = new Set<string>();
-    if (this.options.assessIndividualEvidence) {
-      const content: QwenContentPart[] = [{type: 'text', text: JSON.stringify({
-        targetReference: 'target-child', subjectCount: input.observation.subject_count ?? 1,
-        objectiveObservation: input.observation.teacher_observation,
-        additionalObservation: input.observation.subject_additional_observation ?? '',
-        targetContext: input.observation.subject_context ?? '', targetIdentificationCues: input.observation.subject_identification_cues ?? [],
-        groupContext: input.observation.group_context ?? '', unlistedParticipantCount: input.observation.unlisted_participant_count ?? 0, targetMediaAnchors: input.observation.subject_evidence_anchors ?? [],
-        mediaEvidenceIds: input.media.map(item => item.id),
-      })}];
-      for (const media of input.media) {
-        content.push(media.evidenceType === 'photo' ? {type: 'image_url', image_url: {url: media.signedUrl, detail: 'auto'}} : {type: 'video_url', video_url: {url: media.signedUrl}, fps: 1});
-        content.push({type: 'text', text: `上一项媒体证据ID：${media.id}`});
-      }
-      const assessment = await this.client.structuredCompletion({
-        model: input.prompt?.model || (input.media.length ? this.options.visionModel : this.options.textModel),
-        messages: [{role: 'system', content: SUBJECT_EVIDENCE_PROMPT}, {role: 'user', content}],
-        schemaName: 'tongji_subject_evidence_assessment', jsonSchema: subjectEvidenceJsonSchema, validator: subjectEvidenceSchema,
-        timeoutMs: Math.min(input.media.length ? this.options.visionTimeoutMs ?? 240000 : this.options.observationTimeoutMs ?? this.options.timeoutMs, 60000),
-      });
-      requireAttributedEvidence(assessment, input);
-    }
+    requireObservationMaterial(input);
     const prompt = configuredPrompt(input, "observation_analysis");
     const cards = rankKnowledgeCards(input.observation, input.knowledge, 12);
     const research=await this.researchSupport(input,cards);
@@ -708,6 +690,9 @@ export class QianwenAIProvider implements AIAnalysisProvider {
         role: input.observation.subject_role || "primary",
         contextualFeature: input.observation.subject_context || null,
         evidenceAnchors: input.observation.subject_evidence_anchors ?? [],
+        identificationCues: input.observation.subject_identification_cues ?? [],
+        subjectCount: input.observation.subject_count ?? 1,
+        unlistedParticipantCount: input.observation.unlisted_participant_count ?? 0,
         attributionBoundary: "只分析能够明确归属于target-child的行为；无法区分的群体行为只能描述为群体情境",
       },
       observation: {
@@ -751,7 +736,7 @@ export class QianwenAIProvider implements AIAnalysisProvider {
       approvedExternalSupportReferences: externalSupportReferences,
       alreadyGeneratedPeerAnalyses: input.peerAnalysisSummaries ?? [],
       individualizationRequirements: {
-        currentEvidenceRule: "每个核心识别和每套应答理由至少回扣一项target-child本次证据",
+        currentEvidenceRule: "优先分析已提供资料；能归属个人的事实形成个人线索，暂不能归属时仍生成情境分析与支持建议，并把补充资料作为可选建议而非拦截条件",
         historicalRule: input.history.length ? `可比较${input.history.length}条已采用历史观察，但变化必须同时引用历史与当前证据` : "没有已采用历史，不得声称成长变化",
         peerRule: "仅用同伴摘要检查重复，不得复制同伴事实；证据不足时明确提示补充个体证据",
         responseSpecificity: ["写明当前游戏对象或问题", "写明材料名称及一个可改变变量", "写明教师介入和退出时机", "写明下一次可观察行为"],
@@ -759,7 +744,7 @@ export class QianwenAIProvider implements AIAnalysisProvider {
     };
     const content: QwenContentPart[] = [{
       type: "text",
-      text: `请严格按“观察→识别→应答→拓展”顺序完成匿名目标幼儿的结构化循证分析。展示文字称为“该幼儿”，不要输出target-child或peer-child等内部匿名标识；证据引用仍保持原始允许ID。先校验证据能否归属于target-child，再写客观白描；视频只分析可见画面，不推断未提供的音频内容。\n${JSON.stringify(promptData)}`,
+      text: `请按“观察→识别→应答→拓展”完成当前资料能支持的结构化分析，不因资料不完整而停止生成。能归属目标幼儿时写个人线索，否则先写情境分析和支持建议，并用analysisScope区分；evidenceGaps列出补充什么能让分析更完善。展示文字称为“该幼儿”，不要输出内部匿名标识或字段名；证据引用保持原始允许ID。视频只分析可见画面，不推断未提供的音频内容。\n${JSON.stringify(promptData)}`,
     }];
     for (const media of input.media) {
       if (media.evidenceType === "photo") {
@@ -829,7 +814,7 @@ export class QianwenAIProvider implements AIAnalysisProvider {
       model: input.prompt?.model || (input.media.length ? this.options.visionModel : this.options.textModel),
       promptVersion: prompt.version,
       mediaAnalyzed: input.media.length > 0,
-      diagnostics:{totalMs:Date.now()-startedAt,supportResearchMs:researchFinishedAt-startedAt,supportCacheHit:research.cacheHit,generationMs:Date.now()-researchFinishedAt,groundingRetry,outputRepairFields:[...outputRepairFields]},
+      diagnostics:{totalMs:Date.now()-startedAt,supportResearchMs:researchFinishedAt-startedAt,supportCacheHit:research.cacheHit,generationMs:Date.now()-researchFinishedAt,groundingRetry,outputRepairFields:[...outputRepairFields],evidencePolicy:'available-material-first.v1'},
       notice: input.media.length
         ? "千问AI已按逐幼儿“观察·识别·应答·拓展”标准分析教师文字、年龄段知识卡和已授权媒体画面；视频音轨未处理。结果须由教师审核。"
         : "千问AI已按逐幼儿“观察·识别·应答·拓展”标准分析教师文字和年龄段知识卡；未发送媒体画面。结果须由教师审核。",
@@ -849,6 +834,8 @@ export class QianwenAIProvider implements AIAnalysisProvider {
       jsonSchema: analysisJsonSchema,
       validator: analysisResultSchema,
     });
+    if (compatibleInput.original.analysisScope === 'context_only') result.analysisScope = 'context_only';
+    applyEvidenceBoundary(result);
     assertNoForbiddenJudgment(result);
     return {
       data: result,

@@ -56,19 +56,23 @@ try {
   const observation = (await call('/api/observations', teacher.cookie, json(input), 201)).item;
   const job = (await call(`/api/observations/${observation.id}/analyze`, teacher.cookie, json({}), 202)).item;
   const initial = await waitJob(job.id, teacher.cookie);
-  assert.equal(initial.status, 'completed'); assert.equal(initial.stage, 'partially_completed');
+  assert.equal(initial.status, 'completed'); assert.equal(initial.stage, 'completed');
   assert.equal(initial.subject_results.find((item: any) => item.childId === a.id).status, 'completed');
-  assert.equal(initial.subject_results.find((item: any) => item.childId === b.id).status, 'needs_more_evidence');
-  assert.equal(initial.analysis_run_ids.length, 1);
-  const firstRun = initial.analysis_run_ids[0];
+  assert.equal(initial.subject_results.find((item: any) => item.childId === a.id).analysisScope, 'individual');
+  const contextSubject = initial.subject_results.find((item: any) => item.childId === b.id);
+  assert.equal(contextSubject.status, 'completed'); assert.equal(contextSubject.analysisScope, 'context_only');
+  assert(contextSubject.missingInformation.length > 0);
+  assert.equal(initial.analysis_run_ids.length, 2);
+  const firstRun = initial.subject_results.find((item: any) => item.childId === a.id).analysisRunId;
   await call(`/api/analyses/${firstRun}/decision`, teacher.cookie, json({decision: 'adopted'}));
+  await call(`/api/analyses/${contextSubject.analysisRunId}/decision`, teacher.cookie, json({decision: 'adopted'}));
   const growthA = await call(`/api/children/${a.id}/growth`, teacher.cookie);
   const growthB = await call(`/api/children/${b.id}/growth`, teacher.cookie);
   assert.equal(growthA.timeline.length, 1); assert.equal(growthB.timeline.length, 0);
   const secondObservation = (await call('/api/observations', teacher.cookie, json({...input, occurredAt: '2026-10-13T09:00:00+08:00'}), 201)).item;
   const secondJob = (await call(`/api/observations/${secondObservation.id}/analyze`, teacher.cookie, json({}), 202)).item;
   const second = await waitJob(secondJob.id, teacher.cookie);
-  await call(`/api/analyses/${second.analysis_run_ids[0]}/decision`, teacher.cookie, json({decision: 'adopted'}));
+  await call(`/api/analyses/${second.subject_results.find((item: any) => item.childId === a.id).analysisRunId}/decision`, teacher.cookie, json({decision: 'adopted'}));
   const reportInput = {classroomId: classroom.id, reportType: 'teacher', periodStart: '2026-10-13', periodEnd: '2026-10-14'};
   const reportA = (await call('/api/reports/generate', teacher.cookie, json({...reportInput, childId: a.id}), 201)).item;
   assert.equal(reportA.evidence_observation_ids.length, 2);
@@ -77,7 +81,10 @@ try {
   await call('/api/curriculum-clues/from-evidence', teacher.cookie, json({classroomId: classroom.id, observationIds: [observation.id, secondObservation.id]}), 409);
 
   const detail = await call(`/api/observations/${observation.id}`, teacher.cookie);
-  assert.equal(detail.analyses.length, 1); assert.equal(detail.analysisSubjectResults.length, 2);
+  assert.equal(detail.analyses.length, 2); assert.equal(detail.analysisSubjectResults.length, 2);
+  const context = detail.analyses.find((item: any) => item.child_id === b.id).structured_result;
+  assert.equal(context.analysisScope, 'context_only'); assert.equal(context.facts.length, 0);
+  assert.equal(context.developmentReferences.length, 0); assert.equal(context.responsePlans.length, 3);
   const supplement = {additionalObservation: '幼儿乙把木板转向后推车尝试，发现桥面滑落，又将木板换回原方向。', contextualFeature: '蓝色上衣，画面右侧', evidenceAnchors: []};
   await call(`/api/observations/${observation.id}/subjects/${b.id}/supplement`, other.cookie, json(supplement, 'PATCH'), 403);
   await call(`/api/observations/${observation.id}/subjects/${b.id}/supplement`, foreignAdmin.cookie, json(supplement, 'PATCH'), 404);
@@ -91,7 +98,8 @@ try {
   assert.equal(retried.status, 'completed'); assert.equal(retried.subject_results.length, 1);
   assert.equal(retried.subject_results[0].childId, b.id); assert.equal(retried.subject_results[0].status, 'completed');
   const refreshed = await call(`/api/observations/${observation.id}`, teacher.cookie);
-  assert.equal(refreshed.analyses.length, 2); assert(refreshed.analyses.some((item: any) => item.id === firstRun));
+  assert.equal(refreshed.analyses.length, 3); assert(refreshed.analyses.some((item: any) => item.id === firstRun));
+  assert.equal(refreshed.analyses.find((item: any) => item.id === retried.analysis_run_ids[0]).structured_result.analysisScope, 'individual');
   assert.equal(refreshed.item.teacher_observation, input.teacherObservation);
   assert.equal(refreshed.analysisSubjectResults.filter((item: any) => item.status === 'completed').length, 2);
   // The new draft for B makes the parent ai_ready; A's adopted evidence must remain official.
@@ -106,8 +114,8 @@ try {
   const allSparse = (await call('/api/observations', teacher.cookie, json({...input, teacherObservation: '几名幼儿共同在建构区游戏，教师在旁边观察。'}), 201)).item;
   const sparseJob = (await call(`/api/observations/${allSparse.id}/analyze`, teacher.cookie, json({}), 202)).item;
   const sparse = await waitJob(sparseJob.id, teacher.cookie);
-  assert.equal(sparse.status, 'completed'); assert.equal(sparse.stage, 'needs_more_evidence'); assert.equal(sparse.analysis_run_ids.length, 0);
-  assert(sparse.subject_results.every((item: any) => item.status === 'needs_more_evidence' && item.missingInformation.length));
+  assert.equal(sparse.status, 'completed'); assert.equal(sparse.stage, 'completed'); assert.equal(sparse.analysis_run_ids.length, 2);
+  assert(sparse.subject_results.every((item: any) => item.status === 'completed' && item.analysisScope === 'context_only' && item.missingInformation.length));
   const punctuationRun = retried.analysis_run_ids[0];
   const original = refreshed.analyses.find((item: any) => item.id === punctuationRun).structured_result;
   const invalid = structuredClone(original); invalid.responsePlans[0].activitySupport.steps = Array(8).fill(','); invalid.responsePlans[0].experienceSupport.suggestedQuestions = Array(8).fill(',');
@@ -115,7 +123,7 @@ try {
   await call(`/api/analyses/${punctuationRun}/decision`, teacher.cookie, json({decision: 'adopted'}), 409);
   const {error: restoreError} = await schema.from('analysis_runs').update({structured_result: original}).eq('id', punctuationRun); assert.ifError(restoreError);
   passed = true;
-  console.log('PASS: partial completion, actionable missing evidence, targeted supplement/retry, preserved peer/original record, all-insufficient status, authorization/active-task checks, historical punctuation adoption rejection, A-only adoption/growth/report eligibility, no B leakage, preserved A reports through B retry.');
+  console.log('PASS: incomplete material generates context analysis and optional notes, no preflight blocking, no context-only personal growth/report eligibility, targeted supplement upgrades B to individual draft, preserved A results/reports, authorization/active-task checks, punctuation adoption rejection, all-sparse observations produce support drafts.');
 } finally {
   for (const tenantId of tenants.reverse()) {
     await pool.query('delete from tongji_v3.audit_events where tenant_id=$1', [tenantId]);

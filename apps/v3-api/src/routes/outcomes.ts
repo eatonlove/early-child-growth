@@ -137,7 +137,7 @@ export async function outcomeRoutes(app: FastifyInstance) {
       auth.data.from("analysis_runs").select("*").eq("child_id", id).eq("decision", "adopted").order("generated_at"),
       auth.data.from("support_actions").select("*").eq("child_id", id).order("created_at"),
       auth.data.from("observations").select("id, child_id, scene, theme, occurred_at").eq("classroom_id", child.classroom_id).order("occurred_at"),
-      auth.data.from('analysis_runs').select('id, observation_id, child_id, decision, generated_at').eq('classroom_id', child.classroom_id).eq('decision', 'adopted'),
+      auth.data.from('analysis_runs').select('id, observation_id, child_id, decision, generated_at, structured_result').eq('classroom_id', child.classroom_id).eq('decision', 'adopted'),
     ]);
     if (observationError || analysisError || supportError || classroomObservationError || classroomAnalysisError) throw new ApiError(500, "GROWTH_READ_FAILED", "成长轨迹读取失败");
     const officialAnalyses = latestAdoptedAnalyses(analyses ?? []);
@@ -498,7 +498,7 @@ export async function outcomeRoutes(app: FastifyInstance) {
     const { classroomId } = z.object({ classroomId: uuid }).parse(request.body);
     const { data: rawObservations, error } = await auth.data.from("observations").select("id, child_id, scene, theme, occurred_at, teacher_identification, teacher_response").eq("classroom_id", classroomId).order("occurred_at");
     if (error) throw new ApiError(500, "CURRICULUM_SCAN_FAILED", "课程线索扫描失败");
-    const {data: acceptedRows, error: acceptedError} = await auth.data.from('analysis_runs').select('id, observation_id, child_id, decision, generated_at').eq('classroom_id', classroomId).eq('decision', 'adopted');
+    const {data: acceptedRows, error: acceptedError} = await auth.data.from('analysis_runs').select('id, observation_id, child_id, decision, generated_at, structured_result').eq('classroom_id', classroomId).eq('decision', 'adopted');
     if (acceptedError) throw new ApiError(500, 'CURRICULUM_CONFIRMED_EVIDENCE_FAILED', '课程已采用证据读取失败');
     const accepted = latestAdoptedAnalyses(acceptedRows ?? []);
     const observations = confirmedObservations(rawObservations ?? [], accepted);

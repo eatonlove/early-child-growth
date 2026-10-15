@@ -56,17 +56,18 @@ export const analysisJsonSchema = {
   type: "object",
   additionalProperties: false,
   required: [
-    "objectiveSummary", "facts", "interpretations", "hypotheses", "teacherComparison",
+    "analysisScope", "objectiveSummary", "facts", "interpretations", "hypotheses", "teacherComparison",
     "currentExperience", "interestsAndStrengths", "evidenceGaps", "developmentReferences",
     "responseSuggestions", "nextObservation", "gameExperience", "domainExperiences",
     "learningDispositions", "learningPossibilities", "gamePossibilities", "responsePlans",
     "observationCut", "observationFocus", "historicalComparison", "externalSupportReferences", "evidenceSufficiency", "warnings",
   ],
   properties: {
+    analysisScope: { type: "string", enum: ["individual", "context_only"] },
     objectiveSummary: string(4000),
     facts: {
       type: "array",
-      minItems: 1,
+      minItems: 0,
       maxItems: 12,
       items: {
         type: "object",
@@ -98,7 +99,7 @@ export const analysisJsonSchema = {
     },
     hypotheses: {
       type: "array",
-      minItems: 1,
+      minItems: 0,
       maxItems: 8,
       items: {
         type: "object",
@@ -163,7 +164,7 @@ export const analysisJsonSchema = {
     },
     nextObservation: { ...stringArray(6), minItems: 1 },
     gameExperience: {
-      type: "array", minItems: 1, maxItems: 7,
+      type: "array", minItems: 0, maxItems: 7,
       items: {
         type: "object", additionalProperties: false,
         required: ["dimension", "evidence", "evidenceIds", "possibleExperience", "limitation"],

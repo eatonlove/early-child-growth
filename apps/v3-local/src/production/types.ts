@@ -73,6 +73,7 @@ export interface RemoteObservation {
 }
 
 export interface AnalysisResult {
+  analysisScope?: "individual" | "context_only";
   objectiveSummary: string;
   facts: Array<{ content: string; evidence: string; evidenceIds?: string[]; confidence: number }>;
   interpretations: Array<{
@@ -221,6 +222,7 @@ export interface RemoteAnalysisSubjectResult {
   explanation: string;
   missingInformation: string[];
   analysisRunId: string | null;
+  analysisScope?: 'individual' | 'context_only';
 }
 
 export interface RemoteAnalysisJob {

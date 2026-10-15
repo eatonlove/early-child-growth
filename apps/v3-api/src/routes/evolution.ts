@@ -770,7 +770,7 @@ export async function evolutionRoutes(app: FastifyInstance) {
     const { data: rawObservations, error } = await auth.data.from("observations").select("*").eq("classroom_id", input.classroomId).in("id", input.observationIds).order("occurred_at");
     if (error) throw new ApiError(500, "CURRICULUM_EVIDENCE_READ_FAILED", "课程观察证据读取失败");
     if ((rawObservations ?? []).length !== new Set(input.observationIds).size) throw new ApiError(422, "CURRICULUM_EVIDENCE_INVALID", "课程只能使用当前班级已终审采用的观察");
-    const {data: acceptedRows, error: acceptedError} = await auth.data.from('analysis_runs').select('id, observation_id, child_id, decision, generated_at').in('observation_id', input.observationIds).eq('decision', 'adopted');
+    const {data: acceptedRows, error: acceptedError} = await auth.data.from('analysis_runs').select('id, observation_id, child_id, decision, generated_at, structured_result').in('observation_id', input.observationIds).eq('decision', 'adopted');
     if (acceptedError) throw new ApiError(500, 'CURRICULUM_CONFIRMED_EVIDENCE_FAILED', '课程已采用证据读取失败');
     const accepted = latestAdoptedAnalyses(acceptedRows ?? []);
     const observations = confirmedObservations(rawObservations ?? [], accepted);

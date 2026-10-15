@@ -86,11 +86,30 @@ const response = {
 };
 
 describe("QianwenAIProvider", () => {
-  it('stops an insufficient child before requesting a full analysis or support research', async () => {
-    const fetcher = vi.fn(async () => new Response(JSON.stringify({choices: [{message: {content: JSON.stringify({canAnalyze: false, reason: '本次只有名单与群体描述，缺少目标幼儿动作。', missingInformation: ['补充该幼儿的具体动作或关键原话。'], directEvidence: [], mediaEvidenceIds: []})}}]})));
-    const provider = new QianwenAIProvider({apiKey: 'sk-test-only', baseUrl: 'https://dashscope.aliyuncs.com/compatible-mode/v1', textModel: 'qwen3.7-plus', visionModel: 'qwen3.7-plus', timeoutMs: 5000, assessIndividualEvidence: true, webSearchEnabled: true}, fetcher);
-    await expect(provider.analyzeObservation({observation: {teacher_observation: '几名幼儿一起搭桥。', teacher_identification: '出现建构兴趣。', teacher_response: {category: 'material', strategy: '保留材料', nextObservationFocus: '观察各自的尝试'}, scene: '建构区', theme: '搭桥', organization_stage: 'process', subject_count: 2}, child: {id: 'b', display_name: '不发送的幼儿姓名', birth_month: '2022-01'}, classroom: {id: 'class', grade: 'middle'}, knowledge: [card], evidence: [], media: [], history: []})).rejects.toThrow(InsufficientObservationEvidenceError);
+  it('analyzes incomplete text and unlocated video in one full request instead of a blocking preflight', async () => {
+    const draft = {...structuredClone(expandedResponse), analysisScope: 'context_only', objectiveSummary: '游戏情境中有幼儿共同搭桥，尚不能明确行为的个人归属。', evidenceGaps: ['可补充衣着或位置，帮助把可见行为对应到该幼儿。']};
+    const fetcher = vi.fn(async (_url: string | URL | Request, init?: RequestInit) => {
+      const request = JSON.parse(String(init?.body));
+      expect(request.response_format.json_schema.name).toBe('tongji_observation_analysis');
+      expect(JSON.stringify(request.messages)).toContain('不因资料不完整而停止生成');
+      expect(JSON.stringify(request.messages)).toContain('signed-video');
+      return new Response(JSON.stringify({choices: [{message: {content: JSON.stringify(draft)}}]}));
+    });
+    const provider = new QianwenAIProvider({apiKey: 'sk-test-only', baseUrl: 'https://dashscope.aliyuncs.com/compatible-mode/v1', textModel: 'qwen3.7-plus', visionModel: 'qwen3.7-plus', timeoutMs: 5000, assessIndividualEvidence: true, webSearchEnabled: false}, fetcher);
+    const generated = await provider.analyzeObservation({observation: {teacher_observation: '几名幼儿一起搭桥。', teacher_identification: '出现建构兴趣。', teacher_response: {category: 'material', strategy: '保留材料', nextObservationFocus: '观察各自的尝试'}, scene: '建构区', theme: '搭桥', organization_stage: 'process', subject_count: 2}, child: {id: 'b', display_name: '不发送的幼儿姓名', birth_month: '2022-01'}, classroom: {id: 'class', grade: 'middle'}, knowledge: [card], evidence: [{id: 'video', evidence_type: 'video'}], media: [{id: 'video', evidenceType: 'video', mimeType: 'video/mp4', signedUrl: 'https://example.test/signed-video'}], history: []});
     expect(fetcher).toHaveBeenCalledTimes(1);
+    expect(generated.data.analysisScope).toBe('context_only');
+    expect(generated.data.developmentReferences).toEqual([]);
+    expect(generated.data.facts).toEqual([]);
+    expect(generated.data.responsePlans).toHaveLength(3);
+    expect(generated.data.evidenceGaps[0]).toContain('可补充衣着或位置');
+  });
+
+  it('does not ask the model to analyze a truly empty record', async () => {
+    const fetcher = vi.fn();
+    const provider = new QianwenAIProvider({apiKey: 'sk-test-only', baseUrl: 'https://dashscope.aliyuncs.com/compatible-mode/v1', textModel: 'qwen3.7-plus', visionModel: 'qwen3.7-plus', timeoutMs: 5000}, fetcher);
+    await expect(provider.analyzeObservation({observation: {teacher_observation: '', teacher_identification: '原识别不替代当前事实', teacher_response: {category: 'material', strategy: '保留材料', nextObservationFocus: '后续观察'}, scene: '建构区', theme: '搭桥', organization_stage: 'process'}, child: {id: 'b', display_name: '虚构幼儿', birth_month: '2022-01'}, classroom: {id: 'class', grade: 'middle'}, knowledge: [card], evidence: [], media: [], history: []})).rejects.toThrow(InsufficientObservationEvidenceError);
+    expect(fetcher).not.toHaveBeenCalled();
   });
 
   it('recovers the production blank-field failure in one model call and exposes the repair for teacher review', async () => {
@@ -256,7 +275,7 @@ describe("QianwenAIProvider", () => {
     expect(requestBody).toContain("video_url");
     expect(requestBody).toContain("image_url");
     expect(requestBody).not.toContain("不应发送的姓名");
-    expect(generated.promptVersion).toBe("observation-analysis.qwen.v10");
+    expect(generated.promptVersion).toBe("observation-analysis.qwen.v11");
 
     const apiRequest = JSON.parse(requestBody);
     expect(apiRequest.model).toBe("qwen3.7-flash");

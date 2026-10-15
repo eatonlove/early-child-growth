@@ -13,3 +13,11 @@ it('keeps the last adopted version until a new version is adopted', () => {
   const accepted = {...pending, decision:'adopted'};
   expect(latestAdoptedAnalyses([...rows, accepted])).toEqual([accepted]);
 });
+it('keeps context-only support drafts out of personal growth and report evidence, even when adopted', () => {
+  const context = {...rows[0]!, id: 'context-b', child_id: 'b', structured_result: {analysisScope: 'context_only'}};
+  expect(latestAdoptedAnalyses([...rows, context])).toEqual([rows[0]]);
+  expect(confirmedObservations([{id: 'o'}], [context], 'b')).toEqual([]);
+  expect(confirmedParticipantIds([context], 'o')).toEqual([]);
+  const newerContext = {...context, child_id: 'a', generated_at: '2026-10-15T09:00:00Z'};
+  expect(latestAdoptedAnalyses([rows[0]!, newerContext])).toEqual([rows[0]]);
+});

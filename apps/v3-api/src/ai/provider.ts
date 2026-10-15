@@ -22,7 +22,7 @@ import type {
   ReportGenerationInput,
   ReportRevisionInput,
 } from "./contracts.js";
-import { InsufficientObservationEvidenceError, hasExplicitTargetBehavior } from "./subject-evidence.js";
+import { applyEvidenceBoundary, InsufficientObservationEvidenceError, hasExplicitTargetBehavior, requireObservationMaterial } from "./subject-evidence.js";
 import { QianwenAIProvider, type QianwenProviderOptions } from "./qianwen-provider.js";
 import { buildScenarioActivityOptions, buildScenarioAnalysis, buildScenarioClassroomReport, buildScenarioCurriculum, buildScenarioCurriculumPlan, buildScenarioInterestClusters, buildScenarioObservationExtraction, buildScenarioReport, buildScenarioRevision } from "./scenario-provider.js";
 
@@ -54,14 +54,19 @@ class ScenarioAIProvider implements AIAnalysisProvider {
   }
 
   async analyzeObservation(input: ObservationAnalysisInput): Promise<AIGeneration<AnalysisResult>> {
-    if (this.assessIndividualEvidence && (input.observation.subject_count ?? 1) > 1 && !hasExplicitTargetBehavior(input.observation.teacher_observation) && !hasExplicitTargetBehavior(input.observation.subject_additional_observation ?? '', true)) {
-      throw new InsufficientObservationEvidenceError('本次文字未记录可明确归属该幼儿的行为。', ['补充该幼儿的具体动作、关键原话或互动过程。']);
+    requireObservationMaterial({...input, media: []});
+    const result = buildScenarioAnalysis({...input.observation, teacher_observation: input.observation.subject_additional_observation || input.observation.teacher_observation}, input.knowledge, input.history);
+    const multi = (input.observation.subject_count ?? 1) > 1 || (input.observation.unlisted_participant_count ?? 0) > 0;
+    if (this.assessIndividualEvidence && multi && !hasExplicitTargetBehavior(input.observation.teacher_observation) && !hasExplicitTargetBehavior(input.observation.subject_additional_observation ?? '', true)) {
+      result.analysisScope = 'context_only';
+      result.objectiveSummary = `游戏情境资料：${input.observation.teacher_observation}`.slice(0, 4000);
+      result.evidenceGaps = ['可补充该幼儿的具体动作或原话，让个人经验分析更具体。', '可补充衣着、位置或关键片段，帮助将画面行为对应到该幼儿。', ...result.evidenceGaps].slice(0, 8);
     }
     return {
-      data: buildScenarioAnalysis({...input.observation, teacher_observation: input.observation.subject_additional_observation || input.observation.teacher_observation}, input.knowledge, input.history),
+      data: applyEvidenceBoundary(result),
       provider: "ScenarioAIProvider",
       model: "simulated-ai-v3",
-      promptVersion: "observation-analysis.v3.2",
+      promptVersion: "observation-analysis.v3.3",
       mediaAnalyzed: false,
       notice: "当前使用模拟AI：仅依据教师文字和结构化知识库生成，不读取图片、视频画面或音轨。",
     };

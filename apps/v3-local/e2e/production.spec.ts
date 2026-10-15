@@ -1,5 +1,87 @@
 import { expect, test, type Page } from "@playwright/test";
 
+test('per-child analysis cards keep readable text, compact statuses and visible actions on desktop', async ({page}, testInfo) => {
+  await mockApi(page, 'teacher', true);
+  const subjects = ['晨晨', '小禾', '安安', '小满'].map((name, index) => ({
+    id: `subject-${index}`, observation_id: observation.id, child_id: `child-${index}`,
+    display_name: name, role: index === 0 ? 'primary' : 'participant',
+    contextual_feature: '', evidence_anchors: [],
+    additional_observation: index === 1 ? '小禾移动木板后，又回到桥面旁观察同伴的尝试。' : '',
+  }));
+  const results = [
+    {childId: 'child-0', status: 'failed', explanation: '本次分析未完成，可单独重试，其他幼儿已生成的结果会保留。', missingInformation: [], analysisRunId: null},
+    {childId: 'child-1', status: 'needs_more_evidence', explanation: '客观观察中未明确指明哪一位是目标幼儿，需要先补充可区分的个体特征，再核对具体动作和原话。', missingInformation: ['请补充衣着、画面位置或负责的任务，帮助区分目标幼儿。', '提供目标幼儿在本次观察中的具体动作、原话或互动过程。'], analysisRunId: null},
+    {childId: 'child-2', status: 'needs_more_evidence', explanation: '缺少可核对的视频定位，暂时无法把画面中的行为可靠地归属到这名幼儿。', missingInformation: ['请提供本次观察对应的媒体文件ID（mediaEvidenceIds），以便核对视频中该幼儿的具体动作和互动过程。', '请补充该幼儿在视频或现场的可识别特征（targetIdentificationCues），如衣着颜色、位置或任务。'], analysisRunId: null},
+    {childId: 'child-3', status: 'completed', explanation: '已依据本次记录生成个人分析，请继续由教师确认观察、识别和应答。', missingInformation: [], analysisRunId: analysis.id},
+  ];
+  await page.route(`**/api/observations/${observation.id}`, route => route.fulfill({json: {
+    item: observation, canDelete: true, canSupplement: true, evidence: [], analyses: [analysis],
+    subjects, responsePlans: [], observers: [], analysisJob: null, analysisSubjectResults: results,
+  }}));
+  await page.goto('/observations');
+  const panel = page.locator('.panel').filter({has: page.getByRole('heading', {name: '逐名分析与补充建议', exact: true})});
+  await expect(panel.getByRole('article')).toHaveCount(4);
+  for (const width of [1920, 1440, 1366, 1280, 1024]) {
+    await page.setViewportSize({width, height: 1080});
+    await panel.scrollIntoViewIfNeeded();
+    const cards = await panel.getByRole('article').evaluateAll(elements => elements.map(element => {
+      const card = element.getBoundingClientRect();
+      const badge = element.querySelector('.badge')!.getBoundingClientRect();
+      const text = element.querySelector('p')!.getBoundingClientRect();
+      const name = element.querySelector('h3, strong')!.getBoundingClientRect();
+      const button = element.querySelector('button')?.getBoundingClientRect();
+      return {x: card.x, y: card.y, width: card.width, height: card.height,
+        badgeHeight: badge.height, textWidth: text.width, nameHeight: name.height,
+        actionFits: !button || (button.left >= card.left && button.right <= card.right && button.bottom <= card.bottom)};
+    }));
+    for (const card of cards) {
+      expect(card.badgeHeight, `status height at ${width}px`).toBeLessThanOrEqual(32);
+      expect(card.nameHeight, `name wraps vertically at ${width}px`).toBeLessThanOrEqual(32);
+      expect(card.textWidth, `explanation width at ${width}px`).toBeGreaterThan(250);
+      expect(card.actionFits).toBe(true);
+    }
+    if (width >= 1280) {
+      expect(Math.abs(cards[0].y - cards[1].y)).toBeLessThan(1);
+      expect(cards[1].x - cards[0].x - cards[0].width).toBeGreaterThanOrEqual(16);
+      expect(cards[2].y - cards[0].y - cards[0].height).toBeGreaterThanOrEqual(16);
+      expect(cards[2].y - cards[1].y - cards[1].height).toBeGreaterThanOrEqual(16);
+    }
+    expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth + 1)).toBe(true);
+    if ([1440, 1280].includes(width)) await panel.screenshot({path: testInfo.outputPath(`subject-results-desktop-${width}.png`)});
+  }
+  await page.setViewportSize({width: 390, height: 844});
+  const cards = panel.getByRole('article');
+  const first = await cards.nth(0).boundingBox();
+  const second = await cards.nth(1).boundingBox();
+  expect(second!.y - first!.y - first!.height).toBeGreaterThanOrEqual(16);
+  await expect(panel.getByRole('button', {name: '只重试晨晨', exact: true})).toBeVisible();
+  await panel.getByRole('button', {name: '补充小禾的观察', exact: true}).click();
+  await expect(page.getByRole('dialog', {name: '补充小禾的观察证据'})).toBeVisible();
+  await page.getByRole('button', {name: '关闭', exact: true}).click();
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth + 1)).toBe(true);
+  await panel.screenshot({path: testInfo.outputPath('subject-results-phone.png')});
+});
+
+test('a context analysis remains viewable with optional evidence suggestions and teacher confirmation', async ({page}, testInfo) => {
+  await mockApi(page, 'teacher', true);
+  const contextAnalysis = {...analysis, structured_result: {...analysis.structured_result, analysisScope: 'context_only', objectiveSummary: '游戏情境中，几名幼儿正在搭桥，暂不能可靠对应个人行为。', facts: [], interpretations: [], hypotheses: [], developmentReferences: [], currentExperience: '先提供情境分析，不形成个人经验结论。', evidenceGaps: ['可补充衣着或位置，帮助将行为对应到该幼儿。']}};
+  await page.route(`**/api/observations/${observation.id}`, route => route.fulfill({json: {
+    item: observation, canDelete: true, canSupplement: true, evidence: [], analyses: [contextAnalysis],
+    subjects: [{id: 'subject', child_id: child.id, display_name: child.display_name, role: 'primary', evidence_anchors: []}],
+    responsePlans: [], observers: [], analysisJob: null,
+    analysisSubjectResults: [{childId: child.id, status: 'completed', analysisScope: 'context_only', explanation: '已生成游戏情境分析与支持建议。', missingInformation: contextAnalysis.structured_result.evidenceGaps, analysisRunId: analysis.id}],
+  }}));
+  await page.setViewportSize({width: 1440, height: 1000});
+  await page.goto('/observations');
+  await expect(page.getByText('已生成情境分析', {exact: true})).toBeVisible();
+  await expect(page.getByRole('heading', {name: '本次先提供情境分析与支持建议'})).toBeVisible();
+  await expect(page.locator('.analysis-material-note')).toContainText('不形成个人发展结论');
+  await expect(page.locator('.ai-result').first()).toContainText('几名幼儿正在搭桥');
+  await expect(page.getByText('不影响查看和使用本次建议，可按需要补充。')).toBeVisible();
+  await expect(page.getByRole('button', {name: '确认并采用', exact: true})).toBeEnabled();
+  await page.locator('.observation-subject-results').screenshot({path: testInfo.outputPath('optional-supplements-desktop.png')});
+});
+
 test('observation deletion is confirmed, errors stay visible and a successful delete refreshes the list',async({page})=>{
   await mockApi(page,'teacher',true);
   let exists=true,attempts=0;
@@ -51,9 +133,11 @@ test('growth cards have real horizontal and vertical spacing on desktop and phon
   expect(cards!.y-interests!.y-interests!.height).toBeGreaterThanOrEqual(20);
   await page.screenshot({path:testInfo.outputPath('growth-desktop.png'),fullPage:true});
   await page.setViewportSize({width:390,height:844});
-  const first=await page.locator('.growth-compact-card').nth(0).boundingBox();
-  const second=await page.locator('.growth-compact-card').nth(1).boundingBox();
-  expect(second!.y-first!.y-first!.height).toBeGreaterThanOrEqual(16);
+  const spacing=await page.locator('.growth-compact-card').evaluateAll(elements=>{
+    const first=elements[0].getBoundingClientRect(),second=elements[1].getBoundingClientRect();
+    return second.y-first.y-first.height;
+  });
+  expect(spacing).toBeGreaterThanOrEqual(16);
   expect(await page.evaluate(()=>document.documentElement.scrollWidth<=window.innerWidth+1)).toBe(true);
   await page.screenshot({path:testInfo.outputPath('growth-phone.png'),fullPage:true});
 });

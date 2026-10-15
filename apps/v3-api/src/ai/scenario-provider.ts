@@ -121,6 +121,7 @@ export function buildScenarioAnalysis(
   const domains = ["健康", "语言", "社会", "科学", "艺术"] as const;
 
   return {
+    analysisScope: "individual",
     objectiveSummary: facts.length ? facts.join("；") : "当前只有结构化情境信息，仍需补充客观行为白描。",
     facts: facts.map((content, index) => ({
       content,
