@@ -22,6 +22,14 @@ describe('account classroom scope API',() => {
 });
 
 describe("production AI prompt API", () => {
+  it("reads and saves only the credential alias through the real API", async () => {
+    const fetcher = vi.fn(async () => new Response(JSON.stringify({ item: { profile: "YQY", revision: 1 } }), { status: 200 }));
+    vi.stubGlobal("fetch", fetcher);
+    await remoteApi.aiCredentialConfig();
+    await remoteApi.updateAICredentialConfig({ profile: "YQY", expectedRevision: 0 });
+    expect(fetcher).toHaveBeenNthCalledWith(1, "/api/ai-credential-config", expect.objectContaining({ credentials: "include" }));
+    expect(fetcher).toHaveBeenNthCalledWith(2, "/api/ai-credential-config", expect.objectContaining({ method: "PUT", body: JSON.stringify({ profile: "YQY", expectedRevision: 0 }) }));
+  });
   it("uses the real researcher prompt endpoints with revision control", async () => {
     const calls: Array<{ url: string; init?: RequestInit }> = [];
     const prompt = {

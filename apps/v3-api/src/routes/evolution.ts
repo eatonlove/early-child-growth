@@ -29,6 +29,7 @@ const uuid = z.string().uuid();
 const aiProvider = createAIProvider({
   mode: config.AI_MODE,
   apiKey: config.qwenApiKey,
+  apiKeys: config.qwenApiKeys,
   baseUrl: config.QWEN_BASE_URL,
   textModel: config.QWEN_TEXT_MODEL,
   visionModel: config.QWEN_VISION_MODEL,

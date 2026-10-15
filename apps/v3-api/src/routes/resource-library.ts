@@ -12,7 +12,7 @@ import { serviceClient } from '../supabase.js';
 
 const uuid = z.string().uuid();
 const fingerprint = (items: Array<{id:string;updated_at:string}>) => createHash('sha256').update(JSON.stringify(items.map((item) => [item.id,item.updated_at]).sort())).digest('hex');
-const aiProvider = createAIProvider({mode:config.AI_MODE,apiKey:config.qwenApiKey,baseUrl:config.QWEN_BASE_URL,textModel:config.QWEN_TEXT_MODEL,visionModel:config.QWEN_VISION_MODEL,timeoutMs:config.QWEN_TIMEOUT_MS,visionTimeoutMs:config.QWEN_VISION_TIMEOUT_MS,webSearchEnabled:false,fallbackToSimulated:config.aiFallbackToSimulated});
+const aiProvider = createAIProvider({mode:config.AI_MODE,apiKey:config.qwenApiKey,apiKeys:config.qwenApiKeys,baseUrl:config.QWEN_BASE_URL,textModel:config.QWEN_TEXT_MODEL,visionModel:config.QWEN_VISION_MODEL,timeoutMs:config.QWEN_TIMEOUT_MS,visionTimeoutMs:config.QWEN_VISION_TIMEOUT_MS,webSearchEnabled:false,fallbackToSimulated:config.aiFallbackToSimulated});
 
 export async function readResourceAssetText(asset: any) {
   if (asset.extracted_text !== null && asset.extracted_text !== undefined) return { text:asset.extracted_text as string, note:asset.extraction_note || '' };

@@ -43,6 +43,7 @@ import { resourceCategoryAnalysisJsonSchema } from './json-schemas.js';
 
 export interface QianwenProviderOptions {
   apiKey: string;
+  apiKeys?: Partial<Record<"YT" | "YQY", string>>;
   baseUrl: string;
   textModel: string;
   visionModel: string;
@@ -510,17 +511,23 @@ function validateObservationGrounding(result: AnalysisResult, input: Observation
 }
 
 export class QianwenAIProvider implements AIAnalysisProvider {
-  private readonly client: QwenClient;
   private readonly fetcher: typeof fetch;
+  private readonly clients = new Map<string, QwenClient>();
 
   constructor(private readonly options: QianwenProviderOptions, fetcher?: typeof fetch) {
     this.fetcher = fetcher ?? fetch;
-    this.client = new QwenClient({
-      apiKey: options.apiKey,
-      baseUrl: options.baseUrl,
-      timeoutMs: options.timeoutMs,
-      fetcher,
-    });
+  }
+
+  private clientFor(prompt?: ResolvedAIPrompt) {
+    const profile = prompt?.credentialProfile ?? "YT";
+    let client = this.clients.get(profile);
+    if (!client) {
+      const apiKey = profile === "YT" ? this.options.apiKeys?.YT ?? this.options.apiKey : this.options.apiKeys?.YQY;
+      if (!apiKey) throw new Error(`千问密钥 ${profile} 未配置，请联系教研员切换可用密钥`);
+      client = new QwenClient({ apiKey, baseUrl: this.options.baseUrl, timeoutMs: this.options.timeoutMs, fetcher: this.fetcher });
+      this.clients.set(profile, client);
+    }
+    return client;
   }
 
   async analyzeResourceCategory(input: ResourceCategoryAnalysisInput): Promise<AIGeneration<ResourceCategoryAnalysis>> {
@@ -534,7 +541,7 @@ export class QianwenAIProvider implements AIAnalysisProvider {
     const assertSources = (result:ResourceCategoryAnalysis) => {
       if ([...result.directionalContent, ...result.indicatorFocus].some((item) => item.sourcePackageIds.some((id) => !allowed.has(id)))) throw new Error('分类分析引用了未提供的课程资料');
     };
-    let data = await this.client.structuredCompletion<ResourceCategoryAnalysis>(request);
+    let data = await this.clientFor(input.prompt).structuredCompletion<ResourceCategoryAnalysis>(request);
     assertSources(data);
     let safetyCorrectionUsed=false;
     try {
@@ -543,7 +550,7 @@ export class QianwenAIProvider implements AIAnalysisProvider {
       if (!(reason instanceof Error) || !reason.message.startsWith('千问输出触发幼儿标签化风险守卫')) throw reason;
       safetyCorrectionUsed=true;
       // Regenerate once from the original resources, without echoing the unsafe draft.
-      data = await this.client.structuredCompletion<ResourceCategoryAnalysis>({
+      data = await this.clientFor(input.prompt).structuredCompletion<ResourceCategoryAnalysis>({
         ...request,
         messages:[...request.messages,{role:'user',content:'上一份分类草稿未通过教育表达安全校验，请丢弃上一份结果。只提炼课程关注的内容、支持方式和未来可观察行为；不得比较、评级或推断具体幼儿的发展水平。资料局限只说明所给课程证据的缺口。使用原始资源ID重新生成完整JSON，不要复述校验错误或上一份表述。'}],
       });
@@ -563,7 +570,7 @@ export class QianwenAIProvider implements AIAnalysisProvider {
 
   private async researchSupport(input:ObservationAnalysisInput,cards:KnowledgeRow[]) {
     if(!this.options.webSearchEnabled)return {references:[],cacheHit:false};
-    const key=JSON.stringify([input.classroom.id,input.observation.id,input.prompt?.model||this.options.textModel,input.classroom.grade,input.observation.scene,input.observation.theme,input.observation.observation_focus,cards.map(card=>card.code)]);
+    const key=JSON.stringify([input.prompt?.credentialProfile??'YT',input.classroom.id,input.observation.id,input.prompt?.model||this.options.textModel,input.classroom.grade,input.observation.scene,input.observation.theme,input.observation.observation_focus,cards.map(card=>card.code)]);
     const now=Date.now();
     const cached=this.supportCache.get(key);
     if(cached&&cached.expiresAt>now)return {references:await cached.result,cacheHit:true};
@@ -582,7 +589,7 @@ export class QianwenAIProvider implements AIAnalysisProvider {
       const model = input.prompt?.model || this.options.textModel;
       const anonymizedQuery = `幼儿园 游戏支持 ${input.classroom.grade} ${input.observation.scene} ${input.observation.theme} ${(input.observation.observation_focus ?? []).join(" ")} ${cards.slice(0, 4).map((card) => card.title).join(" ")}`;
       const [webResult, academicResult] = await Promise.all([
-        this.client.searchWithSources({
+        this.clientFor(input.prompt).searchWithSources({
           model,
           systemPrompt: "只检索公开可访问的学前教育政策、研究机构与安全实践资料，不推断任何幼儿身份。",
           query: `${anonymizedQuery}\n请优先查找有明确机构、作者或出版信息的可靠来源。`,
@@ -592,7 +599,7 @@ export class QianwenAIProvider implements AIAnalysisProvider {
       ]);
       const candidates = mergeVerifiedSources(academicResult, verifiedWebSources(webResult.sources)).slice(0, 12);
       if (!candidates.length) return [];
-      const result = await this.client.structuredCompletion<SupportResearch>({
+      const result = await this.clientFor(input.prompt).structuredCompletion<SupportResearch>({
         model: input.prompt?.model || this.options.textModel,
         messages: [
           {
@@ -642,7 +649,7 @@ export class QianwenAIProvider implements AIAnalysisProvider {
       content.push({ type: "image_url", image_url: { url: input.mediaUrl, detail: "auto" } });
       content.push({ type: "text", text: "上一项图片是待提取的观察记录表，只识别其中可见字段。" });
     }
-    const result = await this.client.structuredCompletion<ObservationDocumentExtraction>({
+    const result = await this.clientFor(input.prompt).structuredCompletion<ObservationDocumentExtraction>({
       model: input.prompt?.model || (input.mediaUrl ? this.options.visionModel : this.options.textModel),
       messages: [{ role: "system", content: prompt.systemPrompt }, { role: "user", content }],
       schemaName: "tongji_observation_document_extraction",
@@ -766,7 +773,7 @@ export class QianwenAIProvider implements AIAnalysisProvider {
       timeoutMs: input.media.length ? this.options.visionTimeoutMs : this.options.observationTimeoutMs,
       onOutputRepair: (fields: string[]) => fields.forEach(field => outputRepairFields.add(field)),
     } satisfies Parameters<QwenClient["structuredCompletion"]>[0];
-    let result = await this.client.structuredCompletion<AnalysisResult>(request);
+    let result = await this.clientFor(input.prompt).structuredCompletion<AnalysisResult>(request);
     let validated: AnalysisResult;
     let sanitizedJudgmentCount = 0;
     let groundingRetry=false;
@@ -774,7 +781,7 @@ export class QianwenAIProvider implements AIAnalysisProvider {
       validated = validateObservationGrounding(result, input, cards);
     } catch {
       groundingRetry=true;
-      result = await this.client.structuredCompletion<AnalysisResult>({
+      result = await this.clientFor(input.prompt).structuredCompletion<AnalysisResult>({
         ...request,
         messages: [
           ...request.messages,
@@ -824,7 +831,7 @@ export class QianwenAIProvider implements AIAnalysisProvider {
   async reviseAnalysis(input: AnalysisRevisionInput): Promise<AIGeneration<AnalysisResult>> {
     const prompt = configuredPrompt(input, "analysis_revision");
     const compatibleInput = { ...input, original: normalizeAnalysisResult(input.original) };
-    const result = await this.client.structuredCompletion<AnalysisResult>({
+    const result = await this.clientFor(input.prompt).structuredCompletion<AnalysisResult>({
       model: input.prompt?.model || this.options.textModel,
       messages: [
         { role: "system", content: prompt.systemPrompt },
@@ -849,7 +856,7 @@ export class QianwenAIProvider implements AIAnalysisProvider {
 
   async generateReport(input: ReportGenerationInput): Promise<AIGeneration<ReportContent>> {
     const prompt = configuredPrompt(input, "individual_period_report");
-    const result = await this.client.structuredCompletion<ReportContent>({
+    const result = await this.clientFor(input.prompt).structuredCompletion<ReportContent>({
       model: input.prompt?.model || this.options.textModel,
       messages: [
         { role: "system", content: prompt.systemPrompt },
@@ -898,7 +905,7 @@ export class QianwenAIProvider implements AIAnalysisProvider {
       if (!subjectRefs.has(childId)) subjectRefs.set(childId, `child-${subjectRefs.size + 1}`);
       return subjectRefs.get(childId);
     };
-    const result = await this.client.structuredCompletion<ClassroomReportContent>({
+    const result = await this.clientFor(input.prompt).structuredCompletion<ClassroomReportContent>({
       model: input.prompt?.model || this.options.textModel,
       messages: [
         { role: "system", content: prompt.systemPrompt },
@@ -951,7 +958,7 @@ export class QianwenAIProvider implements AIAnalysisProvider {
     const prompt = configuredPrompt(input, "report_revision");
     if (input.reportType === "classroom") {
       const existing = input.existingContent as ClassroomReportContent;
-      const result = await this.client.structuredCompletion<ClassroomReportContent>({
+      const result = await this.clientFor(input.prompt).structuredCompletion<ClassroomReportContent>({
         model: input.prompt?.model || this.options.textModel,
         messages: [
           { role: "system", content: prompt.systemPrompt },
@@ -976,7 +983,7 @@ export class QianwenAIProvider implements AIAnalysisProvider {
       return { data: result, provider: "QianwenAIProvider", model: input.prompt?.model || this.options.textModel, promptVersion: prompt.version, mediaAnalyzed: false, notice: "千问AI已按教师意见修订班级报告，固定证据数据保持不变。" };
     }
     const existing = input.existingContent as ReportContent;
-    const result = await this.client.structuredCompletion<ReportContent>({
+    const result = await this.clientFor(input.prompt).structuredCompletion<ReportContent>({
       model: input.prompt?.model || this.options.textModel,
       messages: [
         { role: "system", content: prompt.systemPrompt },
@@ -994,7 +1001,7 @@ export class QianwenAIProvider implements AIAnalysisProvider {
 
   async generateCurriculum(input: CurriculumGenerationInput): Promise<AIGeneration<CurriculumDraft>> {
     const prompt = configuredPrompt(input, "curriculum_draft");
-    const result = await this.client.structuredCompletion<CurriculumDraft>({
+    const result = await this.clientFor(input.prompt).structuredCompletion<CurriculumDraft>({
       model: input.prompt?.model || this.options.textModel,
       messages: [
         { role: "system", content: prompt.systemPrompt },
@@ -1030,7 +1037,7 @@ export class QianwenAIProvider implements AIAnalysisProvider {
 
   async generateActivityOptions(input: CurriculumActivityOptionsInput): Promise<AIGeneration<CurriculumActivityOptions>> {
     const prompt = configuredPrompt(input, "curriculum_activity_options");
-    const result = await this.client.structuredCompletion<CurriculumActivityOptions>({
+    const result = await this.clientFor(input.prompt).structuredCompletion<CurriculumActivityOptions>({
       model: input.prompt?.model || this.options.textModel,
       messages: [
         { role: "system", content: prompt.systemPrompt },
@@ -1053,7 +1060,7 @@ export class QianwenAIProvider implements AIAnalysisProvider {
 
   async generateCurriculumPlan(input: CurriculumPlanGenerationInput): Promise<AIGeneration<CurriculumPlanContent>> {
     const prompt = configuredPrompt(input, "curriculum_plan");
-    const result = await this.client.structuredCompletion<CurriculumPlanContent>({
+    const result = await this.clientFor(input.prompt).structuredCompletion<CurriculumPlanContent>({
       model: input.prompt?.model || this.options.textModel,
       messages: [
         { role: "system", content: prompt.systemPrompt },
@@ -1081,7 +1088,7 @@ export class QianwenAIProvider implements AIAnalysisProvider {
   async clusterInterests(input: InterestClusteringInput): Promise<AIGeneration<InterestClusterResult>> {
     const prompt = configuredPrompt(input, "curriculum_interest_clustering");
     const allowedIds = new Set(input.observations.map((item) => item.id));
-    const result = await this.client.structuredCompletion<InterestClusterResult>({
+    const result = await this.clientFor(input.prompt).structuredCompletion<InterestClusterResult>({
       model: input.prompt?.model || this.options.textModel,
       messages: [
         { role: "system", content: prompt.systemPrompt },

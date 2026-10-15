@@ -6,6 +6,7 @@ import { config } from "./config.js";
 import { ApiError, registerErrorHandler } from "./http.js";
 import { authRoutes } from "./routes/auth.js";
 import { aiModelConfigRoutes } from "./routes/ai-model-config.js";
+import { aiCredentialConfigRoutes } from "./routes/ai-credential-config.js";
 import { aiPromptRoutes } from "./routes/ai-prompts.js";
 import { governanceRoutes } from "./routes/governance.js";
 import { evolutionRoutes } from "./routes/evolution.js";
@@ -71,6 +72,7 @@ export async function buildApp() {
   });
   await authRoutes(app);
   await aiModelConfigRoutes(app);
+  await aiCredentialConfigRoutes(app);
   await aiPromptRoutes(app);
   await managementRoutes(app);
   await observationRoutes(app);

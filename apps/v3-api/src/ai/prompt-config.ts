@@ -8,6 +8,7 @@ import {
 } from "./qianwen-provider.js";
 import { promptView, type AIPromptConfigRow } from "./prompt-registry.js";
 import { resolveTenantAIModel } from "./model-config.js";
+import { resolveTenantAICredentialProfile } from "./credential-config.js";
 
 export { promptView, type AIPromptConfigRow, type AIPromptConfigView } from "./prompt-registry.js";
 
@@ -23,7 +24,7 @@ export async function listTenantPromptConfigs(tenantId: string) {
 }
 
 export async function resolveTenantPrompt(tenantId: string, key: AIPromptKey): Promise<ResolvedAIPrompt> {
-  const [{ data, error }, model] = await Promise.all([
+  const [{ data, error }, model, credentialProfile] = await Promise.all([
     serviceClient
       .schema(config.SUPABASE_SCHEMA)
       .from("ai_prompt_configs")
@@ -32,6 +33,7 @@ export async function resolveTenantPrompt(tenantId: string, key: AIPromptKey): P
       .eq("prompt_key", key)
       .maybeSingle(),
     resolveTenantAIModel(tenantId),
+    resolveTenantAICredentialProfile(tenantId),
   ]);
   if (error) throw new Error(`AI提示词配置读取失败：${error.message}`);
   const view = promptView(key, data as AIPromptConfigRow | null);
@@ -42,6 +44,7 @@ export async function resolveTenantPrompt(tenantId: string, key: AIPromptKey): P
     source: view.source,
     revision: view.revision,
     model,
+    credentialProfile,
   };
 }
 

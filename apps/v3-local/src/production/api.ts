@@ -1,6 +1,7 @@
 import type {
   RemoteAccount,
   RemoteAIModelConfig,
+  RemoteAICredentialConfig,
   RemoteAIPrompt,
   RemoteAIPromptKey,
   RemoteAnalysisFramework,
@@ -344,6 +345,12 @@ export const remoteApi = {
     }),
   aiModelConfig: () =>
     request<{ item: RemoteAIModelConfig }>("/api/ai-model-config"),
+  aiCredentialConfig: () =>
+    request<{ item: RemoteAICredentialConfig }>("/api/ai-credential-config"),
+  updateAICredentialConfig: (value: { profile: "YT" | "YQY"; expectedRevision: number }) =>
+    request<{ item: RemoteAICredentialConfig }>("/api/ai-credential-config", {
+      method: "PUT", body: body(value),
+    }),
   updateAIModelConfig: (value: { model: string; expectedRevision: number }) =>
     request<{ item: RemoteAIModelConfig }>("/api/ai-model-config", {
       method: "PUT",

@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import type { KnowledgeRow } from "./contracts.js";
+import type { AIAnalysisProvider, KnowledgeRow, ResolvedAIPrompt } from "./contracts.js";
 import {
   AI_PROMPT_DEFINITIONS,
   IMMUTABLE_AI_SAFETY_PROMPT,
@@ -86,6 +86,72 @@ const response = {
 };
 
 describe("QianwenAIProvider", () => {
+  it("routes every AI scene through the selected alias without placing credentials in prompt bodies", async () => {
+    const calls: Array<{ authorization: string | null; body: string }> = [];
+    const fetcher = vi.fn(async (_url: string | URL | Request, init?: RequestInit) => {
+      calls.push({ authorization: new Headers(init?.headers).get("Authorization"), body: String(init?.body) });
+      // Stop at the wire boundary: response-schema behavior is covered by scene tests below.
+      return new Response("{}", { status: 401 });
+    });
+    const provider = new QianwenAIProvider({ apiKey: "sk-original-test-key", apiKeys: { YQY: "sk-new-test-key" }, baseUrl: "https://example.test/v1", textModel: "unchanged-model", visionModel: "unchanged-model", timeoutMs: 5000 }, fetcher);
+    const curriculum = { theme: "桥梁", observationCount: 3, childCount: 2, timePointCount: 3, observations: [], evidenceObservationIds: [], knowledge: [] };
+    const cases: Array<{ method: keyof AIAnalysisProvider; input: Record<string, unknown> }> = [
+      { method: "analyzeObservation", input: { observation: { teacher_observation: "幼儿摆放积木。", teacher_identification: "材料探索", teacher_response: { category: "material", strategy: "保留材料", nextObservationFocus: "继续观察" }, scene: "建构区", theme: "桥梁", organization_stage: "process" }, child: { id: "child", display_name: "虚构幼儿", birth_month: "2022-01" }, classroom: { id: "class", grade: "middle" }, knowledge: [], evidence: [], media: [], history: [] } },
+      { method: "extractObservationDocument", input: { fileName: "模板.docx", rawText: "幼儿摆放积木。", mimeType: "application/docx", classroomChildren: [] } },
+      { method: "reviseAnalysis", input: { original: expandedResponse, teacherFeedback: [] } },
+      { method: "generateReport", input: { reportType: "teacher", childName: "虚构", periodStart: "2026-10-01", periodEnd: "2026-10-15", observations: [], analyses: [], supports: [] } },
+      { method: "generateClassroomReport", input: { classroomName: "虚构班", observations: [], analyses: [], supports: [], metrics: {} } },
+      { method: "reviseReport", input: { reportType: "teacher", existingContent: {}, instruction: "精简" } },
+      { method: "reviseReport", input: { reportType: "classroom", existingContent: {}, instruction: "精简" } },
+      { method: "generateCurriculum", input: curriculum },
+      { method: "generateActivityOptions", input: curriculum },
+      { method: "generateCurriculumPlan", input: { ...curriculum, selectedOptions: [], templateStructure: {}, classroomName: "虚构班" } },
+      { method: "clusterInterests", input: { observations: [] } },
+      { method: "analyzeResourceCategory", input: { category: "exploration", categoryLabel: "探索", resources: [] } },
+    ];
+    const keys: Record<keyof AIAnalysisProvider, string> = {
+      analyzeObservation: "observation_analysis", extractObservationDocument: "observation_document_extraction",
+      reviseAnalysis: "analysis_revision", generateReport: "individual_period_report", generateClassroomReport: "classroom_period_report",
+      reviseReport: "report_revision", generateCurriculum: "curriculum_draft", generateActivityOptions: "curriculum_activity_options",
+      generateCurriculumPlan: "curriculum_plan", clusterInterests: "curriculum_interest_clustering", analyzeResourceCategory: "resource_category_analysis",
+    };
+    const prompt = (profile: "YT" | "YQY", key: string): ResolvedAIPrompt => ({ key, systemPrompt: "按证据分析", version: "test", source: "default", revision: 0, credentialProfile: profile });
+    for (const profile of ["YT", "YQY", "YT"] as const) {
+      for (const testCase of cases) {
+        await expect((provider[testCase.method] as (input: any) => Promise<unknown>)({ ...testCase.input, prompt: prompt(profile, keys[testCase.method]) })).rejects.toThrow("HTTP 401");
+        const call = calls.at(-1)!;
+        expect(call.authorization).toBe(profile === "YT" ? "Bearer sk-original-test-key" : "Bearer sk-new-test-key");
+        expect(call.body).not.toContain("sk-");
+        expect(JSON.parse(call.body).model).toBe("unchanged-model");
+      }
+    }
+    expect(calls).toHaveLength(cases.length * 3);
+  });
+
+  it("does not silently use YT when YQY is missing", async () => {
+    const fetcher = vi.fn();
+    const provider = new QianwenAIProvider({ apiKey: "sk-original-test-key", baseUrl: "https://example.test/v1", textModel: "model", visionModel: "model", timeoutMs: 5000 }, fetcher);
+    await expect(provider.clusterInterests({ observations: [], prompt: { key: "curriculum_interest_clustering", systemPrompt: "test", version: "test", source: "default", revision: 0, credentialProfile: "YQY" } })).rejects.toThrow("YQY 未配置");
+    expect(fetcher).not.toHaveBeenCalled();
+  });
+
+  it("keeps concurrent and already-started calls on their own credential", async () => {
+    const headers: string[] = [];
+    let releaseFirst!: () => void;
+    const firstCall = new Promise<void>(resolve => { releaseFirst = resolve; });
+    const fetcher = vi.fn(async (_url: string | URL | Request, init?: RequestInit) => {
+      headers.push(new Headers(init?.headers).get("Authorization")!);
+      if (headers.length === 1) await firstCall;
+      return new Response(JSON.stringify({ choices: [{ message: { content: JSON.stringify({ clusters: [] }) } }] }));
+    });
+    const provider = new QianwenAIProvider({ apiKey: "sk-yt-test-key", apiKeys: { YQY: "sk-yqy-test-key" }, baseUrl: "https://example.test/v1", textModel: "model", visionModel: "model", timeoutMs: 5000 }, fetcher);
+    const prompt = (credentialProfile: "YT" | "YQY"): ResolvedAIPrompt => ({ key: "curriculum_interest_clustering", systemPrompt: "test", version: "test", source: "default", revision: 0, credentialProfile });
+    const running = provider.clusterInterests({ observations: [], prompt: prompt("YT") });
+    await provider.clusterInterests({ observations: [], prompt: prompt("YQY") });
+    releaseFirst();
+    await running;
+    expect(headers).toEqual(["Bearer sk-yt-test-key", "Bearer sk-yqy-test-key"]);
+  });
   it('analyzes incomplete text and unlocated video in one full request instead of a blocking preflight', async () => {
     const draft = {...structuredClone(expandedResponse), analysisScope: 'context_only', objectiveSummary: '游戏情境中有幼儿共同搭桥，尚不能明确行为的个人归属。', evidenceGaps: ['可补充衣着或位置，帮助把可见行为对应到该幼儿。']};
     const fetcher = vi.fn(async (_url: string | URL | Request, init?: RequestInit) => {

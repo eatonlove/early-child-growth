@@ -367,6 +367,15 @@ export interface RemoteAIPrompt {
   updatedByName: string | null;
 }
 
+export interface RemoteAICredentialConfig {
+  profile: "YT" | "YQY";
+  defaultProfile: "YT";
+  source: "environment" | "tenant";
+  revision: number;
+  updatedAt: string | null;
+  options: Array<{ value: "YT" | "YQY"; label: string; configured: boolean }>;
+}
+
 export interface RemoteAIModelConfig {
   model: string;
   defaultModel: string;

@@ -245,6 +245,7 @@ export function createAIProvider(config: AIProviderConfig): AIAnalysisProvider {
   if (config.mode === "simulated") return scenario;
   const qianwen = new QianwenAIProvider({
     apiKey: config.apiKey,
+    apiKeys: config.apiKeys,
     baseUrl: config.baseUrl,
     textModel: config.textModel,
     visionModel: config.visionModel,

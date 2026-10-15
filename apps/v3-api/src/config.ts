@@ -28,6 +28,7 @@ const envSchema = z.object({
   AI_MODE: z.enum(["simulated", "qianwen"]).default("simulated"),
   DASHSCOPE_API_KEY: z.string().trim().optional(),
   QIANWEN_API_KEY: z.string().trim().optional(),
+  QIANWEN_API_KEY_YQY: z.string().trim().optional(),
   QWEN_BASE_URL: z.string().url().default("https://dashscope.aliyuncs.com/compatible-mode/v1"),
   QWEN_TEXT_MODEL: z.string().trim().min(1).default("qwen3.7-plus-2026-05-26"),
   QWEN_VISION_MODEL: z.string().trim().min(1).default("qwen3.7-plus-2026-05-26"),
@@ -68,6 +69,10 @@ export const config = {
   cookieSecure: parsed.data.COOKIE_SECURE === "true",
   corsOrigins: parsed.data.CORS_ORIGIN.split(",").map((item) => item.trim()).filter(Boolean),
   qwenApiKey: parsed.data.QIANWEN_API_KEY || parsed.data.DASHSCOPE_API_KEY || "",
+  qwenApiKeys: {
+    YT: parsed.data.QIANWEN_API_KEY || parsed.data.DASHSCOPE_API_KEY || "",
+    YQY: parsed.data.QIANWEN_API_KEY_YQY || "",
+  },
   qwenMediaAnalysisEnabled: parsed.data.QWEN_MEDIA_ANALYSIS_ENABLED === "true",
   qwenWebSearchEnabled: parsed.data.QWEN_WEB_SEARCH_ENABLED === "true",
   aiFallbackToSimulated: parsed.data.AI_FALLBACK_TO_SIMULATED === "true",

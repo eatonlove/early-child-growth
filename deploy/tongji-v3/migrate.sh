@@ -239,6 +239,14 @@ else
   echo "逐名分析与补充证据结构已就绪。"
 fi
 
+if ! docker exec "$DB_CONTAINER" psql -U postgres -d postgres -Atc \
+  "select to_regclass('tongji_v3.ai_credential_configs') is not null;" | grep -qx t; then
+  docker exec -i "$DB_CONTAINER" psql -U postgres -d postgres -v ON_ERROR_STOP=1 --single-transaction \
+    < "$ROOT_DIR/apps/v3-api/supabase/migrations/20261015100916_ai_credential_profiles.sql"
+else
+  echo "园所统一AI密钥名称配置已就绪。"
+fi
+
 docker exec -i "$DB_CONTAINER" psql -U postgres -d postgres \
   -v ON_ERROR_STOP=1 --single-transaction \
   < "$ROOT_DIR/apps/v3-api/supabase/migrations/20260828084501_reload_ai_prompt_config_schema.sql"

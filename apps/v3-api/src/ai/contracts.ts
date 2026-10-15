@@ -83,6 +83,7 @@ export interface ResolvedAIPrompt {
   source: "default" | "custom";
   revision: number;
   model?: string;
+  credentialProfile?: "YT" | "YQY";
 }
 
 const shortText = z.string().trim().min(1).max(2000).refine(hasMeaningfulText, "内容不能仅包含标点、数字或空白");

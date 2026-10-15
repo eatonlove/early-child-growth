@@ -1,8 +1,8 @@
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { remoteApi } from "./api";
 import { RemoteAIPromptPage } from "./prompt-pages";
-import type { RemoteAIModelConfig, RemoteAIPrompt } from "./types";
+import type { RemoteAICredentialConfig, RemoteAIModelConfig, RemoteAIPrompt } from "./types";
 
 const defaultPrompt = "你是逐幼儿观察分析助手。请严格区分客观事实、专业解释和待验证假设，并依据当前年龄段知识卡提出可执行应答，不得补造任何未提供的行为或语言。".repeat(2);
 const item: RemoteAIPrompt = {
@@ -38,12 +38,45 @@ const modelConfig: RemoteAIModelConfig = {
   ],
 };
 
+const credentialConfig: RemoteAICredentialConfig = {
+  profile: "YT", defaultProfile: "YT", source: "environment", revision: 0, updatedAt: null,
+  options: [{ value: "YT", label: "YT", configured: true }, { value: "YQY", label: "YQY", configured: true }],
+};
+
+beforeEach(() => {
+  vi.spyOn(remoteApi, "aiCredentialConfig").mockResolvedValue({ item: credentialConfig });
+});
+
 afterEach(() => {
   cleanup();
   vi.restoreAllMocks();
 });
 
 describe("researcher AI prompt page", () => {
+  it("switches the shared credential alias without exposing secrets or changing the model", async () => {
+    vi.spyOn(remoteApi, "aiPrompts").mockResolvedValue({ immutableSafetyPrompt: "安全约束", items: [item] });
+    vi.spyOn(remoteApi, "aiModelConfig").mockResolvedValue({ item: modelConfig });
+    const updateModel = vi.spyOn(remoteApi, "updateAIModelConfig");
+    const update = vi.spyOn(remoteApi, "updateAICredentialConfig").mockResolvedValue({
+      item: { ...credentialConfig, profile: "YQY", revision: 1, source: "tenant" },
+    });
+    render(<RemoteAIPromptPage />);
+    fireEvent.change(await screen.findByRole("combobox", { name: "千问 API 密钥" }), { target: { value: "YQY" } });
+    fireEvent.click(screen.getByRole("button", { name: "保存密钥选择" }));
+    await waitFor(() => expect(update).toHaveBeenCalledWith({ profile: "YQY", expectedRevision: 0 }));
+    expect(await screen.findByText(/已切换为 YQY/)).toBeInTheDocument();
+    expect(updateModel).not.toHaveBeenCalled();
+    expect(document.body.textContent).not.toContain("sk-");
+  });
+
+  it("disables an unconfigured credential", async () => {
+    vi.mocked(remoteApi.aiCredentialConfig).mockResolvedValue({ item: { ...credentialConfig, options: credentialConfig.options.map(option => ({ ...option, configured: option.value === "YT" })) } });
+    vi.spyOn(remoteApi, "aiPrompts").mockResolvedValue({ immutableSafetyPrompt: "安全约束", items: [item] });
+    vi.spyOn(remoteApi, "aiModelConfig").mockResolvedValue({ item: modelConfig });
+    render(<RemoteAIPromptPage />);
+    expect(await screen.findByRole("option", { name: "YQY · 未配置" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "保存密钥选择" })).toBeDisabled();
+  });
   it("lists the scene, exposes immutable safety and saves a tenant revision", async () => {
     vi.spyOn(remoteApi, "aiPrompts").mockResolvedValue({
       immutableSafetyPrompt: "禁止诊断、排名、标签化和编造证据。",

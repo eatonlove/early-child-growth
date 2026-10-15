@@ -254,6 +254,8 @@
 |---|---|---|---|
 | GET | `/ai-model-config` | 教研员 | 返回当前生效模型、服务端默认模型、可选模型和修订号 |
 | PUT | `/ai-model-config` | 教研员 | 保存全场景共用模型，下一次所有 AI 调用立即生效 |
+| GET | `/ai-credential-config` | 教研员 | 返回本园所当前密钥名称、YT/YQY配置状态及修订号，不返回密钥内容 |
+| PUT | `/ai-credential-config` | 教研员 | 保存全场景共用密钥名称，下一次 AI 任务开始时采用；不改变模型 |
 | GET | `/ai-prompts` | 教研员 | 返回全部场景、系统默认内容、园所自定义内容、生效版本和固定安全约束 |
 | PUT | `/ai-prompts/:key` | 教研员 | 保存园所自定义提示词，下一次对应 AI 调用立即生效 |
 | POST | `/ai-prompts/:key/reset` | 教研员 | 删除园所覆盖配置并恢复系统默认提示词 |
@@ -268,6 +270,10 @@
 ```
 
 模型切换只影响后续请求。每次生成结果仍保存实际使用的 `model`，历史分析、报告与课程草案不会自动重跑。
+
+密钥选择保存请求：`{"profile":"YQY","expectedRevision":0}`。名称仅允许 `YT | YQY`，默认 `YT`。YT继续使用原服务端 `QIANWEN_API_KEY`（兼容 `DASHSCOPE_API_KEY`），YQY由后端 `QIANWEN_API_KEY_YQY` 提供。数据库仅保存名称，不保存密钥；响应仅含 `profile/defaultProfile/source/revision/updatedAt/options`，每个选项含 `value/label/configured`。页面不提供密钥查看接口。
+
+未配置的名称返回422；并发修订冲突返回409；教师和未登录访问分别返回403/401。配置按园所隔离，仅经后端身份验证的教研员可读写。观察、文档解析、修订、个人/班级报告、课程与分类分析均在任务开始时固定该名称，后续重试、画面分析及联网参考共用同一密钥，不自动回退另一账号。正在运行的任务保持原密钥，不因页面切换被改写。
 
 当前场景编码：
 

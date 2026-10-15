@@ -19,3 +19,5 @@
 页面不直接调用上述 Mock；前端始终使用正式 `/api/*` 契约，由后端运行模式选择适配器。
 
 账号显示名称修改、观察安全删除已实现正式接口，真实本地PostgreSQL/Auth/Storage验收和Chrome交互测试通过，不保留前端假接口。验收脚本为 `apps/v3-api/scripts/smoke-account-observation.ts`；仅写入隔离的虚构园所并自动清理，生产运行必须显式授权。
+
+YT/YQY密钥选择使用正式 `/api/ai-credential-config` GET/PUT接口；只有后端持有密钥，数据库与前端仅保存名称。`scripts/verify-ai-credentials.mjs` 通过真实本地PostgreSQL/Auth、Chrome和YQY真实千问调用完成验证，不引入运行时Mock；生产隔离验收必须显式授权并自动清理。

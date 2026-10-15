@@ -421,6 +421,7 @@ async function mockApi(page: Page, role: "teacher" | "researcher", withAnalysis 
       : path === "/api/knowledge" ? { items: [], version: "guide-cn-2012.v1.0.0" }
       : path === "/api/accounts" ? { items: [{ user_id: "teacher-id", username: "teacher", display_name: "陈老师", role: "teacher", status: "active", classroom_ids: [classroom.id] }] }
       : path === "/api/ai-model-config" ? { item: aiModelConfig }
+      : path === "/api/ai-credential-config" ? { item: { profile: "YT", defaultProfile: "YT", source: "environment", revision: 0, updatedAt: null, options: [{ value: "YT", label: "YT", configured: true }, { value: "YQY", label: "YQY", configured: true }] } }
       : path === "/api/ai-prompts" ? { immutableSafetyPrompt: "禁止诊断、排名、标签化和编造证据。", items: [aiPrompt] }
       : path === "/api/quality-reviews" ? { items: [] }
       : path === "/api/export-requests" ? { items: [] }

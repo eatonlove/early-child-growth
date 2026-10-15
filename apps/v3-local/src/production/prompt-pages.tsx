@@ -4,6 +4,7 @@ import {
   CircleAlert,
   Cpu,
   History,
+  KeyRound,
   RotateCcw,
   Save,
   ShieldCheck,
@@ -11,7 +12,7 @@ import {
 } from "lucide-react";
 import { Badge, LoadingState, PageHeader, Panel } from "../components/ui";
 import { RemoteApiError, remoteApi } from "./api";
-import type { RemoteAIModelConfig, RemoteAIPrompt, RemoteAIPromptKey } from "./types";
+import type { RemoteAICredentialConfig, RemoteAIModelConfig, RemoteAIPrompt, RemoteAIPromptKey } from "./types";
 
 const errorMessage = (reason: unknown) =>
   reason instanceof RemoteApiError ? reason.message : "操作失败，请稍后重试";
@@ -30,6 +31,8 @@ export function RemoteAIPromptPage() {
   const [items, setItems] = useState<RemoteAIPrompt[]>([]);
   const [modelConfig, setModelConfig] = useState<RemoteAIModelConfig | null>(null);
   const [modelDraft, setModelDraft] = useState("");
+  const [credentialConfig, setCredentialConfig] = useState<RemoteAICredentialConfig | null>(null);
+  const [credentialDraft, setCredentialDraft] = useState<"YT" | "YQY">("YT");
   const [selectedKey, setSelectedKey] = useState<RemoteAIPromptKey | null>(null);
   const [immutableSafetyPrompt, setImmutableSafetyPrompt] = useState("");
   const [draft, setDraft] = useState("");
@@ -44,6 +47,8 @@ export function RemoteAIPromptPage() {
   const normalizedModelDraft = modelDraft.trim();
   const modelDirty = Boolean(modelConfig && normalizedModelDraft !== modelConfig.model);
   const modelValid = modelKeyPattern.test(normalizedModelDraft);
+  const credentialDirty = Boolean(credentialConfig && credentialDraft !== credentialConfig.profile);
+  const credentialAvailable = credentialConfig?.options.some((item) => item.value === credentialDraft && item.configured);
   const selectedModelOption = modelConfig?.options.find((item) => item.value === normalizedModelDraft);
   const promptValid = draft.trim().length >= 100 && draft.trim().length <= 30000;
   const groups = useMemo(() => {
@@ -56,11 +61,13 @@ export function RemoteAIPromptPage() {
     setLoading(true);
     setError("");
     try {
-      const [result, modelResult] = await Promise.all([remoteApi.aiPrompts(), remoteApi.aiModelConfig()]);
+      const [result, modelResult, credentialResult] = await Promise.all([remoteApi.aiPrompts(), remoteApi.aiModelConfig(), remoteApi.aiCredentialConfig()]);
       setItems(result.items);
       setImmutableSafetyPrompt(result.immutableSafetyPrompt);
       setModelConfig(modelResult.item);
       setModelDraft(modelResult.item.model);
+      setCredentialConfig(credentialResult.item);
+      setCredentialDraft(credentialResult.item.profile);
       const next = result.items.find((item) => item.key === preferredKey) ?? result.items[0] ?? null;
       setSelectedKey(next?.key ?? null);
       setDraft(next?.effectivePrompt ?? "");
@@ -129,6 +136,32 @@ export function RemoteAIPromptPage() {
     }
   };
 
+  const saveCredential = async () => {
+    if (!credentialConfig || !credentialDirty || !credentialAvailable) return;
+    setBusy(true);
+    setError("");
+    setSuccess("");
+    try {
+      const result = await remoteApi.updateAICredentialConfig({ profile: credentialDraft, expectedRevision: credentialConfig.revision });
+      setCredentialConfig(result.item);
+      setCredentialDraft(result.item.profile);
+      setSuccess(`已切换为 ${result.item.profile}，下一次 AI 任务开始时生效；模型与正在运行的任务不变。`);
+    } catch (reason) {
+      setError(errorMessage(reason));
+      if (reason instanceof RemoteApiError && reason.status === 409) {
+        try {
+          const result = await remoteApi.aiCredentialConfig();
+          setCredentialConfig(result.item);
+          setCredentialDraft(result.item.profile);
+        } catch {
+          setError("密钥选择已变更，重新读取失败，请刷新页面后重试。");
+        }
+      }
+    } finally {
+      setBusy(false);
+    }
+  };
+
   const reset = async () => {
     if (!selected || selected.source !== "custom") return;
     if (!window.confirm(`确定将“${selected.name}”恢复为系统默认提示词吗？`)) return;
@@ -159,6 +192,38 @@ export function RemoteAIPromptPage() {
 
       {error && <div className="prompt-alert prompt-alert-error" role="alert"><CircleAlert />{error}</div>}
       {success && <div className="prompt-alert prompt-alert-success" role="status"><Sparkles />{success}</div>}
+
+      {credentialConfig && <Panel
+        className="prompt-model-panel prompt-credential-panel"
+        title="千问 API 密钥"
+        subtitle="所有 AI 场景共用。只选择密钥名称，密钥内容仅保存在后端，不会回显。"
+        action={<Badge tone="green">当前使用 {credentialConfig.profile}</Badge>}
+      >
+        <div className="prompt-model-grid">
+          <KeyRound />
+          <label>
+            <span>使用的密钥</span>
+            <select
+              aria-label="千问 API 密钥"
+              aria-describedby="ai-credential-hint"
+              value={credentialDraft}
+              disabled={busy}
+              onChange={(event) => setCredentialDraft(event.target.value as "YT" | "YQY")}
+            >
+              {credentialConfig.options.map((option) => <option key={option.value} value={option.value} disabled={!option.configured}>
+                {option.label} · {option.configured ? "已配置" : "未配置"}
+              </option>)}
+            </select>
+          </label>
+          <div className="prompt-model-description" id="ai-credential-hint">
+            <strong>YT 为原有密钥，YQY 为新增密钥。保存后从下一次 AI 任务开始生效，不自动改换模型或重跑历史结果。</strong>
+            <small>“已配置”仅表示服务端已设置密钥，不代表剩余额度；调用失败不会自动切换到另一密钥。</small>
+          </div>
+          <button className="btn btn-primary" type="button" onClick={() => void saveCredential()} disabled={busy || !credentialDirty || !credentialAvailable}>
+            <Save />{busy ? "正在保存…" : "保存密钥选择"}
+          </button>
+        </div>
+      </Panel>}
 
       {modelConfig && <Panel
         className="prompt-model-panel"

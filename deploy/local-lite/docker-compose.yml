@@ -22,6 +22,7 @@ x-api-environment: &api-environment
   INTERNAL_EMAIL_DOMAIN: tongji-v3.local
   AI_MODE: ${AI_MODE:-simulated}
   QIANWEN_API_KEY: ${QIANWEN_API_KEY:-}
+  QIANWEN_API_KEY_YQY: ${QIANWEN_API_KEY_YQY:-}
   DASHSCOPE_API_KEY: ${DASHSCOPE_API_KEY:-}
   QWEN_BASE_URL: ${QWEN_BASE_URL:-https://dashscope.aliyuncs.com/compatible-mode/v1}
   QWEN_TEXT_MODEL: ${QWEN_TEXT_MODEL:-qwen3.7-plus-2026-05-26}
