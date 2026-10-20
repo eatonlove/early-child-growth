@@ -208,6 +208,35 @@ describe("QwenClient", () => {
     })).toThrow("Token Plan");
   });
 
+  it('repairs only future-support paths, keeps facts unchanged, and bounds invalid corrections to one request', async () => {
+    const facts = ['幼儿把桥墩移近后再次放上木板'];
+    const draft = {facts, responsePlans: [{activitySupport: {activityName: '继'}}]};
+    const schema = {type: 'object', properties: {facts: {type: 'array', items: {type: 'string'}}, responsePlans: {type: 'array', items: {type: 'object', properties: {activitySupport: {type: 'object', properties: {activityName: {type: 'string', minLength: 2, maxLength: 160}}}}}}}};
+    const validator = z.object({facts: z.array(z.string()), responsePlans: z.array(z.object({activitySupport: z.object({activityName: z.string().min(2)}).strict()}).strict())}).strict();
+    for (const valid of [true, false]) {
+      const repaired = vi.fn();
+      const fetcher = vi.fn(async (_url: string | URL | Request, init?: RequestInit) => {
+        const request = JSON.parse(String(init?.body));
+        const isCorrection = request.response_format.json_schema.name === 'tongji_observation_support_correction';
+        if (isCorrection) {
+          expect(request.messages.at(-1).content).toContain('minimum');
+          expect(request.messages.at(-1).content).toContain('继');
+          expect(request.response_format.json_schema.schema.required).toEqual(['fix0']);
+        }
+        return new Response(JSON.stringify({choices: [{message: {content: JSON.stringify(isCorrection ? {fix0: valid ? '继续观察幼儿的尝试' : '继'} : draft)}}]}));
+      });
+      const client = new QwenClient({apiKey: 'sk-test-only', baseUrl: 'https://example.test/v1', timeoutMs: 5000, retries: 0, fetcher});
+      const call = client.structuredCompletion({model: 'model', messages: [{role: 'user', content: '生成观察分析JSON'}], schemaName: 'test', jsonSchema: schema, validator, targetedSupportCorrection: true, onOutputRepair: repaired});
+      if (valid) {
+        const result = await call;
+        expect(result.facts).toEqual(facts);
+        expect(result.responsePlans[0]!.activitySupport.activityName).toBe('继续观察幼儿的尝试');
+        expect(repaired).toHaveBeenCalledWith(['responsePlans.0.activitySupport.activityName']);
+      } else await expect(call).rejects.toThrow('业务校验');
+      expect(fetcher).toHaveBeenCalledTimes(2);
+    }
+  });
+
   it("accepts punctuation used by standard Qwen keys", () => {
     expect(() => new QwenClient({
       apiKey: "sk-standard.key/value+suffix",

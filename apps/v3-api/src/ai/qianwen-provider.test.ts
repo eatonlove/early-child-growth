@@ -86,6 +86,13 @@ const response = {
 };
 
 describe("QianwenAIProvider", () => {
+  it('rejects facts citing an attachment whose picture was never provided', async () => {
+    const fetcher = vi.fn(async (_url: string | URL | Request, _init?: RequestInit) => new Response(JSON.stringify({choices: [{message: {content: JSON.stringify(response)}}]})));
+    const provider = new QianwenAIProvider({apiKey: 'sk-test-only', baseUrl: 'https://example.test/v1', textModel: 'model', visionModel: 'model', timeoutMs: 5000, webSearchEnabled: false}, fetcher);
+    await expect(provider.analyzeObservation({observation: {teacher_observation: '幼儿移动桥墩后再次放上木板。', teacher_identification: '出现比较线索。', teacher_response: {category: 'material', strategy: '保留材料', nextObservationFocus: '观察比较'}, scene: '建构区', theme: '搭桥', organization_stage: 'process'}, child: {id: 'child', display_name: '虚构', birth_month: '2022-01'}, classroom: {id: 'class', grade: 'middle'}, knowledge: [card], evidence: [{id: 'evidence-1', evidence_type: 'photo'}], media: [], history: []})).rejects.toThrow('事实未引用允许的原始证据');
+    expect(fetcher).toHaveBeenCalledTimes(2);
+    expect(JSON.parse(String(fetcher.mock.calls[0]?.[1]?.body)).response_format.json_schema.schema.properties.facts.items.properties.evidenceIds.items.enum).toEqual(['teacher-observation']);
+  });
   it("routes every AI scene through the selected alias without placing credentials in prompt bodies", async () => {
     const calls: Array<{ authorization: string | null; body: string }> = [];
     const fetcher = vi.fn(async (_url: string | URL | Request, init?: RequestInit) => {
@@ -341,12 +348,12 @@ describe("QianwenAIProvider", () => {
     expect(requestBody).toContain("video_url");
     expect(requestBody).toContain("image_url");
     expect(requestBody).not.toContain("不应发送的姓名");
-    expect(generated.promptVersion).toBe("observation-analysis.qwen.v11");
+    expect(generated.promptVersion).toBe("observation-analysis.qwen.v12");
 
     const apiRequest = JSON.parse(requestBody);
     expect(apiRequest.model).toBe("qwen3.7-flash");
     expect(apiRequest.messages[0].content).toContain("逐幼儿循证分析助手");
-    expect(apiRequest.messages.at(-1).content).toContain("丢弃上一次草稿");
+    expect(apiRequest.messages.at(-1).content).toContain("只可引用以下证据ID");
     expect(apiRequest.messages[0].content).toContain("图片只能证明一个可见瞬间");
     expect(apiRequest.messages[0].content).toContain("保持观察/最低介入");
     const firstTextPart = apiRequest.messages[1].content.find((item: { type: string }) => item.type === "text");
@@ -446,7 +453,7 @@ describe("QianwenAIProvider", () => {
       child: { id: "child-1", display_name: "演示幼儿", birth_month: "2022-05" },
       classroom: { id: "class-1", grade: "middle" },
       knowledge: [card],
-      evidence: [{ id: "evidence-1", evidence_type: "photo", mime_type: "image/jpeg" }],
+      evidence: [{ id: "evidence-1", evidence_type: "photo", mime_type: "image/jpeg", transcript: "已确认记录：幼儿移动桥墩后再次测试桥面。" }],
       media: [],
       history: [],
     });

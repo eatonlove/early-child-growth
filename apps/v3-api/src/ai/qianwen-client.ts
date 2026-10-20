@@ -1,6 +1,7 @@
 import type { z } from "zod";
 import { repairAnalysisOutput } from "./analysis-output-repair.js";
 import { isStandardQwenApiKey } from "./key-validation.js";
+import { supportCorrection } from './support-output-correction.js';
 
 export type QwenContentPart =
   | { type: "text"; text: string }
@@ -32,6 +33,7 @@ interface StructuredCompletionInput<T> {
   timeoutMs?: number;
   signal?:AbortSignal;
   onOutputRepair?: (fields: string[]) => void;
+  targetedSupportCorrection?: boolean;
 }
 
 export interface QwenSearchSource {
@@ -56,6 +58,16 @@ export class QwenRequestError extends Error {
   ) {
     super(message);
     this.name = "QwenRequestError";
+  }
+}
+
+class OutputValidationError extends QwenRequestError {
+  declare readonly invalidOutput: {draft: unknown; issues: z.ZodIssue[]; repairedFields: string[]};
+  constructor(draft: unknown, issues: z.ZodIssue[], repairedFields: string[] = []) {
+    const root = Array.isArray(draft) ? 'array' : draft === null ? 'null' : typeof draft;
+    super(`千问结构化输出未通过业务校验(root=${root};${issues.slice(0, 8).map(issue => `${issue.path.join('.')}:${issue.code}`).join(',')})`);
+    // Failure logs must not serialize the teacher's original record or model draft.
+    Object.defineProperty(this, 'invalidOutput', {value: {draft, issues, repairedFields}, enumerable: false});
   }
 }
 
@@ -125,13 +137,34 @@ export class QwenClient {
           && error.message.startsWith("千问结构化输出未通过业务校验");
         if (schemaViolation && !schemaCorrectionUsed) {
           schemaCorrectionUsed = true;
+          if (input.targetedSupportCorrection && error instanceof OutputValidationError) {
+            const {draft, issues, repairedFields} = error.invalidOutput;
+            const correction = supportCorrection(draft, issues, input.jsonSchema);
+            if (correction) {
+              const patches = await this.request({
+                ...input, schemaName: 'tongji_observation_support_correction',
+                messages: [...input.messages, {role: 'user', content: correction.instruction}],
+                jsonSchema: correction.jsonSchema, validator: correction.validator,
+                onOutputRepair: undefined, targetedSupportCorrection: false,
+              });
+              const repaired = repairAnalysisOutput(correction.apply(patches));
+              const checked = input.validator.safeParse(repaired.value);
+              if (!checked.success) throw new OutputValidationError(repaired.value, checked.error.issues);
+              input.onOutputRepair?.([...new Set([...repairedFields, ...correction.paths, ...repaired.fields])]);
+              return checked.data;
+            }
+          }
+          const details = error instanceof OutputValidationError ? error.invalidOutput.issues.slice(0, 24).map(issue => ({
+            path: issue.path.join('.'), code: issue.code,
+            ...('minimum' in issue ? {minimum: issue.minimum} : {}), ...('maximum' in issue ? {maximum: issue.maximum} : {}),
+          })) : [];
           activeInput = {
             ...input,
             messages: [
               ...input.messages,
               {
                 role: "user",
-                content: `上一份JSON未通过严格业务Schema校验（${error.message}）。请丢弃上一份结果，严格按既定JSON Schema重新生成完整对象，不得增加字段、改变字段类型或返回空的必填数组。`,
+                content: `上一份JSON未通过严格业务Schema校验（${error.message}）。具体约束：${JSON.stringify(details)}。请按既定JSON Schema重新生成完整对象，不得增加字段、改变字段类型或返回空的必填数组。文字写完整词组或短句，不能只写首字、单字占位或标点。`,
               },
             ],
           };
@@ -253,12 +286,7 @@ export class QwenClient {
     const parsed = repaired.value;
     const validated = input.validator.safeParse(parsed);
     if (!validated.success) {
-      const rootType = Array.isArray(parsed) ? "array" : parsed === null ? "null" : typeof parsed;
-      const issueSummary = validated.error.issues
-        .slice(0, 8)
-        .map((issue) => `${issue.path.join(".") || "root"}:${issue.code}`)
-        .join(",");
-      throw new QwenRequestError(`千问结构化输出未通过业务校验(root=${rootType};${issueSummary})`);
+      throw new OutputValidationError(parsed, validated.error.issues, repaired.fields);
     }
     if (repaired.fields.length) input.onOutputRepair?.(repaired.fields);
     return validated.data;

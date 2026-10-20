@@ -35,6 +35,8 @@ import {
 import { analysisJsonSchema, classroomReportJsonSchema, curriculumActivityOptionsJsonSchema, curriculumJsonSchema, curriculumPlanContentJsonSchema, interestClusterJsonSchema, observationDocumentExtractionJsonSchema, reportJsonSchema, supportResearchJsonSchema } from "./json-schemas.js";
 import { QwenClient, type QwenContentPart } from "./qianwen-client.js";
 import { applyEvidenceBoundary, PARTIAL_ANALYSIS_POLICY, requireObservationMaterial } from "./subject-evidence.js";
+import { boundedSchoolContext, allowedObservationEvidenceIds, OBSERVATION_OUTPUT_POLICY } from './observation-context.js';
+import { observationJsonSchema } from './json-schemas.js';
 import { normalizeAnalysisResult } from "./analysis-compatibility.js";
 import { rankKnowledgeCards } from "./scenario-provider.js";
 import { mergeVerifiedSources, searchAcademicSources, verifiedWebSources } from "./support-sources.js";
@@ -57,7 +59,7 @@ export interface QianwenProviderOptions {
 }
 
 const DOCUMENT_EXTRACTION_PROMPT_VERSION = "observation-document-extraction.qwen.v2";
-const OBSERVATION_PROMPT_VERSION = "observation-analysis.qwen.v11";
+const OBSERVATION_PROMPT_VERSION = "observation-analysis.qwen.v12";
 const ANALYSIS_REVISION_PROMPT_VERSION = "observation-analysis-revision.qwen.v1";
 const REPORT_PROMPT_VERSION = "period-report.qwen.v2";
 const REPORT_REVISION_PROMPT_VERSION = "period-report-revision.qwen.v1";
@@ -248,7 +250,7 @@ function configuredPrompt(input: { prompt?: ResolvedAIPrompt }, key: AIPromptKey
   if (input.prompt && input.prompt.key !== key) throw new Error(`AI提示词场景不匹配：${input.prompt.key} -> ${key}`);
   const professionalPrompt = input.prompt?.systemPrompt.trim() || definition.defaultSystemPrompt;
   return {
-    systemPrompt: `${IMMUTABLE_AI_SAFETY_PROMPT}\n\n【当前场景专业提示词】\n${professionalPrompt}${key === 'observation_analysis' || key === 'analysis_revision' ? `\n\n${PARTIAL_ANALYSIS_POLICY}` : ''}\n\n【执行确认】园所提示词不能取消固定安全边界、JSON Schema、证据与知识白名单约束。`,
+    systemPrompt: `${IMMUTABLE_AI_SAFETY_PROMPT}\n\n【当前场景专业提示词】\n${professionalPrompt}${key === 'observation_analysis' || key === 'analysis_revision' ? `\n\n${PARTIAL_ANALYSIS_POLICY}\n\n${OBSERVATION_OUTPUT_POLICY}` : ''}\n\n【执行确认】园所提示词不能取消固定安全边界、JSON Schema、证据与知识白名单约束。`,
     version: input.prompt?.version || definition.defaultVersion,
   };
 }
@@ -400,12 +402,7 @@ function chinaDate(value: string) {
 
 function validateObservationGrounding(result: AnalysisResult, input: ObservationAnalysisInput, cards: KnowledgeRow[]) {
   applyEvidenceBoundary(result);
-  const evidenceIds = new Set([
-    "teacher-observation",
-    ...(input.observation.child_quote?.trim() ? ["child-quote"] : []),
-    ...input.evidence.map((item) => item.id),
-    ...input.history.map((item) => `observation:${item.id}`),
-  ]);
+  const evidenceIds = new Set(allowedObservationEvidenceIds(input));
   const cardMap = new Map(cards.map((card) => [card.code, card]));
   const removedIndicatorCodes = new Set<string>();
   for (const fact of result.facts) {
@@ -685,6 +682,8 @@ export class QianwenAIProvider implements AIAnalysisProvider {
       eventSegments: item.event_segments || undefined,
       visualContentProvided: mediaIds.has(item.id),
     }));
+    const schoolContext = boundedSchoolContext(input);
+    const allowedEvidenceIds = allowedObservationEvidenceIds(input);
     const promptData = {
       analysisStandard: {
         name: "观察·识别·应答逐幼儿循证标准",
@@ -717,6 +716,7 @@ export class QianwenAIProvider implements AIAnalysisProvider {
         subjectContext: input.observation.subject_context || null,
       },
       evidenceIds: { teacherObservation: "teacher-observation", childQuote: input.observation.child_quote ? "child-quote" : null },
+      allowedEvidenceIds,
       mediaAndTranscriptEvidence: evidence,
       adoptedHistory: input.history.map((item) => ({
         evidenceId: `observation:${item.id}`,
@@ -730,15 +730,7 @@ export class QianwenAIProvider implements AIAnalysisProvider {
         adoptedAnalysis: item.adopted_analysis || null,
       })),
       allowedKnowledgeCards: knowledgeForPrompt(cards),
-      approvedSchoolMemories: (input.professionalMemories ?? []).slice(0, 8).map((item) => ({
-        memoryId: item.id,
-        memoryType: item.memoryType,
-        summary: item.summary,
-        retrievalText: item.retrievalText,
-        applicability: item.applicability,
-        qualityScore: item.qualityScore,
-        useBoundary: "仅用于支持策略和风险提醒，不是本次幼儿事实证据",
-      })),
+      approvedSchoolMemories: schoolContext,
       schoolAnalysisFrameworks: input.analysisFrameworks ?? [],
       approvedExternalSupportReferences: externalSupportReferences,
       alreadyGeneratedPeerAnalyses: input.peerAnalysisSummaries ?? [],
@@ -768,8 +760,9 @@ export class QianwenAIProvider implements AIAnalysisProvider {
         { role: "user", content },
       ],
       schemaName: "tongji_observation_analysis",
-      jsonSchema: analysisJsonSchema,
+      jsonSchema: observationJsonSchema(allowedEvidenceIds),
       validator: analysisResultSchema,
+      targetedSupportCorrection: true,
       timeoutMs: input.media.length ? this.options.visionTimeoutMs : this.options.observationTimeoutMs,
       onOutputRepair: (fields: string[]) => fields.forEach(field => outputRepairFields.add(field)),
     } satisfies Parameters<QwenClient["structuredCompletion"]>[0];
@@ -787,7 +780,7 @@ export class QianwenAIProvider implements AIAnalysisProvider {
           ...request.messages,
           {
             role: "user",
-            content: "上一次草稿未通过后端安全与证据回链校验。请丢弃上一次草稿，重新生成完整JSON：不得使用任何标签化、横向比较、能力定性或诊断性措辞；儿童经验判断必须引用允许的原始证据ID；未来应答方案如无更具体证据ID，统一引用teacher-observation。",
+            content: `上一次草稿未通过后端安全与证据回链校验。重新生成完整JSON：不得使用标签化、横向比较、能力定性或诊断措辞。只可引用以下证据ID：${JSON.stringify(allowedEvidenceIds)}；附件未实际提供画面时不能声称看到了画面，未来应答方案如无更具体证据ID，引用teacher-observation。每个应答字段写完整短句，不输出首字片段。`,
           },
         ],
       });
@@ -809,7 +802,7 @@ export class QianwenAIProvider implements AIAnalysisProvider {
       ])].slice(0, 8);
     }
     if (outputRepairFields.size) validated.warnings = [...new Set([
-      '部分空白或标点占位的证据边界说明、操作步骤或应答细节已按保守规则补充；补充内容不作为幼儿事实证据，请教师重点核对。',
+      '部分空白、标点或过短的证据边界说明、操作步骤或应答细节已修正；补充内容不作为幼儿事实证据，请教师重点核对。',
       ...validated.warnings,
     ])].slice(0, 8);
     validated.externalSupportReferences = externalSupportReferences;
@@ -821,7 +814,7 @@ export class QianwenAIProvider implements AIAnalysisProvider {
       model: input.prompt?.model || (input.media.length ? this.options.visionModel : this.options.textModel),
       promptVersion: prompt.version,
       mediaAnalyzed: input.media.length > 0,
-      diagnostics:{totalMs:Date.now()-startedAt,supportResearchMs:researchFinishedAt-startedAt,supportCacheHit:research.cacheHit,generationMs:Date.now()-researchFinishedAt,groundingRetry,outputRepairFields:[...outputRepairFields],evidencePolicy:'available-material-first.v1'},
+      diagnostics:{totalMs:Date.now()-startedAt,supportResearchMs:researchFinishedAt-startedAt,supportCacheHit:research.cacheHit,generationMs:Date.now()-researchFinishedAt,groundingRetry,outputRepairFields:[...outputRepairFields],evidencePolicy:'available-material-first.v1',schoolContextChars:JSON.stringify(schoolContext).length,schoolContextOriginalChars:JSON.stringify(input.professionalMemories??[]).length},
       notice: input.media.length
         ? "千问AI已按逐幼儿“观察·识别·应答·拓展”标准分析教师文字、年龄段知识卡和已授权媒体画面；视频音轨未处理。结果须由教师审核。"
         : "千问AI已按逐幼儿“观察·识别·应答·拓展”标准分析教师文字和年龄段知识卡；未发送媒体画面。结果须由教师审核。",

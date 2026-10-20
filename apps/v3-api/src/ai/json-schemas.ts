@@ -367,6 +367,25 @@ export const interestClusterJsonSchema = {
   },
 } as const;
 
+/** Per-request evidence IDs; never mutate the shared schema or leak another child's IDs. */
+export function observationJsonSchema(allowedIds: string[]): Record<string, unknown> {
+  // The base reuses object literals across collections; break those aliases too.
+  const schema = JSON.parse(JSON.stringify(analysisJsonSchema)) as typeof analysisJsonSchema;
+  const visit = (node: any) => {
+    if (!node || typeof node !== 'object') return;
+    for (const [key, value] of Object.entries(node)) {
+      if ((key === 'evidenceIds' || key === 'currentEvidenceIds' || key === 'historicalEvidenceIds') && value && typeof value === 'object' && (value as any).type === 'array') {
+        (value as any).items = {type: 'string', enum: [...allowedIds]};
+      } else visit(value);
+    }
+  };
+  visit(schema);
+  for (const key of ['facts', 'interpretations', 'responsePlans'] as const) {
+    (schema.properties[key].items.properties.evidenceIds as any).minItems = 1;
+  }
+  return schema;
+}
+
 export const reportJsonSchema = {
   type: "object",
   additionalProperties: false,
