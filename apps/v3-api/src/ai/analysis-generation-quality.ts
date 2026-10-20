@@ -3,22 +3,22 @@ import {analysisResultSchema} from './contracts.js';
 
 /** Only newly generated prose: old saved results and legitimate one-character material names remain readable. */
 export const generatedTextRules = [
-  ['interestsAndStrengths.*', 4], ['evidenceGaps.*', 8],
-  ['responseSuggestions.*.*', 8], ['nextObservation.*', 8],
-  ['learningPossibilities.*', 8], ['gamePossibilities.*', 8],
-  ['observationCut.*', 8], ['observationFocus.*', 6], ['warnings.*', 6],
-  ['responsePlans.*.rationale', 12], ['responsePlans.*.targetExperience.*', 4],
-  ['responsePlans.*.activitySupport.activityName', 4],
-  ['responsePlans.*.activitySupport.timing', 8], ['responsePlans.*.activitySupport.objective', 8],
-  ['responsePlans.*.activitySupport.steps.*', 8], ['responsePlans.*.activitySupport.teacherRole', 6],
+  ['interestsAndStrengths.*', 2], ['evidenceGaps.*', 2],
+  ['responseSuggestions.*.*', 2], ['nextObservation.*', 2],
+  ['learningPossibilities.*', 2], ['gamePossibilities.*', 2],
+  ['observationCut.*', 2], ['observationFocus.*', 4], ['warnings.*', 2],
+  ['responsePlans.*.rationale', 2], ['responsePlans.*.targetExperience.*', 2],
+  ['responsePlans.*.activitySupport.activityName', 2],
+  ['responsePlans.*.activitySupport.timing', 2], ['responsePlans.*.activitySupport.objective', 2],
+  ['responsePlans.*.activitySupport.steps.*', 8], ['responsePlans.*.activitySupport.teacherRole', 2],
   ['responsePlans.*.activitySupport.suggestedDuration', 2],
-  ['responsePlans.*.materialSupport.placement', 6], ['responsePlans.*.materialSupport.purpose', 8],
-  ['responsePlans.*.materialSupport.safetyNotes.*', 6],
+  ['responsePlans.*.materialSupport.placement', 2], ['responsePlans.*.materialSupport.purpose', 2],
+  ['responsePlans.*.materialSupport.safetyNotes.*', 2],
   ['responsePlans.*.experienceSupport.suggestedQuestions.*', 8],
-  ['responsePlans.*.experienceSupport.participationMode', 8],
-  ['responsePlans.*.experienceSupport.withdrawalCondition', 8],
-  ['responsePlans.*.observationCut', 8], ['responsePlans.*.observationFocus.*', 6],
-  ['responsePlans.*.adjustmentCondition', 8],
+  ['responsePlans.*.experienceSupport.participationMode', 2],
+  ['responsePlans.*.experienceSupport.withdrawalCondition', 2],
+  ['responsePlans.*.observationCut', 2], ['responsePlans.*.observationFocus.*', 4],
+  ['responsePlans.*.adjustmentCondition', 2],
 ] as const;
 
 export const analysisGenerationSchema = analysisResultSchema.superRefine((draft, ctx) => {

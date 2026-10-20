@@ -27,6 +27,9 @@ describe('generated observation prose quality', () => {
     const draft = fixture();
     expect(analysisGenerationSchema.safeParse(draft).success).toBe(true);
     draft.responsePlans[0]!.materialSupport.materials[0]!.name = '纸';
+    draft.responsePlans[0]!.activitySupport.teacherRole = '观察者';
+    draft.responsePlans[0]!.experienceSupport.participationMode = '平行参与';
+    draft.responseSuggestions.material = ['沿用现有材料'];
     expect(analysisGenerationSchema.safeParse(draft).success).toBe(true);
     for (const plan of draft.responsePlans) {
       plan.activitySupport.steps = ['教', '记', '引'];
