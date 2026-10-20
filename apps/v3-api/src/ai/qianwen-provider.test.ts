@@ -348,7 +348,7 @@ describe("QianwenAIProvider", () => {
     expect(requestBody).toContain("video_url");
     expect(requestBody).toContain("image_url");
     expect(requestBody).not.toContain("不应发送的姓名");
-    expect(generated.promptVersion).toBe("observation-analysis.qwen.v12");
+    expect(generated.promptVersion).toBe("observation-analysis.qwen.v13");
 
     const apiRequest = JSON.parse(requestBody);
     expect(apiRequest.model).toBe("qwen3.7-flash");

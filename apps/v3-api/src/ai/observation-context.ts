@@ -46,5 +46,6 @@ export function allowedObservationEvidenceIds(input: ObservationAnalysisInput): 
 export const OBSERVATION_OUTPUT_POLICY = `【应答内容完整性】
 应答是未来可选建议，不是对已发生事实的补写。每个字符串写完整词组或短句，不把“继续观察”缩成“继”，不把“游戏过程中”缩成“游”，禁止以单字、“无”“略”或标点占位。
 activityName写完整活动名称；timing写具体介入条件；objective写可观察目标；teacherRole写教师怎样参与；placement写材料放在哪里；purpose写材料用途；participationMode写参与方式；withdrawalCondition写退出条件。上述字段至少2字，通常应写完整短句。steps每项为可执行步骤，提问为完整问题。
+steps、suggestedQuestions每项至少8字，observationFocus每项至少6字，targetExperience每项至少4字；字数只是下限，仍需表达完整意思。步骤示例：“先观察幼儿怎样调整材料的位置。”；提问示例：“如果幼儿主动求助，可问：你准备先改变哪里？”；观察重点示例：“幼儿调整后是否主动验证结构稳定性”。不要为了凑字重复词语。
 保持观察的方案也要说明如何观察、何时介入和何时退出。不新增材料时写“沿用现场已有材料”并说明用途，不主动提问时给出“如幼儿主动求助，可问……”的条件式问题。没有观察到的行为不能为了补齐字段而编造。
 只从allowedEvidenceIds选择证据编号，不自行创建编号；未实际提供画面的附件不能充当可见事实证据。园本片段和外部资料只能启发支持，不作为幼儿事实来源。`;

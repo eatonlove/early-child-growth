@@ -26,13 +26,15 @@ function validator(schema: Schema): z.ZodTypeAny | undefined {
 
 /** Allow only future support fields. Current observations and experience judgments stay byte-for-byte intact. */
 export function supportCorrection(draft: unknown, issues: z.ZodIssue[], jsonSchema: Schema) {
-  if (!own(draft) || !Array.isArray(draft.responsePlans) || !issues.length || issues.length > 100) return;
+  if (!own(draft) || !Array.isArray(draft.responsePlans) || !issues.length || issues.length > 500) return;
   const paths: Path[] = [];
   for (const issue of issues) {
-    const path = issue.path;
+    let path = issue.path;
     if (path[0] !== 'responsePlans' || typeof path[1] !== 'number' || path.length < 3 || path.includes('evidenceIds') || path.some(key => ['__proto__', 'prototype', 'constructor'].includes(String(key)))) return;
     const schema = schemaAt(jsonSchema, path);
     if (!schema || !validator(schema) || !['too_small', 'too_big', 'invalid_type', 'custom', 'invalid_string'].includes(issue.code)) return;
+    // Repair a list together so several bad steps/questions do not become many isolated fragments.
+    if (typeof path.at(-1) === 'number' && schemaAt(jsonSchema, path.slice(0, -1))?.items?.type === 'string') path = path.slice(0, -1);
     if (!paths.some(existing => JSON.stringify(existing) === JSON.stringify(path))) paths.push([...path]);
   }
   const shape: Record<string, z.ZodTypeAny> = {};

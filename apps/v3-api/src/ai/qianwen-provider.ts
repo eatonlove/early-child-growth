@@ -42,6 +42,7 @@ import { rankKnowledgeCards } from "./scenario-provider.js";
 import { mergeVerifiedSources, searchAcademicSources, verifiedWebSources } from "./support-sources.js";
 import { resourceCategoryAnalysisSchema, type ResourceCategoryAnalysisInput, type ResourceCategoryAnalysis } from './contracts.js';
 import { resourceCategoryAnalysisJsonSchema } from './json-schemas.js';
+import {analysisGenerationSchema} from './analysis-generation-quality.js';
 
 export interface QianwenProviderOptions {
   apiKey: string;
@@ -59,7 +60,7 @@ export interface QianwenProviderOptions {
 }
 
 const DOCUMENT_EXTRACTION_PROMPT_VERSION = "observation-document-extraction.qwen.v2";
-const OBSERVATION_PROMPT_VERSION = "observation-analysis.qwen.v12";
+const OBSERVATION_PROMPT_VERSION = "observation-analysis.qwen.v13";
 const ANALYSIS_REVISION_PROMPT_VERSION = "observation-analysis-revision.qwen.v1";
 const REPORT_PROMPT_VERSION = "period-report.qwen.v2";
 const REPORT_REVISION_PROMPT_VERSION = "period-report-revision.qwen.v1";
@@ -761,7 +762,7 @@ export class QianwenAIProvider implements AIAnalysisProvider {
       ],
       schemaName: "tongji_observation_analysis",
       jsonSchema: observationJsonSchema(allowedEvidenceIds),
-      validator: analysisResultSchema,
+      validator: analysisGenerationSchema,
       targetedSupportCorrection: true,
       timeoutMs: input.media.length ? this.options.visionTimeoutMs : this.options.observationTimeoutMs,
       onOutputRepair: (fields: string[]) => fields.forEach(field => outputRepairFields.add(field)),

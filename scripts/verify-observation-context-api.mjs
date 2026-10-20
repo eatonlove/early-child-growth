@@ -8,6 +8,7 @@ const {serviceClient} = await import('/verification/dist/src/supabase.js');
 const {authProvider} = await import('/verification/dist/src/runtime/auth-provider.js');
 const {buildApp} = await import('/verification/dist/src/app.js');
 if (config.AI_MODE !== 'qianwen' || config.aiFallbackToSimulated) throw Error('Real model without simulated fallback required');
+const {analysisGenerationSchema} = await import('/verification/dist/src/ai/analysis-generation-quality.js');
 const db = serviceClient.schema(config.SUPABASE_SCHEMA);
 const publicBase = process.argv.find(value => value.startsWith('--public-base='))?.slice('--public-base='.length);
 if (publicBase && publicBase !== 'https://tongji.meidaquan.com') throw Error('Unexpected public verification target');
@@ -72,7 +73,8 @@ try {
   const detail = await call(`/api/observations/${observation.id}`, undefined, 200, 'GET');
   assert.equal(detail.item.teacher_observation, teacherObservation); assert.equal(detail.analyses.length, 2);
   for (const row of detail.analyses) {
-    assert.equal(row.provider, 'QianwenAIProvider'); assert.equal(row.prompt_version, 'observation-analysis.qwen.v12'); assert.equal(row.structured_result.responsePlans.length, 3);
+    assert.equal(row.provider, 'QianwenAIProvider'); assert.equal(row.prompt_version, 'observation-analysis.qwen.v13'); assert.equal(row.structured_result.responsePlans.length, 3);
+    assert.equal(analysisGenerationSchema.safeParse(row.structured_result).success, true, 'Saved prose must contain complete steps/questions, not single characters');
     assert.equal(row.structured_result.analysisScope, 'individual'); assert.ok(row.structured_result.facts.length);
     assert.ok(row.input_snapshot.diagnostics.schoolContextChars <= 8000);
     assert.ok(row.input_snapshot.diagnostics.schoolContextOriginalChars > 100000);
@@ -82,12 +84,18 @@ try {
     assert.ok(claims.length); assert.equal(plans.length, 3);
     await call(`/api/analyses/${row.id}/decision`, {decision: 'adopted', note: '虚构验收记录确认'});
     assert.equal((await call(`/api/children/${row.child_id}/growth`, undefined, 200, 'GET')).timeline.length, 1);
-    console.log(JSON.stringify({event: 'full_api_analysis_passed', facts: row.structured_result.facts.length, plans: plans.length, claims: claims.length, diagnostics: row.input_snapshot.diagnostics}));
+    console.log(JSON.stringify({event: 'full_api_analysis_passed', facts: row.structured_result.facts.length, minStepLength: Math.min(...row.structured_result.responsePlans.flatMap(p => p.activitySupport.steps.map(s => s.trim().length))), minQuestionLength: Math.min(...row.structured_result.responsePlans.flatMap(p => p.experienceSupport.suggestedQuestions.map(s => s.trim().length))), plans: plans.length, claims: claims.length, diagnostics: row.input_snapshot.diagnostics}));
   }
   const exported = await call(`/api/observations/${observation.id}/document-exports`, {variant: 'professional'}, 201);
   const document = await fetch(base + `/api/document-exports/${exported.documentExport.id}/download`, {headers: {Cookie: cookie}});
-  assert.equal(document.status, 200); assert.equal(Buffer.from(await document.arrayBuffer()).subarray(0, 2).toString(), 'PK');
-  console.log(JSON.stringify({event: 'candidate_full_flow_passed', realAuth: true, realModel: true, savedResults: 2, savedPlans: 6, adoptionAndGrowth: true, wordExport: true}));
+  assert.equal(document.status, 200);
+  const {default: unzipper} = await import('unzipper');
+  const zip = await unzipper.Open.buffer(Buffer.from(await document.arrayBuffer()));
+  const xml = await zip.files.find(file => file.path === 'word/document.xml').buffer();
+  const documentText = xml.toString().replace(/<[^>]*>/g, '').replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&quot;/g, '"').replace(/&apos;/g, "'").replace(/&amp;/g, '&');
+  const exportedSteps = detail.analyses.flatMap(row => row.structured_result.responsePlans.flatMap(plan => plan.activitySupport.steps));
+  for (const step of exportedSteps) assert.ok(documentText.includes(step), 'Word must contain complete saved activity steps');
+  console.log(JSON.stringify({event: 'candidate_full_flow_passed', realAuth: true, realModel: true, savedResults: 2, savedPlans: 6, adoptionAndGrowth: true, wordExport: true, completeStepsInWord: exportedSteps.length}));
 } finally {
   if (activeJob) await settle(activeJob);
   if (tenant) {

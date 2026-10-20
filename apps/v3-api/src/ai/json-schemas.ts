@@ -1,7 +1,10 @@
+import {applyGeneratedTextRules} from './analysis-generation-quality.js';
+
 const string = (maxLength: number, minLength = 1) => ({ type: "string", minLength, maxLength });
 const stringArray = (maxItems: number, maxLength = 2000) => ({
   type: "array",
-  items: { ...string(maxLength), pattern: "[A-Za-z\\u3400-\\u9FFF]" },
+  // Remote regex decoding forced single-character output. Validate prose locally instead.
+  items: string(maxLength),
   maxItems,
 });
 const confidence = { type: "number", minimum: 0, maximum: 1 };
@@ -383,7 +386,7 @@ export function observationJsonSchema(allowedIds: string[]): Record<string, unkn
   for (const key of ['facts', 'interpretations', 'responsePlans'] as const) {
     (schema.properties[key].items.properties.evidenceIds as any).minItems = 1;
   }
-  return schema;
+  return applyGeneratedTextRules(schema);
 }
 
 export const reportJsonSchema = {
