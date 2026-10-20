@@ -11,6 +11,7 @@ if (config.AI_MODE !== 'qianwen' || config.aiFallbackToSimulated) throw Error('R
 const {analysisGenerationSchema} = await import('/verification/dist/src/ai/analysis-generation-quality.js');
 const db = serviceClient.schema(config.SUPABASE_SCHEMA);
 const publicBase = process.argv.find(value => value.startsWith('--public-base='))?.slice('--public-base='.length);
+const singleSubject = process.argv.includes('--single-subject');
 if (publicBase && publicBase !== 'https://tongji.meidaquan.com') throw Error('Unexpected public verification target');
 const app = publicBase ? null : await buildApp();
 const base = publicBase ?? await app.listen({port: 0, host: '127.0.0.1'});
@@ -62,7 +63,7 @@ try {
   await call('/api/ai-model-config', {model: 'qwen3.7-plus-2026-05-26', expectedRevision: 0}, 200, 'PUT');
   const classroom = (await call('/api/classrooms', {name: '虚构中班', grade: 'middle', academicYear: '2026-2027', semester: '测试'}, 201)).item;
   const children = [];
-  for (const [i, name] of ['虚构小桥', '虚构小木'].entries()) children.push((await call('/api/children', {classroomId: classroom.id, internalCode: `CTX${i}`, displayName: name, birthMonth: '2022-01-01', guardianConsentStatus: 'pending'}, 201)).item);
+  for (const [i, name] of (singleSubject ? ['虚构小桥'] : ['虚构小桥', '虚构小木']).entries()) children.push((await call('/api/children', {classroomId: classroom.id, internalCode: `CTX${i}`, displayName: name, birthMonth: '2022-01-01', guardianConsentStatus: 'pending'}, 201)).item);
   for (let i = 0; i < 8; i++) await insert('professional_memories', {tenant_id: tenant.id, memory_type: 'school_knowledge', source_resource_type: 'acceptance', source_resource_id: `${code}-${i}`, title: '虚构园本片段', summary: '建构时保留幼儿选择，按需支持比较桥墩间距。', retrieval_text: '虚构资料：建构材料应供幼儿自主探索，教师按实际需要提供支持。\n'.repeat(800) + '\n桥墩、木板与支撑位置：先观察怎样摆放，幼儿主动求助时用一个问题邀请再次比较。', applicability: {classroomId: classroom.id, themes: ['桥梁']}, quality_score: 0.8, status: 'active', created_by: user.id, approved_by: user.id, approved_at: new Date().toISOString()});
   const teacherObservation = '以下为虚构技术验收记录：虚构小桥把两个桥墩推开，将木板放上后木板落下。他把桥墩移近，再放木板，木板留在桥墩上。他说：“靠近一点试试。”虚构小木递来另一块短木板，先把木板横放在两个桥墩上，再用手指沿着木板移动，随后说：“小车从这边走。”教师在旁保留材料，等待两人继续尝试。';
   const observation = (await call('/api/observations', {classroomId: classroom.id, observerName: '虚构验收教师', occurredAt: '2026-10-20T09:00:00+08:00', scene: '建构区', theme: '虚构桥梁长度修复验收', organizationStage: 'process', observationFocusCategory: 'materials_tools', subjects: children.map((c, i) => ({childId: c.id, role: i ? 'participant' : 'primary', contextualFeature: i ? '递来短木板并指认小车路线。' : '移动桥墩并再次放上木板。', evidenceAnchors: []})), teacherObservation, teacherIdentification: '两名幼儿各有当前直接行为，形成情境内尝试线索，仍需复察。', teacherResponse: {category: 'material', strategy: '保留桥墩与木板，按实际需要支持。', nextObservationFocus: '观察是否再次比较支撑位置或小车路线。'}}, 201)).item;
@@ -71,7 +72,7 @@ try {
   assert.equal(job.status, 'completed', job.error_message); assert.equal(job.stage, 'completed');
   assert.ok(job.subject_results.every(s => s.status === 'completed'));
   const detail = await call(`/api/observations/${observation.id}`, undefined, 200, 'GET');
-  assert.equal(detail.item.teacher_observation, teacherObservation); assert.equal(detail.analyses.length, 2);
+  assert.equal(detail.item.teacher_observation, teacherObservation); assert.equal(detail.analyses.length, children.length);
   for (const row of detail.analyses) {
     assert.equal(row.provider, 'QianwenAIProvider'); assert.equal(row.prompt_version, 'observation-analysis.qwen.v13'); assert.equal(row.structured_result.responsePlans.length, 3);
     assert.equal(analysisGenerationSchema.safeParse(row.structured_result).success, true, 'Saved prose must contain complete steps/questions, not single characters');
@@ -95,7 +96,7 @@ try {
   const documentText = xml.toString().replace(/<[^>]*>/g, '').replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&quot;/g, '"').replace(/&apos;/g, "'").replace(/&amp;/g, '&');
   const exportedSteps = detail.analyses.flatMap(row => row.structured_result.responsePlans.flatMap(plan => plan.activitySupport.steps));
   for (const step of exportedSteps) assert.ok(documentText.includes(step), 'Word must contain complete saved activity steps');
-  console.log(JSON.stringify({event: 'candidate_full_flow_passed', realAuth: true, realModel: true, savedResults: 2, savedPlans: 6, adoptionAndGrowth: true, wordExport: true, completeStepsInWord: exportedSteps.length}));
+  console.log(JSON.stringify({event: 'candidate_full_flow_passed', realAuth: true, realModel: true, savedResults: detail.analyses.length, savedPlans: detail.analyses.length * 3, adoptionAndGrowth: true, wordExport: true, completeStepsInWord: exportedSteps.length}));
 } finally {
   if (activeJob) await settle(activeJob);
   if (tenant) {
